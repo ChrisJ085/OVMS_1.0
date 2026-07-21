@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "ProductionPlanEntry": {
+      "title": "ProductionPlanEntry",
+      "description": "Production Plan Entry detailing planned cases, pallets, line, and date for products.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "activeImportId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productCodeSnapshot": { "type": "string" },
+        "descriptionSnapshot": { "type": "string" },
+        "productionLineId": { "type": "string" },
+        "productionLineCodeSnapshot": { "type": "string" },
+        "plannedCases": { "type": "number" },
+        "casesPerPallet": { "type": "number" },
+        "plannedPallets": { "type": "number" },
+        "sourceType": { "type": "string" },
+        "sourceSheetName": { "type": "string" },
+        "sourceRowNumber": { "type": "number" },
+        "planVersion": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["tenantId", "siteId", "activeImportId", "productId", "productionLineId", "productionDate", "plannedCases"]
+    },
+    "ProductionPlanImport": {
+      "title": "ProductionPlanImport",
+      "description": "Represents an uploaded and committed SAP MPPS7 production plan file import.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileSize": { "type": "number" },
+        "fileHash": { "type": "string" },
+        "sourceType": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "status": { "type": "string" },
+        "totalSourceRows": { "type": "number" },
+        "recognisedRows": { "type": "number" },
+        "ignoredRows": { "type": "number" },
+        "warningCount": { "type": "number" },
+        "errorCount": { "type": "number" },
+        "parserVersion": { "type": "string" },
+        "supersedesImportId": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "tenantId", "siteId", "fileName", "status"]
+    },
+    "ProductionLinePlanNote": {
+      "title": "ProductionLinePlanNote",
+      "description": "Plan notes on a production line such as shutdowns, trials, delays, or maintenance.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "productionLineId": { "type": "string" },
+        "noteType": { "type": "string" },
+        "title": { "type": "string" },
+        "note": { "type": "string" },
+        "severity": { "type": "string" },
+        "source": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "modifiedBy": { "type": "string" }
+      },
+      "required": ["tenantId", "siteId", "productionLineId", "noteDate", "noteType", "title", "note"]
+    }
+  },
+  "firestore": {
+    "productionPlanEntries/{entryId}": {
+      "schema": "#/entities/ProductionPlanEntry",
+      "description": "Active committed production plan entries."
+    },
+    "productionPlanImports/{importId}": {
+      "schema": "#/entities/ProductionPlanImport",
+      "description": "Committed plan file uploads and status details."
+    },
+    "productionLinePlanNotes/{noteId}": {
+      "schema": "#/entities/ProductionLinePlanNote",
+      "description": "Planned events, maintenance windows, and shutdowns on production lines."
+    }
+  }
+}

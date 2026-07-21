@@ -1,0 +1,6 @@
+{
+  "name": "Operations Visual Management System (OVMS)",
+  "description": "Operations Visual Management System (OVMS) - A lightweight operational decision-support and visual management layer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

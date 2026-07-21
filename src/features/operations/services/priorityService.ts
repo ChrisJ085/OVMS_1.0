@@ -1,0 +1,333 @@
+import { collection, doc, getDocs, query, where, writeBatch, Timestamp, addDoc, getDoc, runTransaction } from 'firebase/firestore';
+import { db } from '../../../config/firebase';
+import { Priority, PriorityEvent, PriorityStatus, PriorityEventType } from '../../../types/priority';
+import { Recommendation } from '../../../types/recommendation';
+import { ServiceResult } from '../../../types/common';
+
+const PRIORITIES_COLLECTION = 'priorities';
+const EVENTS_COLLECTION = 'priorityEvents';
+
+export const logPriorityEvent = async (
+  batchOrTransaction: any, // Supports both writeBatch and runTransaction
+  tenantId: string,
+  siteId: string,
+  priorityId: string,
+  eventType: PriorityEventType,
+  previousStatus: PriorityStatus | null,
+  newStatus: PriorityStatus | null,
+  previousValue: any | null,
+  newValue: any | null,
+  note: string,
+  performedBy: string
+) => {
+  const eventRef = doc(collection(db, EVENTS_COLLECTION));
+  const event: Omit<PriorityEvent, 'id'> = {
+    tenantId,
+    siteId,
+    status: 'active',
+    priorityId,
+    eventType,
+    previousStatus,
+    newStatus,
+    previousValue,
+    newValue,
+    note,
+    performedBy,
+    timestamp: Timestamp.now(),
+    createdBy: performedBy,
+    createdDate: Timestamp.now(),
+    modifiedBy: performedBy,
+    modifiedDate: Timestamp.now()
+  };
+  batchOrTransaction.set(eventRef, event);
+};
+
+export const checkDuplicatePriority = async (
+  tenantId: string,
+  siteId: string,
+  productId: string,
+  actionTypeId: string,
+  destinationId: string | null
+): Promise<boolean> => {
+  const q = query(
+    collection(db, PRIORITIES_COLLECTION),
+    where('tenantId', '==', tenantId),
+    where('siteId', '==', siteId),
+    where('productId', '==', productId),
+    where('priorityStatus', 'in', ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
+  );
+  
+  const snap = await getDocs(q);
+  if (snap.empty) return false;
+
+  for (const d of snap.docs) {
+    const p = d.data() as Priority;
+    if (p.actionTypeId === actionTypeId || (destinationId && p.destinationId === destinationId)) {
+      return true;
+    }
+  }
+  
+  return false;
+};
+
+export const createPriority = async (
+  priorityData: Omit<Priority, 'id' | 'status' | 'createdDate' | 'modifiedDate' | 'createdBy' | 'modifiedBy' | 'progressQuantity' | 'remainingQuantity' | 'progressPercent' | 'latestProgressNote' | 'publishedAt' | 'completedAt' | 'cancelledAt'>,
+  userId: string,
+  duplicateOverrideReason?: string
+): Promise<ServiceResult<string>> => {
+  try {
+    const isDuplicate = await checkDuplicatePriority(
+      priorityData.tenantId,
+      priorityData.siteId,
+      priorityData.productId,
+      priorityData.actionTypeId,
+      priorityData.destinationId
+    );
+
+    if (isDuplicate && !duplicateOverrideReason) {
+      return { success: false, error: 'DUPLICATE_ACTIVE_PRIORITY' };
+    }
+
+    const batch = writeBatch(db);
+    const newRef = doc(collection(db, PRIORITIES_COLLECTION));
+    
+    const priority: Omit<Priority, 'id'> = {
+      ...priorityData,
+      status: 'active',
+      progressQuantity: 0,
+      remainingQuantity: priorityData.requestedQuantity || 0,
+      progressPercent: 0,
+      latestProgressNote: null,
+      publishedAt: priorityData.priorityStatus !== 'DRAFT' ? Timestamp.now() : null,
+      completedAt: null,
+      cancelledAt: null,
+      createdBy: userId,
+      createdDate: Timestamp.now(),
+      modifiedBy: userId,
+      modifiedDate: Timestamp.now(),
+    };
+
+    batch.set(newRef, priority);
+
+    // Link recommendation if applicable
+    if (priorityData.sourceRecommendationId) {
+      const recRef = doc(db, 'recommendations', priorityData.sourceRecommendationId);
+      batch.update(recRef, { linkedPriorityId: newRef.id, modifiedDate: Timestamp.now(), modifiedBy: userId });
+    }
+
+    // Log creation event
+    await logPriorityEvent(
+      batch,
+      priorityData.tenantId,
+      priorityData.siteId,
+      newRef.id,
+      'CREATED',
+      null,
+      priorityData.priorityStatus,
+      null,
+      null,
+      duplicateOverrideReason ? `Created with duplicate override: ${duplicateOverrideReason}` : 'Priority created',
+      userId
+    );
+
+    await batch.commit();
+    return { success: true, data: newRef.id };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+};
+
+const VALID_TRANSITIONS: Record<PriorityStatus, PriorityStatus[]> = {
+  'DRAFT': ['SCHEDULED', 'ACTIVE', 'CANCELLED'],
+  'SCHEDULED': ['ACTIVE', 'CANCELLED'],
+  'ACTIVE': ['ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED', 'EXPIRED'],
+  'ACKNOWLEDGED': ['IN_PROGRESS', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED'],
+  'IN_PROGRESS': ['WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE', 'COMPLETED', 'CANCELLED'],
+  'WAITING': ['ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'CANCELLED'], // Assuming it can go back
+  'BLOCKED': ['IN_PROGRESS', 'WAITING', 'CANCELLED'],
+  'PARTIALLY_COMPLETE': ['IN_PROGRESS', 'BLOCKED', 'COMPLETED'],
+  'COMPLETED': ['ARCHIVED'],
+  'CANCELLED': ['ARCHIVED'],
+  'EXPIRED': ['ARCHIVED'],
+  'ARCHIVED': []
+};
+
+export const updatePriorityStatus = async (
+  priorityId: string,
+  newStatus: PriorityStatus,
+  userId: string,
+  note: string = ''
+): Promise<ServiceResult<void>> => {
+  try {
+    const ref = doc(db, PRIORITIES_COLLECTION, priorityId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return { success: false, error: 'Priority not found' };
+
+    const priority = snap.data() as Priority;
+    
+    if (!VALID_TRANSITIONS[priority.priorityStatus].includes(newStatus)) {
+      return { success: false, error: `Invalid transition from ${priority.priorityStatus} to ${newStatus}` };
+    }
+
+    const batch = writeBatch(db);
+    
+    const updateData: any = {
+      priorityStatus: newStatus,
+      modifiedDate: Timestamp.now(),
+      modifiedBy: userId
+    };
+
+    if (newStatus === 'COMPLETED') updateData.completedAt = Timestamp.now();
+    if (newStatus === 'CANCELLED') updateData.cancelledAt = Timestamp.now();
+    if (newStatus === 'SCHEDULED' || newStatus === 'ACTIVE') {
+       if (!priority.publishedAt) updateData.publishedAt = Timestamp.now();
+    }
+
+    batch.update(ref, updateData);
+
+    await logPriorityEvent(
+      batch,
+      priority.tenantId,
+      priority.siteId,
+      priorityId,
+      'STATUS_CHANGED',
+      priority.priorityStatus,
+      newStatus,
+      priority.priorityStatus,
+      newStatus,
+      note || `Status changed to ${newStatus}`,
+      userId
+    );
+
+    await batch.commit();
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+};
+
+export interface PriorityUpdateParams {
+  priorityId: string;
+  userId: string;
+  newStatus?: PriorityStatus;
+  progressQuantity?: number;
+  note?: string;
+  varianceReason?: string;
+}
+
+export const executePriorityUpdate = async (params: PriorityUpdateParams): Promise<ServiceResult<void>> => {
+  try {
+    await runTransaction(db, async (transaction) => {
+      const ref = doc(db, PRIORITIES_COLLECTION, params.priorityId);
+      const snap = await transaction.get(ref);
+      if (!snap.exists()) throw new Error('Priority not found');
+
+      const priority = snap.data() as Priority;
+      const newStatus = params.newStatus || priority.priorityStatus;
+      
+      if (params.newStatus && !VALID_TRANSITIONS[priority.priorityStatus].includes(params.newStatus)) {
+        throw new Error(`Invalid transition from ${priority.priorityStatus} to ${params.newStatus}`);
+      }
+
+      if (params.newStatus === 'BLOCKED' && !params.note?.trim()) {
+        throw new Error('Blocked status requires a reason');
+      }
+      if (params.newStatus === 'WAITING' && !params.note?.trim()) {
+        throw new Error('Waiting status requires a note');
+      }
+
+      const updateData: any = {
+        modifiedDate: Timestamp.now(),
+        modifiedBy: params.userId
+      };
+
+      let newProgressQty = priority.progressQuantity;
+      
+      if (params.progressQuantity !== undefined) {
+        newProgressQty = params.progressQuantity;
+        
+        if (priority.requestedQuantity !== null) {
+          if (newStatus === 'PARTIALLY_COMPLETE' && (newProgressQty <= 0 || newProgressQty >= priority.requestedQuantity)) {
+             throw new Error('Partially Complete requires completed quantity greater than 0 and less than requested quantity');
+          }
+          if (newStatus === 'COMPLETED' && newProgressQty !== priority.requestedQuantity && !params.varianceReason?.trim()) {
+             throw new Error('Completed requires completed quantity equal to requested quantity, or an authorized variance reason');
+          }
+          if (newProgressQty > priority.requestedQuantity && !params.varianceReason?.trim()) {
+             throw new Error('Progress quantity cannot be greater than requested quantity without a variance reason');
+          }
+        }
+        
+        updateData.progressQuantity = newProgressQty;
+        if (priority.requestedQuantity) {
+          updateData.remainingQuantity = Math.max(0, priority.requestedQuantity - newProgressQty);
+          updateData.progressPercent = Math.round((newProgressQty / priority.requestedQuantity) * 100);
+        }
+      }
+      
+      if (params.newStatus) {
+        updateData.priorityStatus = params.newStatus;
+        if (params.newStatus === 'COMPLETED') updateData.completedAt = Timestamp.now();
+        if (params.newStatus === 'CANCELLED') updateData.cancelledAt = Timestamp.now();
+      }
+      
+      if (params.note) {
+        updateData.latestProgressNote = params.note;
+      }
+
+      transaction.update(ref, updateData);
+
+      // Log the event
+      if (params.newStatus && params.newStatus !== priority.priorityStatus) {
+         await logPriorityEvent(
+          transaction,
+          priority.tenantId,
+          priority.siteId,
+          params.priorityId,
+          'STATUS_CHANGED',
+          priority.priorityStatus,
+          params.newStatus,
+          priority.priorityStatus,
+          params.newStatus,
+          params.note || `Status changed to ${params.newStatus}`,
+          params.userId
+        );
+      } else if (params.progressQuantity !== undefined && params.progressQuantity !== priority.progressQuantity) {
+         await logPriorityEvent(
+          transaction,
+          priority.tenantId,
+          priority.siteId,
+          params.priorityId,
+          'PROGRESS_UPDATED',
+          priority.priorityStatus,
+          priority.priorityStatus,
+          priority.progressQuantity,
+          params.progressQuantity,
+          params.note || `Progress updated to ${params.progressQuantity}`,
+          params.userId
+        );
+      } else if (params.note) {
+         await logPriorityEvent(
+          transaction,
+          priority.tenantId,
+          priority.siteId,
+          params.priorityId,
+          'PROGRESS_UPDATED',
+          priority.priorityStatus,
+          priority.priorityStatus,
+          null,
+          null,
+          params.note,
+          params.userId
+        );
+      }
+    });
+
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+};
