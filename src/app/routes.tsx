@@ -4,6 +4,11 @@ import { LoginPage } from '../features/auth/components/LoginPage';
 import { PasswordChangePage } from '../features/auth/components/PasswordChangePage';
 import { AppLayout } from '../components/layout/AppLayout';
 import { TVLayout } from '../components/layout/TVLayout';
+import { PermissionRoute } from '../components/auth/PermissionRoute';
+import { DisplayRoute } from '../components/auth/DisplayRoute';
+import { AccessDeniedPage } from '../components/auth/AccessDeniedPage';
+
+import { OperationalOverviewPage } from '../pages/OperationalOverviewPage';
 import { PlaceholderPage } from '../pages/PlaceholderPage';
 import { ConfigurationPage } from '../pages/ConfigurationPage';
 import { ProductsPage } from '../features/inventory/pages/ProductsPage';
@@ -39,52 +44,82 @@ import { DataUtilitiesPage } from '../features/administration/pages/DataUtilitie
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <AppLayout />,
+    element: (
+      <PermissionRoute requiredPermissions="VIEW_OVERVIEW">
+        <AppLayout />
+      </PermissionRoute>
+    ),
     children: [
-      { index: true, element: <PlaceholderPage title="Operational Overview" /> },
-      { path: 'planning/recommendations', element: <RecommendationsWorkspacePage /> },
-      { path: 'planning/recommendations/:id', element: <RecommendationDetailPage /> },
-      { path: 'planning/rules', element: <ProductPlanningRulesPage /> },
-      { path: 'planning/production', element: <ProductionPage /> },
-      { path: 'planning/production-plan', element: <ProductionPlanPage /> },
-      { path: 'planning/promotions', element: <PromotionsPage /> },
-      { path: 'planning/promotions/:id', element: <PromotionDetailPage /> },
-      { path: 'planning/decision-engine-test', element: <DecisionEngineScenariosPage /> },
-      { path: 'operations/priorities', element: <OperationalPrioritiesPage /> },
-      { path: 'operations/priorities/new', element: <CreatePriorityPage /> },
-      { path: 'operations/warehouse', element: <WarehouseExecutionPage /> },
-      { path: 'operations/announcements', element: <AnnouncementsPage /> },
-      { path: 'operations/exceptions', element: <ExceptionCentrePage /> },
-      { path: 'inventory/products', element: <ProductsPage /> },
-      { path: 'inventory/balances', element: <InventoryBalancesPage /> },
-      { path: 'inventory/locations', element: <LocationsPage /> },
-      { path: 'inventory/movements', element: <InventoryMovementsPage /> },
-      { path: 'reports/history', element: <OperationalHistoryPage /> },
-      { path: 'reports/kpi', element: <KpiDashboardPage /> },
-      { path: 'reports/list', element: <ReportsListPage /> },
-      { path: 'admin/overview', element: <AdminOverviewPage /> },
-      { path: 'admin/site-settings', element: <SiteSettingsPage /> },
-      { path: 'admin/configuration', element: <ConfigurationPage /> },
-      { path: 'admin/dashboard-settings', element: <DashboardSettingsPage /> },
-      { path: 'admin/decision-settings', element: <DecisionSettingsPage /> },
-      { path: 'admin/data-freshness', element: <DataFreshnessSettingsPage /> },
-      { path: 'admin/audit-log', element: <AuditLogPage /> },
-      { path: 'admin/data-utilities', element: <DataUtilitiesPage /> },
+      { index: true, element: <OperationalOverviewPage /> },
+      
+      // Planning routes
+      { path: 'planning/recommendations', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><RecommendationsWorkspacePage /></PermissionRoute> },
+      { path: 'planning/recommendations/:id', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><RecommendationDetailPage /></PermissionRoute> },
+      { path: 'planning/rules', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><ProductPlanningRulesPage /></PermissionRoute> },
+      { path: 'planning/production', element: <PermissionRoute requiredPermissions="VIEW_PRODUCTION_PLAN"><ProductionPage /></PermissionRoute> },
+      { path: 'planning/production-plan', element: <PermissionRoute requiredPermissions="VIEW_PRODUCTION_PLAN"><ProductionPlanPage /></PermissionRoute> },
+      { path: 'planning/promotions', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionsPage /></PermissionRoute> },
+      { path: 'planning/promotions/:id', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionDetailPage /></PermissionRoute> },
+      { path: 'planning/decision-engine-test', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><DecisionEngineScenariosPage /></PermissionRoute> },
+      
+      // Operations routes
+      { path: 'operations/priorities', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><OperationalPrioritiesPage /></PermissionRoute> },
+      { path: 'operations/priorities/new', element: <PermissionRoute requiredPermissions="MANAGE_PRIORITIES"><CreatePriorityPage /></PermissionRoute> },
+      { path: 'operations/warehouse', element: <PermissionRoute requiredPermissions="UPDATE_WAREHOUSE_EXECUTION"><WarehouseExecutionPage /></PermissionRoute> },
+      { path: 'operations/announcements', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><AnnouncementsPage /></PermissionRoute> },
+      { path: 'operations/exceptions', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><ExceptionCentrePage /></PermissionRoute> },
+      
+      // Inventory routes
+      { path: 'inventory/products', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><ProductsPage /></PermissionRoute> },
+      { path: 'inventory/balances', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><InventoryBalancesPage /></PermissionRoute> },
+      { path: 'inventory/locations', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><LocationsPage /></PermissionRoute> },
+      { path: 'inventory/movements', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><InventoryMovementsPage /></PermissionRoute> },
+      
+      // Reports routes
+      { path: 'reports/history', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><OperationalHistoryPage /></PermissionRoute> },
+      { path: 'reports/kpi', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><KpiDashboardPage /></PermissionRoute> },
+      { path: 'reports/list', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><ReportsListPage /></PermissionRoute> },
+      
+      // Administration routes
+      { path: 'admin/overview', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><AdminOverviewPage /></PermissionRoute> },
+      { path: 'admin/site-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><SiteSettingsPage /></PermissionRoute> },
+      { path: 'admin/configuration', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><ConfigurationPage /></PermissionRoute> },
+      { path: 'admin/dashboard-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DashboardSettingsPage /></PermissionRoute> },
+      { path: 'admin/decision-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DecisionSettingsPage /></PermissionRoute> },
+      { path: 'admin/data-freshness', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DataFreshnessSettingsPage /></PermissionRoute> },
+      { path: 'admin/audit-log', element: <PermissionRoute requiredPermissions="VIEW_AUDIT_LOG"><AuditLogPage /></PermissionRoute> },
+      { path: 'admin/data-utilities', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><DataUtilitiesPage /></PermissionRoute> },
     ],
   },
   {
     path: '/tv-dashboard',
-    element: <TVLayout />,
+    element: (
+      <DisplayRoute>
+        <TVLayout />
+      </DisplayRoute>
+    ),
     children: [
       { index: true, element: <TVDashboardPage /> },
     ],
   },
   {
     path: '/operations-display',
-    element: <TVLayout />,
+    element: (
+      <DisplayRoute>
+        <TVLayout />
+      </DisplayRoute>
+    ),
     children: [
       { index: true, element: <TVDashboardPage /> },
     ],
+  },
+  {
+    path: '/access-denied',
+    element: <AccessDeniedPage />,
+  },
+  {
+    path: '*',
+    element: <AccessDeniedPage />,
   },
 ]);
 
@@ -97,7 +132,6 @@ function AppRouterWrapper() {
     login, 
     logout, 
     changePassword, 
-    bootstrapSuperuser, 
     requiresPasswordChange 
   } = useDevelopmentContext();
 
@@ -116,7 +150,6 @@ function AppRouterWrapper() {
         onLoginSuccess={login} 
         authError={authError} 
         loading={loading}
-        onTriggerBootstrap={bootstrapSuperuser}
       />
     );
   }

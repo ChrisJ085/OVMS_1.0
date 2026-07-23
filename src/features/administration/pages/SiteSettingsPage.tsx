@@ -7,7 +7,8 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { Save } from 'lucide-react';
 
 export const SiteSettingsPage: React.FC = () => {
-  const { tenantId, siteId, currentUser } = useDevelopmentContext();
+  const { tenantId, siteId, currentUser, userProfile } = useDevelopmentContext();
+  const canEditConfig = userProfile?.role === 'TENANT_ADMIN' || userProfile?.role === 'PLATFORM_SUPERUSER';
   const [settings, setSettings] = useState<Partial<SiteSettings>>({
     siteName: '',
     timezone: '',
@@ -59,8 +60,14 @@ export const SiteSettingsPage: React.FC = () => {
         description="Configure general settings for the current site."
       />
       
+      {!canEditConfig && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-md text-sm">
+          Notice: Setting up app configuration requires Tenant Admin or Superuser permissions. Planners and Viewers can view configuration in read-only mode.
+        </div>
+      )}
+
       {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-md">
+        <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-md text-sm">
           {error}
         </div>
       )}
@@ -74,49 +81,55 @@ export const SiteSettingsPage: React.FC = () => {
               <label className="text-sm font-medium text-slate-300">Site Name</label>
               <input 
                 type="text" 
+                disabled={!canEditConfig}
                 value={settings.siteName || ''}
                 onChange={e => handleChange('siteName', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-300">Timezone</label>
               <input 
                 type="text" 
+                disabled={!canEditConfig}
                 value={settings.timezone || ''}
                 onChange={e => handleChange('timezone', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-300">Default Unit of Measure (ID)</label>
               <input 
                 type="text" 
+                disabled={!canEditConfig}
                 value={settings.defaultUnitOfMeasureId || ''}
                 onChange={e => handleChange('defaultUnitOfMeasureId', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-300">Default Destination (ID)</label>
               <input 
                 type="text" 
+                disabled={!canEditConfig}
                 value={settings.defaultDestinationId || ''}
                 onChange={e => handleChange('defaultDestinationId', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
               />
             </div>
             
-            <div className="pt-4 flex justify-end">
-              <button 
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 bg-brand-500 text-slate-900 rounded-md text-sm font-medium hover:bg-brand-400 transition-colors disabled:opacity-50"
-              >
-                <Save className="w-4 h-4" />
-                {saving ? 'Saving...' : 'Save Settings'}
-              </button>
-            </div>
+            {canEditConfig && (
+              <div className="pt-4 flex justify-end">
+                <button 
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-brand-500 text-slate-900 rounded-md text-sm font-medium hover:bg-brand-400 transition-colors disabled:opacity-50"
+                >
+                  <Save className="w-4 h-4" />
+                  {saving ? 'Saving...' : 'Save Settings'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </SectionCard>

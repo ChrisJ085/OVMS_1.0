@@ -26,7 +26,8 @@ export const Header: React.FC = () => {
     'TENANT_ADMIN': 'Tenant Admin',
     'PLANNER': 'Planner',
     'WAREHOUSE_OPERATOR': 'Warehouse Op',
-    'VIEWER': 'Viewer'
+    'VIEWER': 'Viewer',
+    'DISPLAY': 'Display Screen'
   };
 
   const getRoleBadgeColor = (role?: string) => {
@@ -35,6 +36,7 @@ export const Header: React.FC = () => {
       case 'TENANT_ADMIN': return 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
       case 'PLANNER': return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
       case 'WAREHOUSE_OPERATOR': return 'bg-teal-500/10 text-teal-400 border border-teal-500/20';
+      case 'DISPLAY': return 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20';
       default: return 'bg-slate-500/10 text-slate-400 border border-slate-500/20';
     }
   };

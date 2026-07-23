@@ -3,6 +3,8 @@ import { Timestamp } from 'firebase/firestore';
 
 export type ControllingThresholdMode = 'HIGHEST_MANDATORY' | 'MINIMUM_ONLY' | 'DDXM_ONLY' | 'CUSTOM';
 
+export type BelowTargetBehavior = 'HOLD_UNTIL_TARGET' | 'RELEASE_ABOVE_CONTROL' | 'AS_PER_SCHEDULE' | 'PLANNER_REVIEW';
+
 export interface ProductPlanningRule extends BaseDocument {
   productId: string;
   productCodeSnapshot: string;
@@ -13,6 +15,7 @@ export interface ProductPlanningRule extends BaseDocument {
   ddxmRetentionQuantity: number;
   controllingThresholdMode: ControllingThresholdMode;
   customControllingRetentionQuantity: number | null;
+  belowTargetBehavior?: BelowTargetBehavior;
   preferredDestinationId: string;
   secondaryDestinationId: string | null;
   defaultActionTypeId: string;

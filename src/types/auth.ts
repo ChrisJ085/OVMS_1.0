@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 
-export type UserRole = 'PLATFORM_SUPERUSER' | 'TENANT_ADMIN' | 'PLANNER' | 'WAREHOUSE_OPERATOR' | 'VIEWER';
+export type UserRole = 'PLATFORM_SUPERUSER' | 'TENANT_ADMIN' | 'PLANNER' | 'WAREHOUSE_OPERATOR' | 'VIEWER' | 'DISPLAY';
 
 export type AccountStatus = 'ACTIVE' | 'DISABLED' | 'LOCKED' | 'ARCHIVED';
 

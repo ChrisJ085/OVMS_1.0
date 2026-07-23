@@ -5,7 +5,6 @@ import {
   query,
   where,
   getDocs,
-  addDoc,
   writeBatch,
   doc,
   Timestamp,
@@ -17,9 +16,12 @@ import {
   ProductionPlanImport,
   ProductionPlanRow,
   ProductionPlanEntry,
-  ProductionLinePlanNote,
   ProductionPlanImportStatus,
-  ProductionPlanRowStatus
+  ProductionPlanRowStatus,
+  DuplicateCheckStatus,
+  PlanComparisonStatus,
+  ImportReconciliationSummary,
+  ImportDiagnostics
 } from '../../../types/production';
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
@@ -33,148 +35,581 @@ export const calculateFileHash = async (file: File): Promise<string> => {
 };
 
 // 2. Helper to Parse SAP Date Header (e.g. "Tue 21.07" or Serial Date)
-export const parseSapDate = (dateStr: string, referenceYear: number = 2026): Date | null => {
+export const parseSapDate = (dateStr: string, referenceYear: number = new Date().getFullYear()): Date | null => {
+  if (!dateStr) return null;
   const cleaned = dateStr.trim();
-  // Handles formatting like "Tue 21.07", "Wed 22.07", "21.07", "21/07", "Tue 21/07"
   const match = cleaned.match(/^([A-Za-z]{3}\s+)?(\d{1,2})[./](\d{1,2})$/);
   if (!match) return null;
   const day = parseInt(match[2], 10);
   const month = parseInt(match[3], 10) - 1; // 0-indexed month
+  if (month < 0 || month > 11 || day < 1 || day > 31) return null;
   return new Date(Date.UTC(referenceYear, month, day, 0, 0, 0, 0));
 };
 
-export const resolveHeaderDate = (cellValue: any, referenceYear: number = 2026): Date | null => {
+export const resolveHeaderDate = (cellValue: any, referenceYear: number = new Date().getFullYear()): Date | null => {
   if (!cellValue) return null;
-  if (typeof cellValue === 'number') {
-    // If it's serial date number, convert to date (Serial date 1 is Jan 1 1900)
-    const date = new Date((cellValue - 25569) * 86400 * 1000);
+  
+  const asNumber = Number(cellValue);
+  if (!isNaN(asNumber) && asNumber > 30000 && asNumber < 100000) {
+    const date = new Date((asNumber - 25569) * 86400 * 1000);
     return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   }
   return parseSapDate(String(cellValue), referenceYear);
 };
 
-// 3. Inspect MPPS7 Workbook Structure
+// 3. Supported Base Units of Measure
+export const SUPPORTED_BASE_UNITS = ['CS', 'CASE', 'CASES', 'EA', 'EACH', 'KG', 'PAL', 'PALLET', 'BOX'];
+
+export const isSupportedUnit = (unit: string): boolean => {
+  if (!unit) return false;
+  return SUPPORTED_BASE_UNITS.includes(unit.trim().toUpperCase());
+};
+
+// 4. Pallet Calculation (Returns null if casesPerPallet missing, zero, <=0 or invalid)
+export const calculatePlannedPallets = (
+  plannedCases: number,
+  casesPerPallet: number | null | undefined
+): number | null => {
+  if (casesPerPallet === null || casesPerPallet === undefined || casesPerPallet <= 0 || isNaN(casesPerPallet)) {
+    return null;
+  }
+  return Math.round((plannedCases / casesPerPallet) * 100) / 100;
+};
+
+// 5. Inspect MPPS7 Workbook Structure
+export interface InspectedSheet {
+  sheetName: string;
+  headerRowIndex: number;
+  headers: string[];
+  isValid: boolean;
+}
+
 export interface WorkbookInspection {
   isValidMpps7: boolean;
+  selectedSheetName: string | null;
+  headerRowIndex: number;
   detectedWorksheetNames: string[];
   sampleHeaders: string[];
+  inspectedSheets: InspectedSheet[];
   error?: string;
 }
 
 export const inspectMpps7Workbook = (workbook: XLSX.WorkBook): WorkbookInspection => {
   try {
-    const worksheetNames = workbook.SheetNames;
+    const worksheetNames = workbook.SheetNames || [];
     if (worksheetNames.length === 0) {
-      return { isValidMpps7: false, detectedWorksheetNames: [], sampleHeaders: [], error: 'Workbook is empty.' };
+      return {
+        isValidMpps7: false,
+        selectedSheetName: null,
+        headerRowIndex: 0,
+        detectedWorksheetNames: [],
+        sampleHeaders: [],
+        inspectedSheets: [],
+        error: 'Workbook is empty.'
+      };
     }
 
-    const firstSheetName = worksheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
-    if (!worksheet) {
-      return { isValidMpps7: false, detectedWorksheetNames: worksheetNames, sampleHeaders: [], error: `Worksheet "${firstSheetName}" could not be loaded.` };
-    }
+    const inspectedSheets: InspectedSheet[] = [];
+    let selectedSheetName: string | null = null;
+    let headerRowIndex = 0;
+    let sampleHeaders: string[] = [];
 
-    // Read first row to extract headers
-    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:Z1');
-    const headers: string[] = [];
-    for (let col = range.s.c; col <= range.e.c; col++) {
-      const cellRef = XLSX.utils.encode_cell({ r: range.s.r, c: col });
-      const cell = worksheet[cellRef];
-      if (cell && cell.v !== undefined) {
-        headers.push(String(cell.v).trim());
+    for (const sheetName of worksheetNames) {
+      const worksheet = workbook.Sheets[sheetName];
+      if (!worksheet || !worksheet['!ref']) {
+        inspectedSheets.push({ sheetName, headerRowIndex: 0, headers: [], isValid: false });
+        continue;
+      }
+
+      const range = XLSX.utils.decode_range(worksheet['!ref']);
+      const maxRowsToInspect = Math.min(range.e.r, 15);
+      let foundHeaderRow = -1;
+      let foundHeaders: string[] = [];
+
+      for (let r = range.s.r; r <= maxRowsToInspect; r++) {
+        const rowHeaders: string[] = [];
+        for (let col = range.s.c; col <= range.e.c; col++) {
+          const cellRef = XLSX.utils.encode_cell({ r, c: col });
+          const cell = worksheet[cellRef];
+          if (cell && cell.v !== undefined) {
+            rowHeaders.push(String(cell.v).trim());
+          }
+        }
+
+        const rowStrLower = rowHeaders.map(h => h.toLowerCase());
+        const hasResource = rowStrLower.some(h => h.includes('resource') || h === 'line');
+        const hasProduct = rowStrLower.some(h => h.includes('product number') || h.includes('material') || h === 'sku');
+
+        if (hasResource && hasProduct) {
+          foundHeaderRow = r;
+          foundHeaders = rowHeaders;
+          break;
+        }
+      }
+
+      const isValid = foundHeaderRow !== -1;
+      inspectedSheets.push({
+        sheetName,
+        headerRowIndex: foundHeaderRow !== -1 ? foundHeaderRow : 0,
+        headers: foundHeaders,
+        isValid
+      });
+
+      if (isValid && !selectedSheetName) {
+        selectedSheetName = sheetName;
+        headerRowIndex = foundHeaderRow;
+        sampleHeaders = foundHeaders;
       }
     }
 
-    // Validate minimum required columns for MPPS7 format
-    const hasResource = headers.some(h => h.toLowerCase() === 'resource');
-    const hasProductNumber = headers.some(h => h.toLowerCase() === 'product number');
-    const hasUom = headers.some(h => h.toLowerCase() === 'base unit of measure');
-    const isValidMpps7 = hasResource && hasProductNumber && hasUom;
+    if (!selectedSheetName && worksheetNames.length > 0) {
+      selectedSheetName = worksheetNames[0];
+      headerRowIndex = 0;
+      const firstSheet = workbook.Sheets[selectedSheetName];
+      if (firstSheet && firstSheet['!ref']) {
+        const range = XLSX.utils.decode_range(firstSheet['!ref']);
+        for (let col = range.s.c; col <= range.e.c; col++) {
+          const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
+          const cell = firstSheet[cellRef];
+          if (cell && cell.v !== undefined) {
+            sampleHeaders.push(String(cell.v).trim());
+          }
+        }
+      }
+    }
+
+    const isValidMpps7 = !!selectedSheetName && inspectedSheets.some(s => s.isValid);
 
     return {
       isValidMpps7,
+      selectedSheetName,
+      headerRowIndex,
       detectedWorksheetNames: worksheetNames,
-      sampleHeaders: headers
+      sampleHeaders,
+      inspectedSheets,
+      error: isValidMpps7 ? undefined : 'No sheet matching MPPS7 structure (Resource, Product Number) was found.'
     };
-  } catch (err) {
+  } catch (err: any) {
     return {
       isValidMpps7: false,
+      selectedSheetName: null,
+      headerRowIndex: 0,
       detectedWorksheetNames: [],
       sampleHeaders: [],
+      inspectedSheets: [],
       error: err instanceof Error ? err.message : 'Unknown inspection error'
     };
   }
 };
 
-// 4. Products & Production Lines Mapping
+// 6. Year Resolution & Controlled Date Sequence
+export interface YearResolutionResult {
+  resolvedYear: number;
+  method: 'EXPLICIT_HEADER_DATE' | 'METADATA_OR_TITLE' | 'FILE_OR_CURRENT_DATE' | 'USER_CONFIRMED';
+  plannerConfirmationRequired: boolean;
+  isConfirmed: boolean;
+}
+
+export const resolveProductionYear = (
+  workbook: XLSX.WorkBook,
+  worksheet: XLSX.WorkSheet,
+  headerRowIndex: number,
+  fileName: string,
+  confirmedYear?: number | null
+): YearResolutionResult => {
+  if (confirmedYear && confirmedYear > 2000 && confirmedYear < 2100) {
+    return {
+      resolvedYear: confirmedYear,
+      method: 'USER_CONFIRMED',
+      plannerConfirmationRequired: false,
+      isConfirmed: true
+    };
+  }
+
+  // 1. Check if header cells contain explicit 4-digit years (e.g. 2026-05-15, 15/05/2026, or serial date number > 30000)
+  if (worksheet && worksheet['!ref']) {
+    const range = XLSX.utils.decode_range(worksheet['!ref']);
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cellRef = XLSX.utils.encode_cell({ r: headerRowIndex, c });
+      const cell = worksheet[cellRef];
+      if (cell && cell.v !== undefined) {
+        const valStr = String(cell.v).trim();
+        const numVal = Number(cell.v);
+        if (!isNaN(numVal) && numVal > 30000 && numVal < 100000) {
+          const d = new Date((numVal - 25569) * 86400 * 1000);
+          return {
+            resolvedYear: d.getUTCFullYear(),
+            method: 'EXPLICIT_HEADER_DATE',
+            plannerConfirmationRequired: false,
+            isConfirmed: true
+          };
+        }
+        const match = valStr.match(/\b(20\d{2})[-/. ]\d{1,2}[-/. ]\d{1,2}\b/) || valStr.match(/\b\d{1,2}[-/. ]\d{1,2}[-/. ](20\d{2})\b/);
+        if (match) {
+          return {
+            resolvedYear: parseInt(match[1], 10),
+            method: 'EXPLICIT_HEADER_DATE',
+            plannerConfirmationRequired: false,
+            isConfirmed: true
+          };
+        }
+      }
+    }
+
+    // 2. Check title/decorative rows above header row
+    for (let r = 0; r < headerRowIndex; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        const cell = worksheet[cellRef];
+        if (cell && cell.v !== undefined) {
+          const valStr = String(cell.v);
+          const match = valStr.match(/\b(20\d{2})\b/);
+          if (match) {
+            return {
+              resolvedYear: parseInt(match[1], 10),
+              method: 'METADATA_OR_TITLE',
+              plannerConfirmationRequired: true,
+              isConfirmed: false
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Check filename
+  const fileNameMatch = fileName.match(/\b(20\d{2})\b/);
+  if (fileNameMatch) {
+    return {
+      resolvedYear: parseInt(fileNameMatch[1], 10),
+      method: 'FILE_OR_CURRENT_DATE',
+      plannerConfirmationRequired: true,
+      isConfirmed: false
+    };
+  }
+
+  // 4. Fallback to current year
+  const currentYear = new Date().getFullYear();
+  return {
+    resolvedYear: currentYear,
+    method: 'FILE_OR_CURRENT_DATE',
+    plannerConfirmationRequired: true,
+    isConfirmed: false
+  };
+};
+
+export interface ParsedDateColumn {
+  key: string;
+  rawHeader: string;
+  date: Date;
+  day: number;
+  month: number;
+  year: number;
+  isRollover: boolean;
+}
+
+export const parseDateColumnsWithRollover = (
+  sampleRowKeys: string[],
+  initialYear: number
+): {
+  dateColumns: ParsedDateColumn[];
+  hasRollover: boolean;
+  rolloverCount: number;
+  duplicateKeys: string[];
+  sequenceIssues: string[];
+} => {
+  const dateColumns: ParsedDateColumn[] = [];
+  let currentYear = initialYear;
+  let prevMonth: number | null = null;
+  let hasRollover = false;
+  let rolloverCount = 0;
+  const seenDateStrings = new Map<string, string>();
+  const duplicateKeys: string[] = [];
+  const sequenceIssues: string[] = [];
+
+  for (const key of sampleRowKeys) {
+    const rawVal = key.trim();
+    if (!rawVal) continue;
+
+    const asNum = Number(rawVal);
+    let day = 0;
+    let month = 0;
+    let explicitYear: number | null = null;
+
+    if (!isNaN(asNum) && asNum > 30000 && asNum < 100000) {
+      const d = new Date((asNum - 25569) * 86400 * 1000);
+      day = d.getUTCDate();
+      month = d.getUTCMonth() + 1;
+      explicitYear = d.getUTCFullYear();
+    } else {
+      const fullDateMatch = rawVal.match(/(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})/) || rawVal.match(/(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{4})/);
+      if (fullDateMatch) {
+        if (fullDateMatch[1].length === 4) {
+          explicitYear = parseInt(fullDateMatch[1], 10);
+          month = parseInt(fullDateMatch[2], 10);
+          day = parseInt(fullDateMatch[3], 10);
+        } else {
+          day = parseInt(fullDateMatch[1], 10);
+          month = parseInt(fullDateMatch[2], 10);
+          explicitYear = parseInt(fullDateMatch[3], 10);
+        }
+      } else {
+        const dmMatch = rawVal.match(/^([A-Za-z]{3}\s+)?(\d{1,2})[./](\d{1,2})$/);
+        if (dmMatch) {
+          day = parseInt(dmMatch[2], 10);
+          month = parseInt(dmMatch[3], 10);
+        }
+      }
+    }
+
+    if (!day || !month || month < 1 || month > 12 || day < 1 || day > 31) {
+      continue;
+    }
+
+    let isRollover = false;
+    let columnYear = explicitYear || currentYear;
+
+    if (!explicitYear) {
+      if (prevMonth === 12 && month === 1) {
+        currentYear++;
+        columnYear = currentYear;
+        isRollover = true;
+        hasRollover = true;
+        rolloverCount++;
+      } else if (prevMonth !== null && month < prevMonth && !(prevMonth === 12 && month === 1)) {
+        sequenceIssues.push(`Date header "${rawVal}" month (${month}) is prior to previous month (${prevMonth}) without valid Dec-to-Jan rollover.`);
+      }
+    }
+
+    prevMonth = month;
+
+    const dateObj = new Date(Date.UTC(columnYear, month - 1, day, 0, 0, 0, 0));
+    if (isNaN(dateObj.getTime())) {
+      sequenceIssues.push(`Invalid calendar date created from header "${rawVal}".`);
+      continue;
+    }
+
+    const isoDateStr = dateObj.toISOString().split('T')[0];
+    if (seenDateStrings.has(isoDateStr)) {
+      duplicateKeys.push(rawVal);
+      sequenceIssues.push(`Duplicate date column detected for date ${isoDateStr} ("${rawVal}").`);
+    } else {
+      seenDateStrings.set(isoDateStr, rawVal);
+    }
+
+    dateColumns.push({
+      key,
+      rawHeader: rawVal,
+      date: dateObj,
+      day,
+      month,
+      year: columnYear,
+      isRollover
+    });
+  }
+
+  return {
+    dateColumns,
+    hasRollover,
+    rolloverCount,
+    duplicateKeys,
+    sequenceIssues
+  };
+};
+
+// 7. Products & Production Lines Mapping
 export const matchImportedProducts = async (tenantId: string): Promise<Record<string, Product>> => {
   if (!db) return {};
-  const productsRef = collection(db, 'products');
-  const q = query(productsRef, where('tenantId', '==', tenantId), where('status', '==', 'active'));
-  const snap = await getDocs(q);
-  const productsMap: Record<string, Product> = {};
-  snap.forEach(docSnap => {
-    const product = { id: docSnap.id, ...docSnap.data() } as Product;
-    // Standardize SKU key with leading-zero trimming or exact matching
-    productsMap[product.productCode.trim()] = product;
-    // Also support padding up to 8 digits
-    const paddedCode = product.productCode.trim().padStart(8, '0');
-    productsMap[paddedCode] = product;
-  });
-  return productsMap;
+  try {
+    const productsRef = collection(db, 'products');
+    const q = query(productsRef, where('tenantId', '==', tenantId), where('status', '==', 'active'));
+    const snap = await getDocs(q);
+    const productsMap: Record<string, Product> = {};
+    snap.forEach(docSnap => {
+      const product = { id: docSnap.id, ...docSnap.data() } as Product;
+      const rawCode = (product as any).code || product.productCode || '';
+      if (rawCode) {
+        productsMap[rawCode.trim()] = product;
+        const paddedCode = rawCode.trim().padStart(8, '0');
+        productsMap[paddedCode] = product;
+      }
+    });
+    return productsMap;
+  } catch (e) {
+    console.error('Failed to match products:', e);
+    return {};
+  }
 };
 
 export const matchProductionLines = async (tenantId: string, siteId: string): Promise<ProductionLine[]> => {
   if (!db) return [];
-  const linesRef = collection(db, 'productionLines');
-  const q = query(
-    linesRef,
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId),
-    where('status', '==', 'active')
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as ProductionLine));
+  try {
+    const linesRef = collection(db, 'productionLines');
+    const q = query(
+      linesRef,
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId),
+      where('status', '==', 'active')
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as ProductionLine));
+  } catch (e) {
+    console.error('Failed to match production lines:', e);
+    return [];
+  }
 };
 
 export const matchResourceToLine = (resourceCode: string, lines: ProductionLine[]): ProductionLine | null => {
+  if (!resourceCode) return null;
   const cleanResource = resourceCode.toUpperCase().trim();
-  const prefix = cleanResource.split('_')[0].toUpperCase().trim();
 
-  // 1. Try match on sapResourceCode
-  let matched = lines.find(l => l.sapResourceCode?.toUpperCase().trim() === cleanResource || l.sapResourceCode?.toUpperCase().trim() === prefix);
+  let matched = lines.find(l => l.sapResourceCode?.toUpperCase().trim() === cleanResource);
   if (matched) return matched;
 
-  // 2. Try match on sapResourceAliases
   matched = lines.find(l => 
-    Array.isArray(l.sapResourceAliases) && l.sapResourceAliases.some((alias: string) => alias.toUpperCase().trim() === cleanResource || alias.toUpperCase().trim() === prefix)
+    Array.isArray(l.sapResourceAliases) && 
+    l.sapResourceAliases.some((alias: string) => alias.toUpperCase().trim() === cleanResource)
   );
   if (matched) return matched;
 
-  // 3. Fallback exact match on lineCode (for seeded data)
-  matched = lines.find(l => l.lineCode.toUpperCase().trim() === cleanResource || l.lineCode.toUpperCase().trim() === prefix);
+  matched = lines.find(l => ((l.lineCode || (l as any).code || l.lineName || '').toUpperCase().trim() === cleanResource));
   if (matched) return matched;
 
-  // 4. Try containing match on name or code as final guess fallback
-  matched = lines.find(l => {
-    const code = l.lineCode.toUpperCase();
-    const name = l.lineName.toUpperCase();
-    return prefix.includes(code) || code.includes(prefix) || name.includes(prefix);
-  });
-
-  return matched || null;
+  return null;
 };
 
-// 5. Pallet Calculation
-export const calculatePlannedPallets = (plannedCases: number, casesPerPallet: number): number => {
-  if (!casesPerPallet || casesPerPallet <= 0) return plannedCases;
-  return Math.round((plannedCases / casesPerPallet) * 100) / 100;
+// 8. Duplicate Check Result
+export const verifyDuplicateImport = async (
+  tenantId: string,
+  siteId: string,
+  fileHash: string
+): Promise<{ status: DuplicateCheckStatus; message: string; duplicateImportId?: string }> => {
+  if (!db) {
+    return { status: 'CHECK_FAILED', message: 'Firestore connection unavailable.' };
+  }
+  try {
+    const importsRef = collection(db, 'productionPlanImports');
+    const dupQuery = query(
+      importsRef,
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId),
+      where('fileHash', '==', fileHash),
+      where('status', '==', 'COMMITTED'),
+      limit(1)
+    );
+    const dupSnap = await getDocs(dupQuery);
+    if (!dupSnap.empty) {
+      const dupDoc = dupSnap.docs[0];
+      return {
+        status: 'DUPLICATE_FOUND',
+        message: `Identical file hash committed previously (Import ID: ${dupDoc.id}).`,
+        duplicateImportId: dupDoc.id
+      };
+    }
+    return { status: 'PASSED', message: 'No duplicate committed import found.' };
+  } catch (e: any) {
+    console.error('Duplicate verification check failed:', e);
+    return { status: 'CHECK_FAILED', message: `Duplicate verification check failed: ${e?.message || 'Database error'}` };
+  }
 };
 
-// 6. Validate & Parse MPPS7 Workbook Row-by-Row
+// 9. Active Plan Comparison Status
+export const evaluatePlanComparison = async (
+  tenantId: string,
+  siteId: string,
+  newStart: Date,
+  newEnd: Date
+): Promise<{ status: PlanComparisonStatus; message: string; activeStart?: string; activeEnd?: string }> => {
+  if (!db) {
+    return { status: 'NEWER_NON_OVERLAPPING', message: 'Firestore unavailable for active plan comparison.' };
+  }
+  try {
+    const importsRef = collection(db, 'productionPlanImports');
+    const activeQuery = query(
+      importsRef,
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId),
+      where('status', '==', 'COMMITTED'),
+      orderBy('periodStart', 'desc'),
+      limit(1)
+    );
+    const activeSnap = await getDocs(activeQuery);
+    if (activeSnap.empty) {
+      return { status: 'NEWER_NON_OVERLAPPING', message: 'No active committed plans exist in system.' };
+    }
+
+    const activeDoc = activeSnap.docs[0].data() as ProductionPlanImport;
+    const activeStart = activeDoc.periodStart?.toDate ? activeDoc.periodStart.toDate() : new Date(activeDoc.periodStart as any || Date.now());
+    const activeEnd = activeDoc.periodEnd?.toDate ? activeDoc.periodEnd.toDate() : new Date(activeDoc.periodEnd as any || Date.now());
+
+    const newStartMs = newStart.getTime();
+    const newEndMs = newEnd.getTime();
+    const activeStartMs = activeStart.getTime();
+    const activeEndMs = activeEnd.getTime();
+
+    const activeStartStr = activeStart.toISOString().split('T')[0];
+    const activeEndStr = activeEnd.toISOString().split('T')[0];
+
+    if (newStartMs === activeStartMs && newEndMs === activeEndMs) {
+      return {
+        status: 'REPLACES_SAME_PERIOD',
+        message: `Import matches current active plan period (${activeStartStr} to ${activeEndStr}) and will replace it.`,
+        activeStart: activeStartStr,
+        activeEnd: activeEndStr
+      };
+    }
+    if (newEndMs < activeStartMs) {
+      return {
+        status: 'OLDER_THAN_ACTIVE',
+        message: `Import period ends (${newEnd.toISOString().split('T')[0]}) before current active plan start (${activeStartStr}).`,
+        activeStart: activeStartStr,
+        activeEnd: activeEndStr
+      };
+    }
+    if (newStartMs <= activeEndMs && newEndMs > activeEndMs) {
+      return {
+        status: 'EXTENDS_ACTIVE',
+        message: `Import overlaps and extends active plan period beyond ${activeEndStr}.`,
+        activeStart: activeStartStr,
+        activeEnd: activeEndStr
+      };
+    }
+    if (newStartMs >= activeStartMs && newEndMs <= activeEndMs) {
+      return {
+        status: 'OVERLAPS_ACTIVE',
+        message: `Import period is fully contained within active plan period (${activeStartStr} to ${activeEndStr}).`,
+        activeStart: activeStartStr,
+        activeEnd: activeEndStr
+      };
+    }
+    if (newStartMs < activeEndMs && newEndMs >= activeStartMs) {
+      return {
+        status: 'OVERLAPS_ACTIVE',
+        message: `Import period overlaps current active plan period (${activeStartStr} to ${activeEndStr}).`,
+        activeStart: activeStartStr,
+        activeEnd: activeEndStr
+      };
+    }
+    return {
+      status: 'NEWER_NON_OVERLAPPING',
+      message: `Import period starts after current active plan end (${activeEndStr}).`,
+      activeStart: activeStartStr,
+      activeEnd: activeEndStr
+    };
+  } catch (e: any) {
+    console.warn('Plan comparison evaluation failed:', e);
+    return { status: 'NEWER_NON_OVERLAPPING', message: 'Could not perform active plan comparison check.' };
+  }
+};
+
+// 10. Parse & Create Import Preview
 export interface ParsedPlanPreview {
   summary: Omit<ProductionPlanImport, 'id' | 'createdDate' | 'modifiedDate'>;
   rows: Omit<ProductionPlanRow, 'createdDate'>[];
+  reconciliation: ImportReconciliationSummary;
+  diagnostics: ImportDiagnostics;
+  missingProducts: { code: string; desc: string }[];
+  missingLines: { code: string; name: string }[];
 }
 
 export const createImportPreview = async (
@@ -185,114 +620,73 @@ export const createImportPreview = async (
   tenantId: string,
   siteId: string,
   uploadedBy: string,
-  referenceYear: number = 2026
+  confirmedYear?: number | null
 ): Promise<ParsedPlanPreview> => {
   const inspection = inspectMpps7Workbook(workbook);
-  if (!inspection.isValidMpps7) {
-    throw new Error('File does not match the mandatory MPPS7 structure. Missing required headers.');
+  if (!inspection.isValidMpps7 || !inspection.selectedSheetName) {
+    throw new Error(inspection.error || 'Workbook does not match mandatory MPPS7 structure.');
   }
 
-  // 1. Check File-Level Validations from Firestore
-  let isDuplicateFile = false;
-  let isOlderThanActive = false;
-
-  if (db) {
-    try {
-      const importsRef = collection(db, 'productionPlanImports');
-      
-      // Duplicate file check
-      const dupQuery = query(
-        importsRef,
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('fileHash', '==', fileHash),
-        where('status', '==', 'COMMITTED'),
-        limit(1)
-      );
-      const dupSnap = await getDocs(dupQuery);
-      if (!dupSnap.empty) {
-        isDuplicateFile = true;
-      }
-
-      // Older than active check
-      const activeQuery = query(
-        importsRef,
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('status', '==', 'COMMITTED'),
-        orderBy('periodStart', 'desc'),
-        limit(1)
-      );
-      const activeSnap = await getDocs(activeQuery);
-      if (!activeSnap.empty) {
-        const activeImport = activeSnap.docs[0].data() as ProductionPlanImport;
-        // If the current file's period ends before the active plan's period start
-        // or we have some other logical check. Let's compare periodStart
-        if (activeImport.periodStart) {
-          // We don't have the new file's period start yet, but we will calculate it.
-        }
-      }
-    } catch (e) {
-      console.warn('Metadata checks failed or indexes not built yet:', e);
-    }
+  const selectedSheetName = inspection.selectedSheetName;
+  const headerRowIndex = inspection.headerRowIndex;
+  const worksheet = workbook.Sheets[selectedSheetName];
+  if (!worksheet) {
+    throw new Error(`Worksheet "${selectedSheetName}" could not be loaded.`);
   }
 
-  // Load master data maps for validation & matching
-  const productsMap = await matchImportedProducts(tenantId);
-  const linesList = await matchProductionLines(tenantId, siteId);
-
-  const firstSheetName = inspection.detectedWorksheetNames[0];
-  const worksheet = workbook.Sheets[firstSheetName];
-  
-  // Use sheet_to_json to get raw rows
-  const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
-  
-  // Identify date columns
-  if (rawRows.length === 0) {
-    throw new Error('The workbook contains no active production planning rows.');
-  }
-
-  const sampleRow = rawRows[0];
-  const keys = Object.keys(sampleRow);
-  const dateColumns: { key: string; date: Date }[] = [];
-
-  keys.forEach(k => {
-    const date = resolveHeaderDate(k, referenceYear);
-    if (date) {
-      dateColumns.push({ key: k, date });
-    }
+  // Raw row extraction starting from detected header row
+  const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, {
+    range: headerRowIndex,
+    defval: ''
   });
 
-  if (dateColumns.length === 0) {
-    throw new Error('Could not identify any valid production date columns in the sheet header.');
+  if (rawRows.length === 0) {
+    throw new Error('The selected production worksheet contains no active data rows.');
   }
 
-  // Sort dates to resolve full period boundaries
+  // 1. Resolve Production Year
+  const yearResolution = resolveProductionYear(workbook, worksheet, headerRowIndex, fileName, confirmedYear);
+
+  // 2. Identify Date Header Columns & Rollover
+  const sampleRow = rawRows[0];
+  const keys = Object.keys(sampleRow);
+  const { dateColumns, hasRollover, rolloverCount, duplicateKeys, sequenceIssues } = parseDateColumnsWithRollover(
+    keys,
+    yearResolution.resolvedYear
+  );
+
+  if (dateColumns.length === 0) {
+    throw new Error('Could not identify any valid production date columns in the worksheet headers.');
+  }
+
+  // Sort date columns chronologically
   dateColumns.sort((a, b) => a.date.getTime() - b.date.getTime());
   const periodStart = dateColumns[0].date;
   const periodEnd = dateColumns[dateColumns.length - 1].date;
 
-  // Let's finish the "Older Than Active" validation using calculated periodStart
-  if (db && !isOlderThanActive) {
-    try {
-      const importsRef = collection(db, 'productionPlanImports');
-      const activeQuery = query(
-        importsRef,
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('status', '==', 'COMMITTED'),
-        orderBy('periodStart', 'desc'),
-        limit(1)
-      );
-      const activeSnap = await getDocs(activeQuery);
-      if (!activeSnap.empty) {
-        const activeImport = activeSnap.docs[0].data() as ProductionPlanImport;
-        if (activeImport.periodStart && periodStart.getTime() < activeImport.periodStart.toDate().getTime()) {
-          isOlderThanActive = true;
-        }
-      }
-    } catch (e) {
-      // Ignore
+  // Period length check (e.g. > 365 days)
+  const periodDays = Math.ceil((periodEnd.getTime() - periodStart.getTime()) / (1000 * 3600 * 24)) + 1;
+  if (periodDays > 365 || periodDays <= 0) {
+    sequenceIssues.push(`Production period range (${periodDays} days) is invalid or out of range.`);
+  }
+
+  // 3. Duplicate Verification Check
+  const duplicateVerification = await verifyDuplicateImport(tenantId, siteId, fileHash);
+
+  // 4. Plan Comparison Check
+  const activePlanComparison = await evaluatePlanComparison(tenantId, siteId, periodStart, periodEnd);
+
+  // 5. Load Master Data Maps
+  const productsMap = await matchImportedProducts(tenantId);
+  const linesList = await matchProductionLines(tenantId, siteId);
+
+  // Find source total column key if present
+  let sourceTotalColKey: string | null = null;
+  for (const k of keys) {
+    const kl = k.trim().toLowerCase();
+    if (kl === 'total' || kl === 'grand total' || kl === 'source total') {
+      sourceTotalColKey = k;
+      break;
     }
   }
 
@@ -303,72 +697,136 @@ export const createImportPreview = async (
   let warningCount = 0;
   let errorCount = 0;
 
-  // Unique identifier for this session preview
   const previewImportId = `preview_${Math.random().toString(36).substring(2, 11)}`;
-
-  // Set to keep track of duplicates within the spreadsheet to identify DUPLICATE_SOURCE_ROW
   const seenRowsSet = new Set<string>();
+
+  const missingProductsMap = new Map<string, string>();
+  const missingLinesSet = new Set<string>();
+
+  const unsupportedUnitsFoundSet = new Set<string>();
+
+  // Reconciliation aggregations
+  let totalSourceCases = 0;
+  let totalParsedCases = 0;
+  let totalExcludedRowsCount = 0;
+  let totalErrorRowsCount = 0;
+
+  const reconciliationByLine: Record<string, { sourceCases: number; parsedCases: number; diff: number }> = {};
+  const reconciliationByProduct: Record<string, { sourceCases: number; parsedCases: number; diff: number }> = {};
+  const reconciliationByDate: Record<string, { parsedCases: number }> = {};
+
+  // Check if year confirmation is required and missing
+  const isYearRequiredAndUnconfirmed = yearResolution.plannerConfirmationRequired && !confirmedYear;
 
   rawRows.forEach((row, idx) => {
     totalSourceRows++;
-    const resourceVal = String(row['Resource'] || '').trim();
-    const skuVal = String(row['Product Number'] || '').trim();
-    const descVal = String(row['Product Short Description'] || '').trim();
-    const uomVal = String(row['Base Unit of Measure'] || '').trim();
-    const sheetTotalVal = row['Total'] !== undefined ? Number(String(row['Total']).replace(/,/g, '')) : null;
+
+    // Find Resource, SKU, Description, UoM in row with fallback column names
+    let resourceVal = '';
+    let skuVal = '';
+    let descVal = '';
+    let uomVal = '';
+
+    for (const k of Object.keys(row)) {
+      const kl = k.trim().toLowerCase();
+      if (kl === 'resource' || kl === 'line' || kl === 'machine') resourceVal = String(row[k] || '').trim();
+      else if (kl === 'product number' || kl === 'material' || kl === 'sku' || kl === 'product code') skuVal = String(row[k] || '').trim();
+      else if (kl === 'product short description' || kl === 'description' || kl === 'product name') descVal = String(row[k] || '').trim();
+      else if (kl === 'base unit of measure' || kl === 'uom' || kl === 'unit') uomVal = String(row[k] || '').trim();
+    }
+
+    const sourceTotalVal = sourceTotalColKey && row[sourceTotalColKey] !== undefined && row[sourceTotalColKey] !== ''
+      ? Number(String(row[sourceTotalColKey]).replace(/,/g, ''))
+      : null;
+
+    if (sourceTotalVal !== null && !isNaN(sourceTotalVal)) {
+      totalSourceCases += sourceTotalVal;
+    }
 
     if (!resourceVal && !skuVal) {
       ignoredRows++;
+      totalExcludedRowsCount++;
       return;
     }
 
-    // Prefix line parsing
     const lineObj = matchResourceToLine(resourceVal, linesList);
     const productObj = productsMap[skuVal];
 
-    // Read quantities for each date column
+    if (!lineObj && resourceVal) {
+      missingLinesSet.add(resourceVal);
+    }
+    if (!productObj && skuVal) {
+      missingProductsMap.set(skuVal, descVal || `SKU ${skuVal}`);
+    }
+
     let calculatedRowTotal = 0;
 
     dateColumns.forEach(dateCol => {
       const qtyRaw = row[dateCol.key];
       const qty = typeof qtyRaw === 'number' ? qtyRaw : parseInt(String(qtyRaw || '0').replace(/,/g, ''), 10);
-      
-      // Skip dates with zero plan to prevent Firestore document inflation
-      if (!qty || qty <= 0) {
+
+      if (!qty || qty <= 0 || isNaN(qty)) {
         return;
       }
 
       calculatedRowTotal += qty;
+      totalParsedCases += qty;
+
+      // Group totals
+      const lineKey = lineObj ? lineObj.lineCode : (resourceVal || 'UNKNOWN');
+      if (!reconciliationByLine[lineKey]) {
+        reconciliationByLine[lineKey] = { sourceCases: 0, parsedCases: 0, diff: 0 };
+      }
+      reconciliationByLine[lineKey].parsedCases += qty;
+
+      const productKey = skuVal || 'UNKNOWN';
+      if (!reconciliationByProduct[productKey]) {
+        reconciliationByProduct[productKey] = { sourceCases: 0, parsedCases: 0, diff: 0 };
+      }
+      reconciliationByProduct[productKey].parsedCases += qty;
+
+      const dateKeyStr = dateCol.date.toISOString().split('T')[0];
+      if (!reconciliationByDate[dateKeyStr]) {
+        reconciliationByDate[dateKeyStr] = { parsedCases: 0 };
+      }
+      reconciliationByDate[dateKeyStr].parsedCases += qty;
 
       const rowErrors: string[] = [];
       const rowWarnings: string[] = [];
       const validationCodes: string[] = [];
       let rowStatus: ProductionPlanRowStatus = 'VALID';
 
-      // 1. Production Line Mappings
+      // Year confirmation validation
+      if (isYearRequiredAndUnconfirmed) {
+        rowWarnings.push(`Production year ${yearResolution.resolvedYear} requires planner confirmation.`);
+        validationCodes.push('PRODUCTION_YEAR_REQUIRED');
+        if (rowStatus === 'VALID') rowStatus = 'WARNING';
+      }
+
+      // 1. Line Mapping Validation
       if (!resourceVal) {
         rowErrors.push('Production line resource is missing.');
         validationCodes.push('PRODUCTION_LINE_MISSING');
         rowStatus = 'ERROR';
       } else if (!lineObj) {
-        rowWarnings.push(`SAP Resource Code "${resourceVal}" is not configured in productionLines.`);
+        rowErrors.push(`SAP Resource Code "${resourceVal}" is not configured in production lines.`);
         validationCodes.push('PRODUCTION_LINE_NOT_CONFIGURED');
-        rowStatus = 'WARNING';
+        rowStatus = 'ERROR';
       }
 
-      // 2. Product/SKU Mappings
+      // 2. Product Mapping Validation
       if (!skuVal) {
         rowErrors.push('Product Material Number is missing.');
         validationCodes.push('PRODUCT_CODE_MISSING');
         rowStatus = 'ERROR';
       } else if (!productObj) {
-        rowWarnings.push(`Product SKU "${skuVal}" not found in Product Master database.`);
+        rowErrors.push(`Product SKU "${skuVal}" not found in Product Master database.`);
         validationCodes.push('PRODUCT_NOT_FOUND');
-        rowStatus = 'WARNING';
+        rowStatus = 'ERROR';
       } else if (productObj.status === 'inactive') {
-        rowWarnings.push(`Product SKU "${skuVal}" exists but is inactive.`);
+        rowErrors.push(`Product SKU "${skuVal}" exists but is inactive in Product Master.`);
         validationCodes.push('PRODUCT_INACTIVE');
-        rowStatus = 'WARNING';
+        rowStatus = 'ERROR';
       }
 
       // 3. Description Difference Warning
@@ -378,10 +836,7 @@ export const createImportPreview = async (
         if (ovmsDesc !== sapDesc) {
           rowWarnings.push(`SAP product description "${descVal}" differs from local Product Master: "${productObj.description}".`);
           validationCodes.push('DESCRIPTION_DIFFERENCE');
-          // Keeps status as WARNING, does not fail
-          if (rowStatus === 'VALID') {
-            rowStatus = 'WARNING';
-          }
+          if (rowStatus === 'VALID') rowStatus = 'WARNING';
         }
       }
 
@@ -396,23 +851,28 @@ export const createImportPreview = async (
         rowStatus = 'ERROR';
       }
 
-      // 5. Unit of Measure check
-      if (uomVal && uomVal.toUpperCase() !== 'CS' && uomVal.toUpperCase() !== 'CASE' && uomVal.toUpperCase() !== 'CASES') {
-        rowWarnings.push(`SAP Unit of Measure "${uomVal}" differs from standard CASES.`);
+      // 5. Unit of Measure Validation
+      const cleanUom = uomVal ? uomVal.trim().toUpperCase() : 'CS';
+      if (!isSupportedUnit(cleanUom)) {
+        unsupportedUnitsFoundSet.add(uomVal || 'MISSING');
+        rowErrors.push(`Unsupported Unit of Measure "${uomVal}". Configured supported units: ${SUPPORTED_BASE_UNITS.join(', ')}.`);
         validationCodes.push('UNIT_NOT_SUPPORTED');
-        if (rowStatus === 'VALID') {
-          rowStatus = 'WARNING';
-        }
+        rowStatus = 'ERROR';
       }
 
-      // 6. Cases Per Pallet check
-      const casesPerPallet = productObj?.casesPerPallet || 1;
-      if (productObj && (!productObj.casesPerPallet || productObj.casesPerPallet <= 0)) {
-        rowWarnings.push(`Cases per Pallet (CS/Pallet) conversion rate is not configured for SKU: ${skuVal}. Defaulting to 1.`);
+      // 6. Cases Per Pallet Validation (Return null and mark error if missing / invalid)
+      const casesPerPalletVal = productObj?.casesPerPallet && productObj.casesPerPallet > 0 ? productObj.casesPerPallet : null;
+      let calculatedPalletsVal: number | null = null;
+
+      if (!casesPerPalletVal || casesPerPalletVal <= 0) {
+        rowErrors.push(`Cases per Pallet (CS/Pallet) conversion rate is missing or zero for SKU: ${skuVal}. Pallet quantity cannot be calculated.`);
         validationCodes.push('CASES_PER_PALLET_MISSING');
-        if (rowStatus === 'VALID') {
-          rowStatus = 'WARNING';
-        }
+        rowStatus = 'ERROR';
+        calculatedPalletsVal = null;
+      } else if (isSupportedUnit(cleanUom)) {
+        calculatedPalletsVal = calculatePlannedPallets(qty, casesPerPalletVal);
+      } else {
+        calculatedPalletsVal = null;
       }
 
       // 7. Duplicate row check within spreadsheet
@@ -420,14 +880,28 @@ export const createImportPreview = async (
       if (seenRowsSet.has(rowUniqueKey)) {
         rowWarnings.push(`Duplicate active production code entry found in spreadsheet for Line/SKU/Date: ${rowUniqueKey}.`);
         validationCodes.push('DUPLICATE_SOURCE_ROW');
-        if (rowStatus === 'VALID') {
-          rowStatus = 'WARNING';
-        }
+        if (rowStatus === 'VALID') rowStatus = 'WARNING';
       } else {
         seenRowsSet.add(rowUniqueKey);
       }
 
-      // 8. Date checks
+      // 8. Date Sequence & Duplicate Date Column checks
+      if (duplicateKeys.includes(dateCol.rawHeader)) {
+        rowErrors.push(`Date column "${dateCol.rawHeader}" is a duplicate date header.`);
+        validationCodes.push('DUPLICATE_DATE_COLUMN');
+        rowStatus = 'ERROR';
+      }
+
+      if (dateCol.isRollover) {
+        validationCodes.push('YEAR_ROLLOVER_DETECTED');
+      }
+
+      if (sequenceIssues.length > 0) {
+        sequenceIssues.forEach(issue => {
+          rowWarnings.push(issue);
+        });
+      }
+
       const dateVal = dateCol.date;
       if (!dateVal || isNaN(dateVal.getTime())) {
         rowErrors.push('Production date is invalid.');
@@ -440,15 +914,18 @@ export const createImportPreview = async (
       }
 
       if (rowStatus === 'WARNING') warningCount++;
-      if (rowStatus === 'ERROR') errorCount++;
+      if (rowStatus === 'ERROR') {
+        errorCount++;
+        totalErrorRowsCount++;
+      }
       if (rowStatus === 'VALID' || rowStatus === 'WARNING') recognisedRows++;
 
       parsedRows.push({
         tenantId,
         siteId,
         importId: previewImportId,
-        sourceSheetName: firstSheetName,
-        sourceRowNumber: idx + 2, // 1-indexed Excel row + 1 header row
+        sourceSheetName: selectedSheetName,
+        sourceRowNumber: idx + headerRowIndex + 2,
         productionLineCode: lineObj ? lineObj.lineCode : (resourceVal.split('_')[0] || resourceVal),
         productionLineName: lineObj ? lineObj.lineName : resourceVal,
         productCode: skuVal,
@@ -458,8 +935,8 @@ export const createImportPreview = async (
         productionDate: Timestamp.fromDate(dateCol.date),
         plannedQuantity: qty,
         sourceUnitOfMeasure: uomVal || 'CS',
-        casesPerPallet,
-        calculatedPallets: calculatePlannedPallets(qty, casesPerPallet),
+        casesPerPallet: casesPerPalletVal,
+        calculatedPallets: calculatedPalletsVal,
         rowStatus,
         validationCodes,
         validationMessages: [...rowErrors, ...rowWarnings],
@@ -467,39 +944,148 @@ export const createImportPreview = async (
           Resource: resourceVal,
           'Product Number': skuVal,
           'Product Short Description': descVal,
-          'Base Unit of Measure': uomVal
-        }
+          'Base Unit of Measure': uomVal,
+          SourceTotal: sourceTotalVal
+        },
+        sourceTotalQty: sourceTotalVal,
+        rowParsedQtySum: calculatedRowTotal,
+        sourceTotalDiff: sourceTotalVal !== null ? calculatedRowTotal - sourceTotalVal : null
       });
     });
 
-    // 9. Verify sheet total matches calculated row total
-    if (sheetTotalVal !== null && sheetTotalVal !== calculatedRowTotal && calculatedRowTotal > 0) {
-      // Flag the parsed rows from this sheet row with a total mismatch warning
+    // 9. Source Total Reconciliation per Row
+    if (sourceTotalVal !== null && !isNaN(sourceTotalVal)) {
+      const diff = calculatedRowTotal - sourceTotalVal;
+      const lineKey = lineObj ? lineObj.lineCode : (resourceVal || 'UNKNOWN');
+      const productKey = skuVal || 'UNKNOWN';
+
+      if (reconciliationByLine[lineKey]) reconciliationByLine[lineKey].sourceCases += sourceTotalVal;
+      if (reconciliationByProduct[productKey]) reconciliationByProduct[productKey].sourceCases += sourceTotalVal;
+
       parsedRows.forEach(parsedRow => {
-        if (parsedRow.sourceRowNumber === idx + 2) {
-          parsedRow.validationMessages.push(`SAP Total column (${sheetTotalVal}) does not match sum of individual dates (${calculatedRowTotal}).`);
-          parsedRow.validationCodes.push('SOURCE_TOTAL_MISMATCH');
-          if (parsedRow.rowStatus === 'VALID') {
-            parsedRow.rowStatus = 'WARNING';
-            warningCount++;
+        if (parsedRow.sourceRowNumber === idx + headerRowIndex + 2) {
+          if (diff === 0) {
+            parsedRow.validationCodes.push('SOURCE_TOTAL_MATCH');
+          } else {
+            parsedRow.validationCodes.push('SOURCE_TOTAL_MISMATCH');
+            parsedRow.validationMessages.push(`Source Total column (${sourceTotalVal}) differs from sum of parsed dates (${calculatedRowTotal}). Diff: ${diff}.`);
+            if (parsedRow.rowStatus === 'VALID') {
+              parsedRow.rowStatus = 'WARNING';
+              warningCount++;
+            }
           }
+        }
+      });
+    } else {
+      parsedRows.forEach(parsedRow => {
+        if (parsedRow.sourceRowNumber === idx + headerRowIndex + 2) {
+          parsedRow.validationCodes.push('SOURCE_TOTAL_MISSING');
         }
       });
     }
   });
 
-  // Check file level duplicate or older warnings to include in notes and status
-  let previewStatus: ProductionPlanImportStatus = errorCount > 0 ? 'FAILED' : (warningCount > 0 ? 'REQUIRES_REVIEW' : 'READY_TO_COMMIT');
-  
+  // Calculate reconciliation total diffs
+  Object.keys(reconciliationByLine).forEach(lk => {
+    reconciliationByLine[lk].diff = reconciliationByLine[lk].parsedCases - reconciliationByLine[lk].sourceCases;
+  });
+  Object.keys(reconciliationByProduct).forEach(pk => {
+    reconciliationByProduct[pk].diff = reconciliationByProduct[pk].parsedCases - reconciliationByProduct[pk].sourceCases;
+  });
+
+  const totalDifference = totalSourceCases > 0 ? totalParsedCases - totalSourceCases : 0;
+  const hasMaterialMismatch = totalSourceCases > 0 && totalDifference !== 0;
+
+  const reconciliationSummary: ImportReconciliationSummary = {
+    totalSourceCases,
+    totalParsedCases,
+    totalDifference,
+    totalExcludedRows: totalExcludedRowsCount,
+    totalErrorRows: totalErrorRowsCount,
+    hasMaterialMismatch,
+    byLine: reconciliationByLine,
+    byProduct: reconciliationByProduct,
+    byDate: reconciliationByDate
+  };
+
+  // Build Diagnostics Summary
+  const diagnostics: ImportDiagnostics = {
+    yearResolution: {
+      resolvedYear: yearResolution.resolvedYear,
+      method: yearResolution.method,
+      plannerConfirmationRequired: yearResolution.plannerConfirmationRequired,
+      isConfirmed: yearResolution.isConfirmed,
+      hasYearRollover: hasRollover,
+      rolloverDatesCount: rolloverCount
+    },
+    dateSequence: {
+      startDate: periodStart.toISOString().split('T')[0],
+      endDate: periodEnd.toISOString().split('T')[0],
+      totalDateColumns: dateColumns.length,
+      isValidSequence: sequenceIssues.length === 0 && duplicateKeys.length === 0,
+      issues: sequenceIssues
+    },
+    worksheetSelection: {
+      selectedSheetName,
+      headerRowIndex,
+      inspectedSheetsCount: inspection.inspectedSheets.length,
+      allDetectedSheets: inspection.detectedWorksheetNames
+    },
+    duplicateVerification: duplicateVerification,
+    activePlanComparison: activePlanComparison,
+    unitValidation: {
+      supportedUnits: SUPPORTED_BASE_UNITS,
+      unsupportedUnitsFound: Array.from(unsupportedUnitsFoundSet),
+      hasUnsupportedUnits: unsupportedUnitsFoundSet.size > 0
+    },
+    reconciliation: {
+      status: totalSourceCases === 0 ? 'MISSING' : (hasMaterialMismatch ? 'MISMATCH' : 'MATCH'),
+      sourceTotalCases: totalSourceCases,
+      parsedTotalCases: totalParsedCases,
+      difference: totalDifference
+    },
+    productMapping: {
+      totalSkus: Object.keys(productsMap).length,
+      recognizedSkus: Object.keys(productsMap).length - missingProductsMap.size,
+      missingSkus: Array.from(missingProductsMap.keys())
+    },
+    lineMapping: {
+      totalLines: linesList.length,
+      recognizedLines: linesList.length - missingLinesSet.size,
+      missingLines: Array.from(missingLinesSet)
+    }
+  };
+
+  // Preview import status calculation
+  let previewStatus: ProductionPlanImportStatus = errorCount > 0
+    ? 'FAILED'
+    : (warningCount > 0 || duplicateVerification.status !== 'PASSED' || isYearRequiredAndUnconfirmed
+        ? 'REQUIRES_REVIEW'
+        : 'READY_TO_COMMIT');
+
   const notesList: string[] = [];
-  if (isDuplicateFile) {
-    notesList.push('Warning: File is an exact duplicate of a previously committed import (DUPLICATE_FILE).');
-    if (previewStatus === 'READY_TO_COMMIT') previewStatus = 'REQUIRES_REVIEW';
+  if (duplicateVerification.status === 'DUPLICATE_FOUND') {
+    notesList.push('Warning: File hash matches a previously committed import (DUPLICATE_FOUND).');
+  } else if (duplicateVerification.status === 'CHECK_FAILED') {
+    notesList.push('Warning: Duplicate check could not be verified (CHECK_FAILED). User acknowledgment required.');
   }
-  if (isOlderThanActive) {
-    notesList.push('Warning: Selected file period is older than the currently active plan (OLDER_THAN_ACTIVE_PLAN).');
-    if (previewStatus === 'READY_TO_COMMIT') previewStatus = 'REQUIRES_REVIEW';
+
+  if (activePlanComparison.status === 'OLDER_THAN_ACTIVE') {
+    notesList.push('Warning: Import period is older than active plan (OLDER_THAN_ACTIVE).');
+  } else if (activePlanComparison.status === 'OVERLAPS_ACTIVE') {
+    notesList.push('Warning: Import period overlaps active plan (OVERLAPS_ACTIVE).');
   }
+
+  if (hasRollover) {
+    notesList.push(`December-to-January year rollover detected across ${rolloverCount} date column(s).`);
+  }
+
+  if (hasMaterialMismatch) {
+    notesList.push(`Source total mismatch detected (Source: ${totalSourceCases}, Parsed: ${totalParsedCases}, Diff: ${totalDifference}).`);
+  }
+
+  const missingProductsList = Array.from(missingProductsMap.entries()).map(([code, desc]) => ({ code, desc }));
+  const missingLinesList = Array.from(missingLinesSet).map(code => ({ code, name: `Line ${code}` }));
 
   return {
     summary: {
@@ -521,22 +1107,31 @@ export const createImportPreview = async (
       ignoredRows,
       warningCount,
       errorCount,
-      parserVersion: 'v1.0.0',
+      parserVersion: 'v2.0.0',
       supersedesImportId: null,
-      notes: notesList.join(' ') || (errorCount > 0 ? 'Errors detected during structural validation. Ingestion aborted.' : '')
+      duplicateCheckStatus: duplicateVerification.status,
+      planComparisonStatus: activePlanComparison.status,
+      notes: notesList.join(' ') || (errorCount > 0 ? 'Errors detected during structural validation. Ingestion blocked until resolved.' : '')
     },
-    rows: parsedRows
+    rows: parsedRows,
+    reconciliation: reconciliationSummary,
+    diagnostics,
+    missingProducts: missingProductsList,
+    missingLines: missingLinesList
   };
 };
 
-// 7. Commit Production Plan Import
+// 11. Commit Production Plan Import
 export const commitProductionPlanImport = async (
   preview: ParsedPlanPreview,
   notes: string = ''
 ): Promise<string> => {
   if (!db) throw new Error('Firestore is not initialized.');
 
-  // Create real import document
+  if (preview.summary.errorCount > 0) {
+    throw new Error(`Cannot commit production plan import with ${preview.summary.errorCount} blocking error(s). Please resolve all errors before committing.`);
+  }
+
   const importsRef = collection(db, 'productionPlanImports');
   const importId = `imp_${Math.random().toString(36).substring(2, 11)}`;
 
@@ -551,10 +1146,8 @@ export const commitProductionPlanImport = async (
 
   const batch = writeBatch(db);
 
-  // Set the import summary document
   batch.set(doc(importsRef, importId), importDoc);
 
-  // Write staging row audits (stored nested under imports for cleanliness)
   preview.rows.forEach(row => {
     const rowRef = doc(collection(db, `productionPlanImports/${importId}/rows`));
     batch.set(rowRef, {
@@ -564,7 +1157,6 @@ export const commitProductionPlanImport = async (
     });
   });
 
-  // Query previous active entries to supersede
   await supersedePreviousProductionPlan(
     preview.summary.tenantId,
     preview.summary.siteId,
@@ -574,7 +1166,6 @@ export const commitProductionPlanImport = async (
     batch
   );
 
-  // Generate production entries (the actual active schedule cells)
   const entriesRef = collection(db, 'productionPlanEntries');
   preview.rows.forEach(row => {
     if (row.rowStatus === 'ERROR' || !row.matchedProductId || !row.productionLineCode) return;
@@ -586,7 +1177,7 @@ export const commitProductionPlanImport = async (
       productId: row.matchedProductId,
       productCodeSnapshot: row.productCode,
       descriptionSnapshot: row.matchedProductDescription || row.sourceProductDescription,
-      productionLineId: row.productionLineCode, // Matches lineCode as logical ID in local layouts
+      productionLineId: row.productionLineCode,
       productionLineCodeSnapshot: row.productionLineCode,
       productionDate: row.productionDate,
       plannedCases: row.plannedQuantity,
@@ -596,7 +1187,7 @@ export const commitProductionPlanImport = async (
       sourceSheetName: row.sourceSheetName,
       sourceRowNumber: row.sourceRowNumber,
       sourceUpdatedAt: Timestamp.fromDate(new Date()),
-      planVersion: '1.0',
+      planVersion: '2.0',
       status: 'PLANNED'
     };
 
@@ -612,7 +1203,7 @@ export const commitProductionPlanImport = async (
   return importId;
 };
 
-// 8. Supersede Previous Production Plan
+// 12. Supersede Previous Production Plan
 export const supersedePreviousProductionPlan = async (
   tenantId: string,
   siteId: string,
@@ -623,55 +1214,51 @@ export const supersedePreviousProductionPlan = async (
 ): Promise<void> => {
   if (!db) return;
 
-  // Mark overlapping entries as COMPLETE/CANCELLED or remove them to prevent visual duplicates
-  // To avoid orphaned plan entries, we delete or label older entries on matching dates
-  const entriesRef = collection(db, 'productionPlanEntries');
-  const qEntries = query(
-    entriesRef,
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId)
-  );
+  try {
+    const entriesRef = collection(db, 'productionPlanEntries');
+    const qEntries = query(
+      entriesRef,
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId)
+    );
 
-  const snapEntries = await getDocs(qEntries);
-  snapEntries.forEach(docSnap => {
-    // If the entry does not belong to the newly committed import, mark it or delete it.
-    // Deleting older uncommitted planned entries ensures layout freshness.
-    const entryData = docSnap.data();
-    if (entryData.productionDate) {
-      const pMillis = entryData.productionDate.toMillis();
-      if (pMillis >= periodStart.toMillis() && pMillis <= periodEnd.toMillis()) {
-        if (entryData.activeImportId !== newImportId && entryData.status === 'PLANNED') {
-          batch.delete(docSnap.ref);
+    const snapEntries = await getDocs(qEntries);
+    snapEntries.forEach(docSnap => {
+      const entryData = docSnap.data();
+      if (entryData.productionDate) {
+        const pMillis = entryData.productionDate.toMillis();
+        if (pMillis >= periodStart.toMillis() && pMillis <= periodEnd.toMillis()) {
+          if (entryData.activeImportId !== newImportId && entryData.status === 'PLANNED') {
+            batch.delete(docSnap.ref);
+          }
         }
       }
-    }
-  });
+    });
 
-  // Mark older imports in date range as SUPERSEDED
-  const importsRef = collection(db, 'productionPlanImports');
-  const qImports = query(
-    importsRef,
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId),
-    where('status', '==', 'COMMITTED')
-  );
+    const importsRef = collection(db, 'productionPlanImports');
+    const qImports = query(
+      importsRef,
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId),
+      where('status', '==', 'COMMITTED')
+    );
 
-  const snapImports = await getDocs(qImports);
-  snapImports.forEach(docSnap => {
-    const impData = docSnap.data() as ProductionPlanImport;
-    // Check overlapping period
-    if (
-      impData.id !== newImportId &&
-      impData.periodStart.toMillis() <= periodEnd.toMillis() &&
-      impData.periodEnd.toMillis() >= periodStart.toMillis()
-    ) {
-      batch.update(docSnap.ref, {
-        status: 'SUPERSEDED',
-        supersedesImportId: newImportId,
-        modifiedDate: serverTimestamp()
-      });
-    }
-  });
+    const snapImports = await getDocs(qImports);
+    snapImports.forEach(docSnap => {
+      const impData = docSnap.data() as ProductionPlanImport;
+      if (
+        impData.id !== newImportId &&
+        impData.periodStart.toMillis() <= periodEnd.toMillis() &&
+        impData.periodEnd.toMillis() >= periodStart.toMillis()
+      ) {
+        batch.update(docSnap.ref, {
+          status: 'SUPERSEDED',
+          supersedesImportId: newImportId,
+          modifiedDate: serverTimestamp()
+        });
+      }
+    });
+  } catch (err) {
+    console.warn('Error superseding previous plan entries:', err);
+  }
 };
-
-// Legacy LineProductionContext interface removed to keep context unified

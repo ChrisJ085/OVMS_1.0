@@ -317,7 +317,7 @@ export const DecisionEngineScenariosPage: React.FC = () => {
                   </h3>
                   <div className="flex items-center gap-4 mt-2 text-sm text-slate-400">
                     <span className="flex items-center gap-1.5"><Target className="w-4 h-4" /> {output.planningBandStatus}</span>
-                    <span className="flex items-center gap-1.5"><TrendingUp className="w-4 h-4" /> Qty: {output.inventoryTotal ?? scenarios[selectedScenario].input.inventoryTotal}</span>
+                    <span className="flex items-center gap-1.5"><TrendingUp className="w-4 h-4" /> Qty: {output.sourceSnapshot.inventoryTotal}</span>
                   </div>
                 </div>
                 

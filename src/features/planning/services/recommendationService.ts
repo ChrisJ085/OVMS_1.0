@@ -2,7 +2,7 @@ import { collection, query, where, getDocs, Timestamp, writeBatch, doc } from 'f
 import { db } from '../../../config/firebase';
 import { DecisionInputSnapshot, DecisionOutput } from '../../../types/decision';
 import { Recommendation, RecommendationStatus, PlannerDecision, OverrideFlags } from '../../../types/recommendation';
-import { evaluateDecision } from './decisionEngine';
+import { evaluateDecision, ENGINE_VERSION } from './decisionEngine';
 import { getProductInventory } from '../../inventory/services/inventoryService';
 import { getProductPlanningRule } from './planningRuleService';
 import { getProductProductionContext } from './productionService';
@@ -14,7 +14,6 @@ import { getProduct } from '../../inventory/services/productService';
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const PROMOTIONS_COLLECTION = 'promotions';
 const PROMOTION_RULES_COLLECTION = 'promotionProductRules';
-const ENGINE_VERSION = '1.0.0';
 
 // Simple hash function for fingerprinting
 const generateFingerprint = (input: DecisionInputSnapshot): string => {

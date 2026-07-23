@@ -73,6 +73,83 @@ export type ProductionPlanImportStatus =
   | 'FAILED'
   | 'SUPERSEDED';
 
+export type DuplicateCheckStatus = 'PASSED' | 'DUPLICATE_FOUND' | 'CHECK_FAILED';
+
+export type PlanComparisonStatus =
+  | 'OLDER_THAN_ACTIVE'
+  | 'OVERLAPS_ACTIVE'
+  | 'EXTENDS_ACTIVE'
+  | 'REPLACES_SAME_PERIOD'
+  | 'NEWER_NON_OVERLAPPING';
+
+export interface ImportReconciliationSummary {
+  totalSourceCases: number;
+  totalParsedCases: number;
+  totalDifference: number;
+  totalExcludedRows: number;
+  totalErrorRows: number;
+  hasMaterialMismatch: boolean;
+  byLine: Record<string, { sourceCases: number; parsedCases: number; diff: number }>;
+  byProduct: Record<string, { sourceCases: number; parsedCases: number; diff: number }>;
+  byDate: Record<string, { parsedCases: number }>;
+}
+
+export interface ImportDiagnostics {
+  yearResolution: {
+    resolvedYear: number;
+    method: 'EXPLICIT_HEADER_DATE' | 'METADATA_OR_TITLE' | 'FILE_OR_CURRENT_DATE' | 'USER_CONFIRMED';
+    plannerConfirmationRequired: boolean;
+    isConfirmed: boolean;
+    hasYearRollover: boolean;
+    rolloverDatesCount: number;
+  };
+  dateSequence: {
+    startDate: string;
+    endDate: string;
+    totalDateColumns: number;
+    isValidSequence: boolean;
+    issues: string[];
+  };
+  worksheetSelection: {
+    selectedSheetName: string;
+    headerRowIndex: number;
+    inspectedSheetsCount: number;
+    allDetectedSheets: string[];
+  };
+  duplicateVerification: {
+    status: DuplicateCheckStatus;
+    message: string;
+    duplicateImportId?: string;
+  };
+  activePlanComparison: {
+    status: PlanComparisonStatus;
+    message: string;
+    activePlanPeriodStart?: string;
+    activePlanPeriodEnd?: string;
+  };
+  unitValidation: {
+    supportedUnits: string[];
+    unsupportedUnitsFound: string[];
+    hasUnsupportedUnits: boolean;
+  };
+  reconciliation: {
+    status: 'MATCH' | 'MISMATCH' | 'MISSING';
+    sourceTotalCases: number;
+    parsedTotalCases: number;
+    difference: number;
+  };
+  productMapping: {
+    totalSkus: number;
+    recognizedSkus: number;
+    missingSkus: string[];
+  };
+  lineMapping: {
+    totalLines: number;
+    recognizedLines: number;
+    missingLines: string[];
+  };
+}
+
 export interface ProductionPlanImport {
   id: string;
   tenantId: string;
@@ -95,6 +172,8 @@ export interface ProductionPlanImport {
   errorCount: number;
   parserVersion: string;
   supersedesImportId: string | null;
+  duplicateCheckStatus?: DuplicateCheckStatus;
+  planComparisonStatus?: PlanComparisonStatus;
   notes: string;
   createdDate: Timestamp;
   modifiedDate: Timestamp;
@@ -117,12 +196,15 @@ export interface ProductionPlanRow {
   productionDate: Timestamp;
   plannedQuantity: number;
   sourceUnitOfMeasure: string;
-  casesPerPallet: number;
-  calculatedPallets: number;
+  casesPerPallet: number | null;
+  calculatedPallets: number | null;
   rowStatus: ProductionPlanRowStatus;
   validationCodes: string[];
   validationMessages: string[];
   sourceData: any;
+  sourceTotalQty?: number | null;
+  rowParsedQtySum?: number;
+  sourceTotalDiff?: number | null;
   createdDate: Timestamp;
 }
 
@@ -137,8 +219,8 @@ export interface ProductionPlanEntry {
   productionLineCodeSnapshot: string;
   productionDate: Timestamp;
   plannedCases: number;
-  casesPerPallet: number;
-  plannedPallets: number;
+  casesPerPallet: number | null;
+  plannedPallets: number | null;
   sourceType: 'SAP_MPPS7';
   sourceSheetName: string;
   sourceRowNumber: number;

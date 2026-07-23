@@ -21,227 +21,275 @@ service cloud.firestore {
         getUserProfile().accountStatus == 'ACTIVE';
     }
 
-    function isSuperuserEmail() {
-      return request.auth.token.email == 'chris.jeal@gxo.com' || 
-             request.auth.token.email == 'cjeal85@gmail.com';
-    }
-
     function isSuperuser() {
-      return isAuthenticated() && 
-        (isSuperuserEmail() || 
-         (hasUserProfile() && getUserProfile().role == 'PLATFORM_SUPERUSER'));
+      return isAccountActive() && 
+        getUserProfile().role == 'PLATFORM_SUPERUSER';
     }
 
     function isTenantAdmin(tenantId) {
       return isAccountActive() && 
         getUserProfile().role == 'TENANT_ADMIN' && 
-        getUserProfile().tenantId == tenantId;
+        (tenantId == null || getUserProfile().tenantId == tenantId);
     }
 
     function isPlanner(tenantId) {
       return isAccountActive() && 
         getUserProfile().role == 'PLANNER' && 
-        getUserProfile().tenantId == tenantId;
+        (tenantId == null || getUserProfile().tenantId == tenantId);
     }
 
     function isWarehouseOperator(tenantId) {
       return isAccountActive() && 
         getUserProfile().role == 'WAREHOUSE_OPERATOR' && 
-        getUserProfile().tenantId == tenantId;
+        (tenantId == null || getUserProfile().tenantId == tenantId);
     }
 
     function isViewer(tenantId) {
       return isAccountActive() && 
         getUserProfile().role == 'VIEWER' && 
-        getUserProfile().tenantId == tenantId;
+        (tenantId == null || getUserProfile().tenantId == tenantId);
     }
 
-    function hasReadAccess(tenantId) {
-      return isSuperuser() || 
-        isTenantAdmin(tenantId) || 
-        isPlanner(tenantId) || 
-        isWarehouseOperator(tenantId) || 
-        isViewer(tenantId);
+    function isDisplay(tenantId) {
+      return isAccountActive() && 
+        getUserProfile().role == 'DISPLAY' && 
+        (tenantId == null || getUserProfile().tenantId == tenantId);
     }
 
-    function hasWriteAccess(tenantId) {
+    function isAssignedToSite(siteId) {
+      let profile = getUserProfile();
+      return siteId == null || 
+        profile.siteIds == null ||
+        profile.siteIds.size() == 0 || 
+        siteId in profile.siteIds;
+    }
+
+    function hasTenantReadAccess(tenantId) {
       return isSuperuser() || 
-        isTenantAdmin(tenantId) || 
-        isPlanner(tenantId);
+        (isAccountActive() && (tenantId == null || getUserProfile().tenantId == tenantId));
+    }
+
+    function hasSiteReadAccess(tenantId, siteId) {
+      return hasTenantReadAccess(tenantId) && isAssignedToSite(siteId);
+    }
+
+    function getTenantId(res) {
+      return res != null ? res.data.tenantId : null;
+    }
+
+    function getSiteId(res) {
+      return res != null ? (('siteId' in res.data) ? res.data.siteId : null) : null;
+    }
+
+    function hasReadAccess(res) {
+      return isSuperuser() || hasSiteReadAccess(getTenantId(res), getSiteId(res));
+    }
+
+    function hasWriteAccess(reqRes, existRes) {
+      let tId = reqRes != null ? reqRes.data.tenantId : (existRes != null ? existRes.data.tenantId : null);
+      let sId = reqRes != null ? (('siteId' in reqRes.data) ? reqRes.data.siteId : null) : (existRes != null ? (('siteId' in existRes.data) ? existRes.data.siteId : null) : null);
+      return isSuperuser() || ((isTenantAdmin(tId) || isPlanner(tId)) && isAssignedToSite(sId));
+    }
+
+    function isOnlyUpdatingAllowedUserFields() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'displayName', 'jobTitle', 'passwordChangedAt', 'requiresPasswordChange', 
+        'lastLoginAt', 'modifiedDate', 'modifiedBy'
+      ]);
+    }
+
+    function isOnlyUpdatingWarehouseFields() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'warehouseProgress', 'status', 'progressQuantity', 'remainingQuantity', 
+        'progressPercent', 'startedAt', 'completedAt', 'blockedAt', 
+        'blockedReason', 'executionNotes', 'modifiedBy', 'modifiedDate'
+      ]);
     }
 
     // 1. Users collection
     match /users/{userId} {
-      allow read: if isAuthenticated() && (
-        request.auth.uid == userId || 
-        isSuperuser() || 
-        (resource != null && isAccountActive() && getUserProfile().role == 'TENANT_ADMIN' && getUserProfile().tenantId == resource.data.tenantId)
-      );
+      allow read: if isSuperuser() || 
+                  (isAuthenticated() && request.auth.uid == userId) ||
+                  (resource != null && isAccountActive() && getUserProfile().role != 'DISPLAY' && getUserProfile().tenantId == resource.data.tenantId);
       
-      // Updates
       allow update: if isAuthenticated() && (
-        // Users can update their own last login or passwordChangedAt details
-        (request.auth.uid == userId && 
-         resource != null &&
-         request.resource.data.role == resource.data.role && 
-         request.resource.data.tenantId == resource.data.tenantId) ||
-        // Superuser can write anything
         isSuperuser() ||
-        // Tenant Admin can update status/fields of users in their own tenant
-        (resource != null &&
-         isTenantAdmin(resource.data.tenantId) && 
+        (resource != null && isTenantAdmin(resource.data.tenantId) && 
          request.resource.data.tenantId == resource.data.tenantId && 
          request.resource.data.role != 'PLATFORM_SUPERUSER' && 
-         resource.data.role != 'PLATFORM_SUPERUSER')
+         resource.data.role != 'PLATFORM_SUPERUSER') ||
+        (request.auth.uid == userId && resource != null && isAccountActive() && isOnlyUpdatingAllowedUserFields())
       );
 
-      // Creation & deletion: handled via secure callable functions
-      allow create: if isAuthenticated() && (request.auth.uid == userId || isSuperuser());
+      allow create: if isAuthenticated() && (
+        isSuperuser() || 
+        (isAccountActive() && getUserProfile().role == 'TENANT_ADMIN' && 
+         request.resource.data.tenantId == getUserProfile().tenantId && 
+         request.resource.data.role != 'PLATFORM_SUPERUSER')
+      );
+      
       allow delete: if isSuperuser();
     }
 
     // 2. Tenants collection
     match /tenants/{tenantId} {
-      allow read: if isSuperuser() || (isAccountActive() && getUserProfile().tenantId == tenantId);
+      allow read: if isSuperuser() || (isAccountActive() && getUserProfile().role != 'DISPLAY' && getUserProfile().tenantId == tenantId);
       allow write: if isSuperuser();
     }
 
-    // 3. Site settings
+    // 3. Site settings (App Config)
     match /siteSettings/{settingsId} {
-      allow read: if isAuthenticated() && (isSuperuser() || isAccountActive());
-      allow write: if isSuperuser() || (isAuthenticated() && isTenantAdmin(resource.data.tenantId));
+      allow read: if isSuperuser() || isAccountActive();
+      allow create: if isSuperuser() || (isAuthenticated() && isTenantAdmin(request.resource.data.tenantId));
+      allow update: if isSuperuser() || (isAuthenticated() && isTenantAdmin(resource.data.tenantId) && 
+                                         request.resource.data.tenantId == resource.data.tenantId && 
+                                         request.resource.data.siteId == resource.data.siteId);
+      allow delete: if isSuperuser();
     }
 
-    // 4. Products and Locations
+    // 4. Products, Locations, Destinations, Production Lines
     match /products/{productId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || hasWriteAccess(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
     match /locations/{locationId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || hasWriteAccess(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
     match /destinations/{destinationId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || hasWriteAccess(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
     match /productionLines/{lineId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || hasWriteAccess(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
 
     // 5. Inventory Balances and Movements
     match /inventoryBalances/{balanceId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || 
-        isTenantAdmin(request.resource.data.tenantId) || 
-        isPlanner(request.resource.data.tenantId) || 
-        isWarehouseOperator(request.resource.data.tenantId);
-      allow delete: if isSuperuser();
+      allow read: if hasReadAccess(resource);
+      allow create, update: if hasWriteAccess(request.resource, resource) || 
+                               (isWarehouseOperator(getTenantId(request.resource)) && isAssignedToSite(getSiteId(request.resource)));
+      allow delete: if hasWriteAccess(null, resource);
     }
     match /inventoryMovements/{movementId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow create: if isSuperuser() || 
-        isTenantAdmin(request.resource.data.tenantId) || 
-        isPlanner(request.resource.data.tenantId) || 
-        isWarehouseOperator(request.resource.data.tenantId);
-      allow update, delete: if isSuperuser();
+      allow read: if hasReadAccess(resource);
+      allow create: if hasWriteAccess(request.resource, resource) || 
+                       (isWarehouseOperator(getTenantId(request.resource)) && isAssignedToSite(getSiteId(request.resource)));
+      allow update, delete: if hasWriteAccess(request.resource, resource);
     }
 
     // 6. Planning Rules, Promotions, Production Events, Recommendations
     match /planningRules/{ruleId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
     match /promotions/{promoId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
     match /productionEvents/{eventId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
     match /recommendations/{recId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
 
     // 7. Priorities
     match /priorities/{priorityId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      
-      // Planners, Tenant Admins, and Superusers can create/update fully
-      // Warehouse operators can update execution fields only
-      allow create: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
-      allow update: if isSuperuser() || 
-        isTenantAdmin(resource.data.tenantId) || 
-        isPlanner(resource.data.tenantId) ||
+      allow read: if hasReadAccess(resource);
+      allow create: if hasWriteAccess(request.resource, null);
+      allow update: if hasWriteAccess(request.resource, resource) ||
         (isWarehouseOperator(resource.data.tenantId) && 
-         request.resource.data.status == resource.data.status && 
-         request.resource.data.priorityCode == resource.data.priorityCode &&
-         // Allowed to modify only progress/execution-related values
-         request.resource.data.warehouseProgress == request.resource.data.warehouseProgress);
-      allow delete: if isSuperuser();
+         isAssignedToSite(getSiteId(resource)) &&
+         isOnlyUpdatingWarehouseFields());
+      allow delete: if hasWriteAccess(null, resource);
     }
 
     // 8. Announcements
     match /announcements/{annId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
 
     // 9. Exceptions
     match /exceptions/{exId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow write: if isSuperuser() || 
-        isTenantAdmin(request.resource.data.tenantId) || 
-        isPlanner(request.resource.data.tenantId) || 
-        isWarehouseOperator(request.resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow create: if hasWriteAccess(request.resource, null) || 
+                       (isWarehouseOperator(getTenantId(request.resource)) && isAssignedToSite(getSiteId(request.resource)));
+      allow update: if hasWriteAccess(request.resource, resource) || 
+                       (isWarehouseOperator(getTenantId(resource)) && isAssignedToSite(getSiteId(resource)));
+      allow delete: if hasWriteAccess(null, resource);
     }
 
     // 9b. Production Plan Entries, Imports, Rows, and Notes
     match /productionPlanEntries/{entryId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow create: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
-      allow update: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId) || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
-      allow delete: if isSuperuser() || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
+      allow read: if hasReadAccess(resource);
+      allow create: if isSuperuser() || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(request.resource.data.siteId));
+      allow update: if isSuperuser() || (isPlanner(resource.data.tenantId) && 
+                                         request.resource.data.tenantId == resource.data.tenantId &&
+                                         request.resource.data.siteId == resource.data.siteId);
+      allow delete: if isSuperuser();
     }
 
     match /productionPlanImports/{importId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow create: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
-      allow update: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId) || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
-      allow delete: if isSuperuser() || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
+      allow read: if hasReadAccess(resource) && getUserProfile().role != 'DISPLAY';
+      allow create: if isSuperuser() || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(request.resource.data.siteId));
+      allow update: if isSuperuser() || (isPlanner(resource.data.tenantId) && 
+                                         request.resource.data.tenantId == resource.data.tenantId &&
+                                         request.resource.data.siteId == resource.data.siteId &&
+                                         resource.data.status != 'COMMITTED');
+      allow delete: if isSuperuser();
 
       match /rows/{rowId} {
-        allow read: if hasReadAccess(resource.data.tenantId);
-        allow create: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
-        allow update: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId) || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
-        allow delete: if isSuperuser() || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
+        allow read: if (isSuperuser() || hasReadAccess(get(/databases/$(database)/documents/productionPlanImports/$(importId)))) && getUserProfile().role != 'DISPLAY';
+        allow create: if isSuperuser() || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(request.resource.data.siteId));
+        allow update: if isSuperuser() || (isPlanner(resource.data.tenantId) && 
+                                           request.resource.data.tenantId == resource.data.tenantId &&
+                                           request.resource.data.siteId == resource.data.siteId &&
+                                           get(/databases/$(database)/documents/productionPlanImports/$(importId)).data.status != 'COMMITTED');
+        allow delete: if isSuperuser();
       }
     }
 
     match /productionLinePlanNotes/{noteId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow create: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId);
-      allow update: if isSuperuser() || isPlanner(request.resource.data.tenantId) || isTenantAdmin(request.resource.data.tenantId) || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
-      allow delete: if isSuperuser() || isPlanner(resource.data.tenantId) || isTenantAdmin(resource.data.tenantId);
+      allow read: if hasReadAccess(resource) && getUserProfile().role != 'DISPLAY';
+      allow create: if isSuperuser() || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(request.resource.data.siteId));
+      allow update: if isSuperuser() || (isPlanner(resource.data.tenantId) && 
+                                         request.resource.data.tenantId == resource.data.tenantId &&
+                                         request.resource.data.siteId == resource.data.siteId);
+      allow delete: if isSuperuser();
     }
 
-    // 10. Audit Logs & Sessions
+    // 10. Audit Logs & Sessions & Import Jobs
     match /auditLogs/{logId} {
-      allow read: if isAuthenticated() && (isSuperuser() || getUserProfile().role == 'TENANT_ADMIN');
-      allow create: if isAuthenticated();
+      allow read: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
+      allow create: if isAuthenticated() && 
+                    (request.resource.data.userId == request.auth.uid || request.resource.data.performedBy == request.auth.uid) &&
+                    (isSuperuser() || request.resource.data.tenantId == getUserProfile().tenantId) &&
+                    isAssignedToSite(getSiteId(request.resource)) &&
+                    request.resource.data.createdDate is timestamp;
       allow update, delete: if isSuperuser();
     }
+
     match /importJobs/{jobId} {
-      allow read: if hasReadAccess(resource.data.tenantId);
-      allow create: if isSuperuser() || hasWriteAccess(request.resource.data.tenantId);
-      allow update, delete: if isSuperuser();
+      allow read: if hasReadAccess(resource);
+      allow write: if hasWriteAccess(request.resource, resource);
     }
+
     match /sessions/{sessionId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isSuperuser() || isTenantAdmin(resource.data.tenantId));
-      allow create, update: if isAuthenticated();
+      allow read: if isSuperuser() || 
+                  (isTenantAdmin(resource.data.tenantId)) || 
+                  (isAuthenticated() && request.auth.uid == resource.data.userId);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId 
+                    && request.resource.data.userId == resource.data.userId
+                    && request.resource.data.tenantId == resource.data.tenantId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      'lastActivityAt', 'logoutAt', 'siteId', 'modifiedBy', 'modifiedDate', 'status'
+                    ]);
       allow delete: if isSuperuser();
     }
   }

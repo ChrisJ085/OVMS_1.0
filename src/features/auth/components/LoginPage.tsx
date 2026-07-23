@@ -7,21 +7,17 @@ interface LoginPageProps {
   onLoginSuccess: (email: string, pass: string) => Promise<void>;
   authError: string | null;
   loading: boolean;
-  onTriggerBootstrap: () => Promise<void>;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ 
   onLoginSuccess, 
   authError, 
-  loading,
-  onTriggerBootstrap
+  loading
 }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [bootstrapLoading, setBootstrapLoading] = useState(false);
-  const [bootstrapMsg, setBootstrapMsg] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,19 +32,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       await onLoginSuccess(email.trim(), password);
     } catch (err: any) {
       console.error(err);
-    }
-  };
-
-  const handleBootstrap = async () => {
-    setBootstrapLoading(true);
-    setBootstrapMsg(null);
-    try {
-      await onTriggerBootstrap();
-      setBootstrapMsg('Bootstrap trigger successfully invoked. Default password is: Password123!');
-    } catch (err: any) {
-      setBootstrapMsg(`Bootstrap error: ${err.message || err}`);
-    } finally {
-      setBootstrapLoading(false);
     }
   };
 
@@ -144,30 +127,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <div className="flex items-center justify-center gap-1.5">
             <Info className="w-3.5 h-3.5 text-slate-400" />
             <span>Authorized access only. Logins are strictly audited.</span>
-          </div>
-
-          {/* Development Bootstrap Gated Tool */}
-          <div className="mt-2 p-3 bg-slate-950 rounded-lg border border-slate-800/40 text-left space-y-2">
-            <div className="flex items-center gap-1 text-slate-400 font-medium text-xs">
-              <Database className="w-3.5 h-3.5 text-amber-500" />
-              <span>Bootstrap Superuser Tool (Secure Admin Boot)</span>
-            </div>
-            <p className="text-[10px] text-slate-500 leading-relaxed">
-              This initiates the secure server-side bootstrap process to provision <b>chris.jeal@gxo.com</b> as PLATFORM_SUPERUSER.
-            </p>
-            <button
-              type="button"
-              onClick={handleBootstrap}
-              disabled={bootstrapLoading}
-              className="text-[10px] w-full border border-slate-800 hover:border-slate-700 bg-slate-900 text-slate-300 py-1 px-2 rounded hover:bg-slate-800 font-medium transition-colors"
-            >
-              {bootstrapLoading ? 'Invoking bootstrap...' : 'Run Superuser Bootstrap'}
-            </button>
-            {bootstrapMsg && (
-              <div className="p-2 bg-slate-900 border border-slate-800 text-[10px] text-amber-400 rounded-md">
-                {bootstrapMsg}
-              </div>
-            )}
           </div>
         </div>
 

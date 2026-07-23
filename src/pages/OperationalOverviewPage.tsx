@@ -1,0 +1,1043 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { collection, query, where, onSnapshot, getDocs, Timestamp, orderBy, limit } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { useDevelopmentContext } from '../contexts/DevelopmentContext';
+import { Priority, PriorityStatus } from '../types/priority';
+import { Recommendation } from '../types/recommendation';
+import { OperationalException, ExceptionSeverity } from '../types/exception';
+import { Announcement } from '../types/announcement';
+import { ProductionPlanImport, ProductionPlanEntry, ProductionEvent } from '../types/production';
+import { SiteSettings } from '../types/settings';
+import { PageHeader } from '../components/ui/PageHeader';
+import { SectionCard } from '../components/ui/SectionCard';
+import { StatusBadge, BadgeVariant } from '../components/ui/StatusBadge';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Package,
+  ArrowRight,
+  Plus,
+  FileSpreadsheet,
+  Megaphone,
+  RefreshCw,
+  Sliders,
+  ShieldAlert,
+  Users,
+  Radio,
+  Layers,
+  CalendarDays,
+  ExternalLink,
+  TrendingUp,
+  XCircle,
+  AlertOctagon,
+  Info,
+  Tv
+} from 'lucide-react';
+
+export const OperationalOverviewPage: React.FC = () => {
+  const { tenantId, siteId, site, userProfile } = useDevelopmentContext();
+  const navigate = useNavigate();
+
+  const role = userProfile?.role || 'VIEWER';
+  const isSuperOrAdmin = role === 'PLATFORM_SUPERUSER' || role === 'TENANT_ADMIN';
+  const isPlanner = role === 'PLANNER' || isSuperOrAdmin;
+  const isWarehouse = role === 'WAREHOUSE_OPERATOR';
+  const isDisplay = role === 'DISPLAY';
+
+  // Data states
+  const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [exceptions, setExceptions] = useState<OperationalException[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [latestImport, setLatestImport] = useState<ProductionPlanImport | null>(null);
+  const [productionEntries, setProductionEntries] = useState<ProductionPlanEntry[]>([]);
+  const [productionEvents, setProductionEvents] = useState<ProductionEvent[]>([]);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
+  const [activePromotionsCount, setActivePromotionsCount] = useState<number>(0);
+  const [activeSessionsCount, setActiveSessionsCount] = useState<number>(0);
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Time formatting helper in site timezone
+  const formatSiteTime = (ts: any) => {
+    if (!ts) return 'N/A';
+    try {
+      const date = ts.toDate ? ts.toDate() : new Date(ts);
+      if (isNaN(date.getTime())) return 'N/A';
+      return date.toLocaleString('en-GB', {
+        timeZone: siteSettings?.timezone || 'Europe/London',
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return 'N/A';
+    }
+  };
+
+  // Age helper
+  const getAgeString = (ts: any) => {
+    if (!ts) return '';
+    try {
+      const date = ts.toDate ? ts.toDate() : new Date(ts);
+      const diffMs = Date.now() - date.getTime();
+      const diffMins = Math.floor(diffMs / (1000 * 60));
+      if (diffMins < 60) return `${diffMins}m ago`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return `${diffHours}h ago`;
+      const diffDays = Math.floor(diffHours / 24);
+      return `${diffDays}d ago`;
+    } catch {
+      return '';
+    }
+  };
+
+  // Main Data Loading & Listeners
+  useEffect(() => {
+    if (!tenantId || !siteId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    // 1. Real-time priorities listener
+    const prioritiesQuery = query(
+      collection(db, 'priorities'),
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId)
+    );
+
+    const unsubPriorities = onSnapshot(
+      prioritiesQuery,
+      (snap) => {
+        const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Priority));
+        fetched.sort((a, b) => {
+          const tA = (a.createdDate as any)?.toMillis?.() || 0;
+          const tB = (b.createdDate as any)?.toMillis?.() || 0;
+          return tB - tA;
+        });
+        setPriorities(fetched);
+      },
+      (err) => {
+        console.error('Error listening to priorities:', err);
+        setError('Failed to load operational priorities');
+      }
+    );
+
+    // 2. Real-time exceptions listener
+    const exceptionsQuery = query(
+      collection(db, 'exceptions'),
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId)
+    );
+
+    const unsubExceptions = onSnapshot(
+      exceptionsQuery,
+      (snap) => {
+        const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as OperationalException));
+        setExceptions(fetched);
+      },
+      (err) => {
+        console.error('Error listening to exceptions:', err);
+      }
+    );
+
+    // 3. Real-time announcements listener
+    const announcementsQuery = query(
+      collection(db, 'announcements'),
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId)
+    );
+
+    const unsubAnnouncements = onSnapshot(
+      announcementsQuery,
+      (snap) => {
+        const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Announcement));
+        setAnnouncements(fetched);
+      },
+      (err) => {
+        console.error('Error listening to announcements:', err);
+      }
+    );
+
+    // 4. One-time query for recommendations
+    const fetchOneTimeData = async () => {
+      try {
+        // Recommendations
+        const recsQuery = query(
+          collection(db, 'recommendations'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          orderBy('generatedAt', 'desc'),
+          limit(50)
+        );
+        const recsSnap = await getDocs(recsQuery);
+        setRecommendations(recsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Recommendation)));
+
+        // Latest SAP Plan Import
+        const importsQuery = query(
+          collection(db, 'productionPlanImports'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          orderBy('uploadedAt', 'desc'),
+          limit(1)
+        );
+        const importSnap = await getDocs(importsQuery);
+        if (!importSnap.empty) {
+          setLatestImport({ id: importSnap.docs[0].id, ...importSnap.docs[0].data() } as ProductionPlanImport);
+        } else {
+          setLatestImport(null);
+        }
+
+        // Today's Production Entries
+        const prodEntriesQuery = query(
+          collection(db, 'productionPlanEntries'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          limit(100)
+        );
+        const entriesSnap = await getDocs(prodEntriesQuery);
+        setProductionEntries(entriesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as ProductionPlanEntry)));
+
+        // Production Events (running/delayed lines)
+        const prodEventsQuery = query(
+          collection(db, 'productionEvents'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId)
+        );
+        const eventsSnap = await getDocs(prodEventsQuery);
+        setProductionEvents(eventsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as ProductionEvent)));
+
+        // Active Promotions
+        const promosQuery = query(
+          collection(db, 'promotions'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId)
+        );
+        const promosSnap = await getDocs(promosQuery);
+        setActivePromotionsCount(promosSnap.size);
+
+        // Site Settings
+        const settingsQuery = query(
+          collection(db, 'siteSettings'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          limit(1)
+        );
+        const settingsSnap = await getDocs(settingsQuery);
+        if (!settingsSnap.empty) {
+          setSiteSettings({ id: settingsSnap.docs[0].id, ...settingsSnap.docs[0].data() } as SiteSettings);
+        }
+
+        // Active Sessions (for Admin)
+        if (isSuperOrAdmin) {
+          const sessionsQuery = query(
+            collection(db, 'userSessions'),
+            where('status', '==', 'ACTIVE'),
+            limit(50)
+          );
+          const sessionsSnap = await getDocs(sessionsQuery);
+          setActiveSessionsCount(sessionsSnap.size);
+        }
+      } catch (err: any) {
+        console.error('Error fetching overview data:', err);
+        setError(err.message || 'Error loading operational overview data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchOneTimeData();
+
+    return () => {
+      unsubPriorities();
+      unsubExceptions();
+      unsubAnnouncements();
+    };
+  }, [tenantId, siteId, role, isSuperOrAdmin]);
+
+  // Derived Summary Counts
+  const counts = useMemo(() => {
+    const awaitingRecs = recommendations.filter((r) => r.recommendationStatus === 'AWAITING_REVIEW').length;
+    
+    const activePris = priorities.filter((p) =>
+      ['ACTIVE', 'SCHEDULED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(p.priorityStatus)
+    );
+
+    const urgentPris = activePris.filter(
+      (p) =>
+        p.priorityLevelId?.toUpperCase().includes('URGENT') ||
+        p.priorityLevelId?.toUpperCase().includes('HIGH') ||
+        p.priorityLevelId === 'prio_urgent'
+    ).length;
+
+    const blockedWork = priorities.filter((p) => p.priorityStatus === 'BLOCKED').length;
+
+    const completedToday = priorities.filter((p) => {
+      if (p.priorityStatus !== 'COMPLETED') return false;
+      if (!p.completedAt) return false;
+      const d = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt as any);
+      const now = new Date();
+      return d.toDateString() === now.toDateString();
+    }).length;
+
+    const inventoryExceptions = exceptions.filter(
+      (e) =>
+        e.exceptionStatus === 'OPEN' &&
+        (e.entityType === 'INVENTORY' ||
+          ['BELOW_RETENTION', 'ABOVE_MAXIMUM', 'INVENTORY_STALE'].includes(e.exceptionType))
+    ).length;
+
+    const totalOpenExceptions = exceptions.filter((e) => e.exceptionStatus === 'OPEN').length;
+
+    // Production today calculations
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayEntries = productionEntries.filter((e) => {
+      if (!e.productionDate) return false;
+      const d = e.productionDate.toDate ? e.productionDate.toDate() : new Date(e.productionDate as any);
+      return d.toISOString().split('T')[0] === todayStr;
+    });
+
+    const plannedCasesToday = todayEntries.reduce((sum, e) => sum + (e.plannedCases || 0), 0);
+    const plannedPalletsToday = todayEntries.reduce((sum, e) => sum + (e.plannedPallets || 0), 0);
+
+    // Freshness issues
+    let freshnessIssues = 0;
+    if (!latestImport || latestImport.status !== 'COMMITTED') freshnessIssues++;
+    if (inventoryExceptions > 0) freshnessIssues++;
+
+    return {
+      awaitingRecs,
+      urgentPris,
+      activePris: activePris.length,
+      blockedWork,
+      completedToday,
+      inventoryExceptions,
+      totalOpenExceptions,
+      plannedCasesToday,
+      plannedPalletsToday,
+      plannedLinesToday: new Set(todayEntries.map((e) => e.productionLineId)).size,
+      freshnessIssues
+    };
+  }, [recommendations, priorities, exceptions, productionEntries, latestImport]);
+
+  // Active Announcements Filtered (not expired, active flag = true)
+  const activeAnnouncements = useMemo(() => {
+    const now = new Date();
+    return announcements.filter((a) => {
+      if (!a.active) return false;
+      if (a.expireAt) {
+        const exp = a.expireAt.toDate ? a.expireAt.toDate() : new Date(a.expireAt as any);
+        if (exp < now) return false;
+      }
+      return true;
+    });
+  }, [announcements]);
+
+  // Data Freshness Indicators
+  const freshnessData = useMemo(() => {
+    const sapImportTime = latestImport?.uploadedAt ? formatSiteTime(latestImport.uploadedAt) : 'No Import';
+    const sapStatus: BadgeVariant = !latestImport
+      ? 'blocked'
+      : latestImport.status === 'COMMITTED'
+      ? 'completed'
+      : 'warning';
+
+    const latestRecTime = recommendations[0]?.generatedAt
+      ? formatSiteTime(recommendations[0].generatedAt)
+      : 'N/A';
+
+    return [
+      {
+        name: 'SAP Production Plan',
+        lastUpdated: sapImportTime,
+        statusLabel: latestImport?.status === 'COMMITTED' ? 'Current' : !latestImport ? 'Missing' : 'Stale',
+        variant: sapStatus
+      },
+      {
+        name: 'Decision Engine Recommendations',
+        lastUpdated: latestRecTime,
+        statusLabel: recommendations.length > 0 ? 'Current' : 'Missing',
+        variant: recommendations.length > 0 ? 'completed' : 'warning'
+      },
+      {
+        name: 'Inventory Balances',
+        lastUpdated: 'Real-time',
+        statusLabel: 'Current',
+        variant: 'completed' as BadgeVariant
+      },
+      {
+        name: 'Warehouse Progress',
+        lastUpdated: 'Real-time',
+        statusLabel: 'Current',
+        variant: 'completed' as BadgeVariant
+      },
+      {
+        name: 'Promotions Look-Ahead',
+        lastUpdated: `${activePromotionsCount} active`,
+        statusLabel: activePromotionsCount > 0 ? 'Active' : 'None',
+        variant: activePromotionsCount > 0 ? 'completed' : 'hold' as BadgeVariant
+      }
+    ];
+  }, [latestImport, recommendations, activePromotionsCount, siteSettings]);
+
+  if (isDisplay) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto text-center">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 space-y-6 shadow-lg">
+          <Tv className="w-16 h-16 text-amber-400 mx-auto animate-pulse" />
+          <h2 className="text-2xl font-bold text-slate-100">Display / TV Mode Detected</h2>
+          <p className="text-slate-400 max-w-lg mx-auto">
+            This operational overview is optimized for desktop and operator interaction. Dedicated TV Displays should use the TV Dashboard layout.
+          </p>
+          <button
+            onClick={() => navigate('/tv-dashboard')}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold rounded-lg transition-colors"
+          >
+            Launch TV Dashboard <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 pb-12">
+      {/* Header */}
+      <PageHeader
+        title="Operational Overview"
+        description={`Real-time operational summary for ${site?.siteName || 'Current Site'} (${site?.tenantId || 'Tenant'})`}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Quick Actions (Role-gated) */}
+            {isPlanner && (
+              <>
+                <button
+                  onClick={() => navigate('/planning/recommendations')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-medium text-xs rounded-md transition-colors"
+                >
+                  <Sliders className="w-3.5 h-3.5" /> Review Recs
+                </button>
+
+                <button
+                  onClick={() => navigate('/planning/production-plan')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium text-xs rounded-md transition-colors"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" /> Import SAP Plan
+                </button>
+
+                <button
+                  onClick={() => navigate('/operations/priorities/new')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium text-xs rounded-md transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" /> Create Priority
+                </button>
+
+                <button
+                  onClick={() => navigate('/operations/announcements')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium text-xs rounded-md transition-colors"
+                >
+                  <Megaphone className="w-3.5 h-3.5 text-purple-400" /> Announcement
+                </button>
+              </>
+            )}
+
+            {isWarehouse && (
+              <button
+                onClick={() => navigate('/operations/warehouse')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-md transition-colors shadow-sm"
+              >
+                <Package className="w-4 h-4" /> Open Warehouse Execution
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      {/* Error state alert */}
+      {error && (
+        <div className="bg-red-950/80 border border-red-800 rounded-lg p-4 text-red-200 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <AlertOctagon className="w-5 h-5 text-red-400 shrink-0" />
+            <p className="text-sm">{error}</p>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-3 py-1 bg-red-900 hover:bg-red-800 text-red-100 text-xs font-medium rounded transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Role Banner / Context */}
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700 font-medium">
+            <Users className="w-3.5 h-3.5 text-amber-400" /> Role: {role}
+          </span>
+          <span className="hidden sm:inline text-slate-600">|</span>
+          <span>Timezone: <strong className="text-slate-300">{siteSettings?.timezone || 'Europe/London'}</strong></span>
+        </div>
+
+        {/* Admin specific site health indicator */}
+        {isSuperOrAdmin && (
+          <div className="flex items-center gap-4 text-slate-300">
+            <span className="flex items-center gap-1">
+              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> Active Sessions: <strong>{activeSessionsCount}</strong>
+            </span>
+            <span className="flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" /> Total Open Exceptions: <strong>{counts.totalOpenExceptions}</strong>
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Summary Cards Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Recommendations Awaiting Review */}
+        <div
+          onClick={() => navigate('/planning/recommendations?filter=requires-review')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-amber-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Recommendations
+            </span>
+            <Sliders className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">{counts.awaitingRecs}</span>
+            <span className="text-xs text-amber-400 font-medium">Awaiting Review</span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>Decision Engine</span>
+            <span className="text-amber-400 group-hover:underline flex items-center gap-1">
+              View <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Urgent Priorities */}
+        <div
+          onClick={() => navigate('/operations/priorities?filter=urgent')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-red-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Urgent Priorities
+            </span>
+            <AlertTriangle className="w-4 h-4 text-red-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">{counts.urgentPris}</span>
+            <span className="text-xs text-red-400 font-medium">High / Urgent</span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>Operational Floor</span>
+            <span className="text-red-400 group-hover:underline flex items-center gap-1">
+              View <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 3: Active Priorities */}
+        <div
+          onClick={() => navigate('/operations/priorities?filter=active')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-blue-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Active Priorities
+            </span>
+            <Activity className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">{counts.activePris}</span>
+            <span className="text-xs text-blue-400 font-medium">In Progress / Scheduled</span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>Warehouse Dispatch</span>
+            <span className="text-blue-400 group-hover:underline flex items-center gap-1">
+              View <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 4: Blocked Work */}
+        <div
+          onClick={() => navigate('/operations/priorities?filter=blocked')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-rose-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Blocked Work
+            </span>
+            <XCircle className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">{counts.blockedWork}</span>
+            <span className="text-xs text-rose-400 font-medium">Requires Attention</span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>Execution Blockers</span>
+            <span className="text-rose-400 group-hover:underline flex items-center gap-1">
+              View <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 5: Production Today */}
+        <div
+          onClick={() => navigate('/planning/production')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-emerald-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Planned Production
+            </span>
+            <CalendarDays className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">
+              {counts.plannedCasesToday ? counts.plannedCasesToday.toLocaleString() : '0'}
+            </span>
+            <span className="text-xs text-emerald-400 font-medium">
+              {counts.plannedPalletsToday ? `${counts.plannedPalletsToday} pallets` : 'Cases Today'}
+            </span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>{counts.plannedLinesToday} Lines Active Today</span>
+            <span className="text-emerald-400 group-hover:underline flex items-center gap-1">
+              View Plan <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 6: Active Promotions */}
+        <div
+          onClick={() => navigate('/planning/promotions')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-purple-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Active Promotions
+            </span>
+            <TrendingUp className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">{activePromotionsCount}</span>
+            <span className="text-xs text-purple-400 font-medium">In Look-Ahead</span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>Commercial Lift</span>
+            <span className="text-purple-400 group-hover:underline flex items-center gap-1">
+              View <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 7: Inventory Exceptions */}
+        <div
+          onClick={() => navigate('/operations/exceptions')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-amber-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Inventory Exceptions
+            </span>
+            <ShieldAlert className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">{counts.inventoryExceptions}</span>
+            <span className="text-xs text-amber-400 font-medium">Open Exceptions</span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>Retention & Over-Max</span>
+            <span className="text-amber-400 group-hover:underline flex items-center gap-1">
+              View <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Card 8: Data Freshness */}
+        <div
+          onClick={() => navigate('/admin/data-freshness')}
+          className="bg-slate-900 border border-slate-800 rounded-lg p-5 cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              Data Freshness
+            </span>
+            <RefreshCw className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-bold text-slate-100">
+              {latestImport?.status === 'COMMITTED' ? 'Fresh' : 'Check'}
+            </span>
+            <span className="text-xs text-cyan-400 font-medium">
+              {latestImport ? getAgeString(latestImport.uploadedAt) : 'No Import'}
+            </span>
+          </div>
+          <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
+            <span>SAP Sync</span>
+            <span className="text-cyan-400 group-hover:underline flex items-center gap-1">
+              Settings <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Grid Panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left 2 Columns: Priority Panel + Recommendation Panel + Production Panel */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Panel 1: Operational Priority Panel */}
+          <SectionCard
+            title="Active Operational Priorities"
+            description="Highest-impact active priorities requiring floor action"
+            actions={
+              <button
+                onClick={() => navigate('/operations/priorities')}
+                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+              >
+                View all ({priorities.length}) <ArrowRight className="w-3 h-3" />
+              </button>
+            }
+          >
+            {priorities.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 text-sm">
+                <CheckCircle className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
+                No active or blocked priorities for this site.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="text-slate-400 border-b border-slate-800 bg-slate-900/50">
+                    <tr>
+                      <th className="py-2.5 px-3">Product</th>
+                      <th className="py-2.5 px-3">Action</th>
+                      <th className="py-2.5 px-3">Quantity</th>
+                      <th className="py-2.5 px-3">Level</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Progress</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {priorities.slice(0, 5).map((p) => {
+                      const variant: BadgeVariant =
+                        p.priorityStatus === 'BLOCKED'
+                          ? 'blocked'
+                          : p.priorityStatus === 'IN_PROGRESS' || p.priorityStatus === 'ACTIVE'
+                          ? 'release'
+                          : 'hold';
+
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="font-semibold text-slate-200">{p.productCodeSnapshot}</div>
+                            <div className="text-[11px] text-slate-500 truncate max-w-[150px]">
+                              {p.descriptionSnapshot}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="font-mono text-amber-400">{p.actionTypeId || 'RELEASE'}</span>
+                            {p.destinationId && (
+                              <div className="text-[10px] text-slate-500">→ {p.destinationId}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 font-medium">
+                            {p.requestedQuantity ? `${p.requestedQuantity} cases` : 'N/A'}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                p.priorityLevelId?.toUpperCase().includes('URGENT')
+                                  ? 'bg-red-950 text-red-300 border border-red-800'
+                                  : 'bg-slate-800 text-slate-300'
+                              }`}
+                            >
+                              {p.priorityLevelId || 'NORMAL'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <StatusBadge variant={variant} label={p.priorityStatus} />
+                          </td>
+                          <td className="py-3 px-3 min-w-[120px]">
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                              <span>{p.progressPercent || 0}%</span>
+                              <span>{p.progressQuantity || 0}/{p.requestedQuantity || 0}</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-amber-500 transition-all"
+                                style={{ width: `${Math.min(100, p.progressPercent || 0)}%` }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SectionCard>
+
+          {/* Panel 2: Recommendations Awaiting Review */}
+          {isPlanner && (
+            <SectionCard
+              title="Recommendations Awaiting Review"
+              description="Automated Decision Engine outputs requiring planner sign-off"
+              actions={
+                <button
+                  onClick={() => navigate('/planning/recommendations')}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                >
+                  Workspace ({counts.awaitingRecs}) <ArrowRight className="w-3 h-3" />
+                </button>
+              }
+            >
+              {counts.awaitingRecs === 0 ? (
+                <div className="text-center py-8 text-slate-500 text-sm">
+                  <CheckCircle className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
+                  No recommendations awaiting review. All clear!
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {recommendations
+                    .filter((r) => r.recommendationStatus === 'AWAITING_REVIEW')
+                    .slice(0, 4)
+                    .map((r) => (
+                      <div
+                        key={r.id}
+                        onClick={() => navigate(`/planning/recommendations/${r.id}`)}
+                        className="bg-slate-900/80 border border-slate-800 rounded-lg p-3.5 hover:border-amber-500/40 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-200 text-sm">
+                              {r.productCodeSnapshot}
+                            </span>
+                            <span className="text-xs text-slate-400">• {r.descriptionSnapshot}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                            <span>
+                              Stock: <strong className="text-slate-200">{r.sourceSnapshot?.inventoryTotal ?? 'N/A'}</strong>
+                            </span>
+                            <span>•</span>
+                            <span>
+                              Action:{' '}
+                              <strong className="text-amber-400">
+                                {r.decisionOutput?.actionTypeId || 'RELEASE'} ({r.decisionOutput?.recommendedQuantity || 0} cases)
+                              </strong>
+                            </span>
+                            <span>•</span>
+                            <span className="text-slate-500">{getAgeString(r.generatedAt)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {r.sourceSnapshot?.dataQualityWarnings?.length ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800">
+                              Warning
+                            </span>
+                          ) : null}
+                          <button className="px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded text-xs font-medium transition-colors">
+                            Review
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </SectionCard>
+          )}
+
+          {/* Panel 3: Production Today & Scheduling */}
+          <SectionCard
+            title="Production Today"
+            description="Active line status and planned SAP production schedule"
+            actions={
+              <button
+                onClick={() => navigate('/planning/production')}
+                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+              >
+                Full Schedule <ArrowRight className="w-3 h-3" />
+              </button>
+            }
+          >
+            {/* Notice constraint: Planned production is NOT inventory */}
+            <div className="bg-slate-900/90 border border-amber-500/30 rounded p-3 mb-4 text-xs text-amber-300/90 flex items-center gap-2">
+              <Info className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                <strong>Operational Note:</strong> Planned production runs represent upcoming manufacturing schedule and are strictly separate from physical inventory balances.
+              </span>
+            </div>
+
+            {!latestImport ? (
+              <div className="text-center py-6 text-slate-500 text-sm">
+                <FileSpreadsheet className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                SAP production plan has not been imported for this site.
+                {isPlanner && (
+                  <div className="mt-3">
+                    <button
+                      onClick={() => navigate('/planning/production-plan')}
+                      className="px-4 py-2 bg-amber-500 text-slate-950 rounded text-xs font-semibold hover:bg-amber-600 transition-colors"
+                    >
+                      Import MPPS7 Plan
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-slate-900 p-4 rounded-lg border border-slate-800 space-y-2">
+                  <span className="text-xs font-medium text-slate-400 uppercase">Latest SAP Workbook</span>
+                  <div className="text-sm font-semibold text-slate-200 truncate">{latestImport.fileName}</div>
+                  <div className="text-xs text-slate-500 flex items-center justify-between">
+                    <span>Imported: {formatSiteTime(latestImport.uploadedAt)}</span>
+                    <StatusBadge variant={latestImport.status === 'COMMITTED' ? 'completed' : 'warning'} label={latestImport.status} />
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 p-4 rounded-lg border border-slate-800 space-y-2">
+                  <span className="text-xs font-medium text-slate-400 uppercase">Today's Planned Output</span>
+                  <div className="text-2xl font-bold text-emerald-400">
+                    {counts.plannedCasesToday.toLocaleString()} <span className="text-xs font-normal text-slate-400">cases</span>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Across {counts.plannedLinesToday} active production lines ({counts.plannedPalletsToday} pallets)
+                  </div>
+                </div>
+              </div>
+            )}
+          </SectionCard>
+        </div>
+
+        {/* Right 1 Column: Exception Panel + Data Freshness + Announcements */}
+        <div className="space-y-6">
+          {/* Panel 4: Exception Panel */}
+          <SectionCard
+            title="Open Operational Exceptions"
+            description="Active alerts grouped by severity"
+            actions={
+              <button
+                onClick={() => navigate('/operations/exceptions')}
+                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+              >
+                Centre ({exceptions.filter((e) => e.exceptionStatus === 'OPEN').length}) <ArrowRight className="w-3 h-3" />
+              </button>
+            }
+          >
+            {exceptions.filter((e) => e.exceptionStatus === 'OPEN').length === 0 ? (
+              <div className="text-center py-6 text-slate-500 text-xs">
+                <CheckCircle className="w-6 h-6 text-emerald-500/40 mx-auto mb-1" />
+                No open operational exceptions.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {exceptions
+                  .filter((e) => e.exceptionStatus === 'OPEN')
+                  .slice(0, 5)
+                  .map((ex) => {
+                    const badgeVariant: BadgeVariant =
+                      ex.severity === 'CRITICAL' ? 'urgent' : ex.severity === 'WARNING' ? 'warning' : 'information';
+
+                    return (
+                      <div
+                        key={ex.id}
+                        onClick={() => navigate('/operations/exceptions')}
+                        className="p-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 transition-colors cursor-pointer space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-slate-200 truncate">{ex.title}</span>
+                          <StatusBadge variant={badgeVariant} label={ex.severity} />
+                        </div>
+                        <p className="text-[11px] text-slate-400 line-clamp-2">{ex.message}</p>
+                        <div className="text-[10px] text-slate-500 flex items-center justify-between pt-1">
+                          <span>Category: {ex.entityType}</span>
+                          <span>{getAgeString(ex.firstDetectedAt)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </SectionCard>
+
+          {/* Panel 5: Data Freshness Status */}
+          <SectionCard title="Data Freshness" description="Source sync and timestamp status">
+            <div className="space-y-3">
+              {freshnessData.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/60 last:border-0">
+                  <div>
+                    <div className="font-medium text-slate-200">{item.name}</div>
+                    <div className="text-[11px] text-slate-500">{item.lastUpdated}</div>
+                  </div>
+                  <StatusBadge variant={item.variant} label={item.statusLabel} />
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+
+          {/* Panel 6: Active Site Announcements */}
+          <SectionCard
+            title="Site Announcements"
+            description="Active messages for current shift"
+            actions={
+              isPlanner ? (
+                <button
+                  onClick={() => navigate('/operations/announcements')}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-medium"
+                >
+                  Manage
+                </button>
+              ) : undefined
+            }
+          >
+            {activeAnnouncements.length === 0 ? (
+              <div className="text-center py-6 text-slate-500 text-xs">
+                <Megaphone className="w-6 h-6 text-slate-600 mx-auto mb-1" />
+                No active site announcements.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activeAnnouncements.slice(0, 3).map((a) => (
+                  <div
+                    key={a.id}
+                    className="p-3 bg-slate-900 border border-slate-800 rounded-lg space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-200">{a.title}</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                          a.severity === 'CRITICAL'
+                            ? 'bg-red-950 text-red-300 border border-red-800'
+                            : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {a.severity}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">{a.message}</p>
+                    <div className="text-[10px] text-slate-500 pt-1">
+                      Posted: {formatSiteTime(a.createdDate)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+        </div>
+      </div>
+    </div>
+  );
+};

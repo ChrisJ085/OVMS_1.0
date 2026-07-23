@@ -17,9 +17,10 @@ import {
   addDoc,
   Timestamp
 } from 'firebase/firestore';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { db, auth, app } from '../../../config/firebase';
+import { db, auth, app, firebaseConfig } from '../../../config/firebase';
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -248,6 +249,11 @@ export const AdminOverviewPage: React.FC = () => {
       return;
     }
 
+    if (!newUserTempPass || newUserTempPass.length < 8) {
+      alert('Temporary password must be at least 8 characters long.');
+      return;
+    }
+
     setCreatingUser(true);
     setCreatingUserMsg(null);
 
@@ -255,35 +261,92 @@ export const AdminOverviewPage: React.FC = () => {
     const sitesArray = newUserSiteIds.split(',').map(s => s.trim()).filter(Boolean);
 
     try {
-      // 1. Try secure Cloud Function first
-      const functionsInstance = getFunctions(app!);
-      const createUserFunc = httpsCallable(functionsInstance, 'createTenantUser');
-      await createUserFunc({
-        email: newUserEmail.toLowerCase().trim(),
-        displayName: newUserDisplayName.trim(),
-        jobTitle: newUserJobTitle.trim(),
-        role: newUserRole,
-        tenantId: newUserRole === 'PLATFORM_SUPERUSER' ? null : actualTenantId,
-        siteIds: newUserRole === 'PLATFORM_SUPERUSER' ? [] : sitesArray,
-        temporaryPassword: newUserTempPass
-      });
-      setCreatingUserMsg('User account and Firestore profile successfully created.');
+      // 1. First try secure Cloud Function if deployed
+      try {
+        const functionsInstance = getFunctions(app!);
+        const createUserFunc = httpsCallable(functionsInstance, 'createTenantUser');
+        await createUserFunc({
+          email: newUserEmail.toLowerCase().trim(),
+          displayName: newUserDisplayName.trim(),
+          jobTitle: newUserJobTitle.trim(),
+          role: newUserRole,
+          tenantId: actualTenantId,
+          siteIds: sitesArray,
+          temporaryPassword: newUserTempPass
+        });
+        setCreatingUserMsg(`Success! User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`);
+      } catch (funcErr: any) {
+        console.warn('Cloud Function user creation unavailable, using secondary Auth instance fallback:', funcErr);
+
+        // 2. Direct secondary Auth instance provisioning (preserves active admin session)
+        const secondaryAppName = 'SecondaryAuthAppForProvisioning';
+        let secondaryApp;
+        const existingApps = getApps();
+        const foundApp = existingApps.find(a => a.name === secondaryAppName);
+        if (foundApp) {
+          secondaryApp = foundApp;
+        } else {
+          secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+        }
+
+        const secondaryAuth = getAuth(secondaryApp);
+
+        // Create Firebase Auth user with temporary password
+        const userCredential = await createUserWithEmailAndPassword(
+          secondaryAuth,
+          newUserEmail.toLowerCase().trim(),
+          newUserTempPass
+        );
+
+        const newUid = userCredential.user.uid;
+
+        // Sign out secondary auth instance immediately
+        await signOut(secondaryAuth);
+
+        // Create corresponding Firestore document in /users/{newUid}
+        const newUserProfile: UserProfile = {
+          uid: newUid,
+          email: newUserEmail.toLowerCase().trim(),
+          displayName: newUserDisplayName.trim(),
+          jobTitle: newUserJobTitle.trim(),
+          role: newUserRole,
+          tenantId: actualTenantId || 'tenant_dev',
+          siteIds: sitesArray,
+          accountStatus: 'ACTIVE',
+          requiresPasswordChange: true, // Forces first-login password change!
+          failedLoginAttempts: 0,
+          failedAttemptWindowStartedAt: null,
+          lockedAt: null,
+          lastLoginAt: null,
+          passwordChangedAt: null,
+          createdBy: userProfile?.uid || 'ADMIN',
+          createdDate: Timestamp.now(),
+          modifiedBy: userProfile?.uid || 'ADMIN',
+          modifiedDate: Timestamp.now()
+        };
+
+        await setDoc(doc(db!, 'users', newUid), newUserProfile);
+
+        setCreatingUserMsg(`Account successfully created for ${newUserEmail.toLowerCase().trim()} with temporary password "${newUserTempPass}". The user will be prompted to change their password on first login.`);
+      }
+
       // Reset form
       setNewUserEmail('');
       setNewUserDisplayName('');
       setNewUserJobTitle('');
       setNewUserSiteIds('');
+      setNewUserTempPass('TempPass123!');
     } catch (err: any) {
-      console.warn('Cloud Function user creation failed, falling back to direct creation:', err);
-      
-      // 2. Client-side fallback if allowed
-      try {
-        const secondaryAuth = getAuth(app!);
-        // Create auth account (note: this will sign out the admin if using the same auth instance, so we warn about direct fallback limit)
-        setCreatingUserMsg(`Direct browser-level user creation of other accounts would disrupt your active session. To complete direct provisioning, please register user in your Firebase console using Email: ${newUserEmail}, and then write their custom userProfile document under /users/ with UID in Firestore.`);
-      } catch (directErr: any) {
-        setCreatingUserMsg(`Error: ${directErr.message}`);
+      console.error('Error provisioning user:', err);
+      let errorText = err.message || 'Failed to create user account.';
+      if (err.code === 'auth/email-already-in-use') {
+        errorText = 'An account with this email address already exists in Firebase Authentication.';
+      } else if (err.code === 'auth/invalid-email') {
+        errorText = 'The email address provided is invalid.';
+      } else if (err.code === 'auth/weak-password') {
+        errorText = 'The temporary password must be at least 6 characters long.';
       }
+      setCreatingUserMsg(`Error: ${errorText}`);
     } finally {
       setCreatingUser(false);
       fetchUsers();
@@ -553,7 +616,12 @@ export const AdminOverviewPage: React.FC = () => {
           {/* User Account Provisioning Form */}
           <div className="space-y-4">
             <SectionCard title="Provision New Account">
-              <form onSubmit={handleCreateUser} className="space-y-4">
+              {userProfile?.role !== 'TENANT_ADMIN' && userProfile?.role !== 'PLATFORM_SUPERUSER' ? (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-md text-sm">
+                  Notice: Adding and provisioning user accounts requires Tenant Admin or Superuser permissions. Planners and Viewers do not have access to manage users.
+                </div>
+              ) : (
+                <form onSubmit={handleCreateUser} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Email Address</label>
                   <input
@@ -596,7 +664,6 @@ export const AdminOverviewPage: React.FC = () => {
                     onChange={e => setNewUserRole(e.target.value as UserRole)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
                   >
-                    {userProfile?.role === 'PLATFORM_SUPERUSER' && <option value="PLATFORM_SUPERUSER">Platform Superuser</option>}
                     <option value="TENANT_ADMIN">Tenant Administrator</option>
                     <option value="PLANNER">Planner</option>
                     <option value="WAREHOUSE_OPERATOR">Warehouse Operator</option>
@@ -604,7 +671,7 @@ export const AdminOverviewPage: React.FC = () => {
                   </select>
                 </div>
 
-                {userProfile?.role === 'PLATFORM_SUPERUSER' && newUserRole !== 'PLATFORM_SUPERUSER' && (
+                {userProfile?.role === 'PLATFORM_SUPERUSER' && (
                   <div className="space-y-1.5 animate-fade-in">
                     <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Tenant Code</label>
                     <input
@@ -618,8 +685,7 @@ export const AdminOverviewPage: React.FC = () => {
                   </div>
                 )}
 
-                {newUserRole !== 'PLATFORM_SUPERUSER' && (
-                  <div className="space-y-1.5">
+                <div className="space-y-1.5">
                     <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Site IDs (Comma-separated)</label>
                     <input
                       type="text"
@@ -630,7 +696,6 @@ export const AdminOverviewPage: React.FC = () => {
                     />
                     <p className="text-[10px] text-slate-500">Leave blank to inherit all tenant sites.</p>
                   </div>
-                )}
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Temporary Password</label>
@@ -659,6 +724,7 @@ export const AdminOverviewPage: React.FC = () => {
                   </div>
                 )}
               </form>
+            )}
             </SectionCard>
           </div>
         </div>
