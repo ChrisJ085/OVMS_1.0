@@ -6,7 +6,7 @@ import Papa from 'papaparse';
 import { ValidationResult } from '../../../types/importExport';
 import { validateImportData, commitImportData } from '../services/importExportService';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
-import { useAuth } from '../../../features/auth/context/AuthContext';
+import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 type ImportType = 'PRODUCTS' | 'LOCATIONS' | 'INVENTORY' | 'PLANNING_RULES' | 'PRODUCTION_EVENTS' | 'PROMOTIONS';

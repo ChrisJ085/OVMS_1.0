@@ -8,8 +8,8 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { createPriority, checkDuplicatePriority } from '../services/priorityService';
 import { getProduct } from '../../inventory/services/productService';
-import { useAuth } from '../../../../features/auth/context/AuthContext';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useAuth } from '../../auth/context/AuthContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const CreatePriorityPage: React.FC = () => {
   const { currentUser } = useAuth();

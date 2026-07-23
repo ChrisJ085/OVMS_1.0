@@ -18,10 +18,8 @@ export const ProductionPlanPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('current-plan');
 
   const { userProfile } = useAuth();
-  const { currentSite } = useSiteContext();
+  const { tenantId, siteId } = useSiteContext();
 
-  const tenantId = currentSite?.tenantId || '';
-  const siteId = currentSite?.id || '';
   const userFullName = userProfile?.fullName || 'Production Planner';
 
   // Master Data hook

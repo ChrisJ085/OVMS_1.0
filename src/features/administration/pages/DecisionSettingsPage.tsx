@@ -4,7 +4,7 @@ import { SiteSettings } from '../../../types/settings';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { Save } from 'lucide-react';
-import { useAuth } from '../../../features/auth/context/AuthContext';
+import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const DecisionSettingsPage: React.FC = () => {

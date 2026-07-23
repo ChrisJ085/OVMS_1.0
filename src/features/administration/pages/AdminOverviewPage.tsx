@@ -37,7 +37,7 @@ import {
   Building
 } from 'lucide-react';
 import { UserProfile, UserRole, AccountStatus, Tenant } from '../../../types/auth';
-import { useAuth } from '../../../features/auth/context/AuthContext';
+import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const AdminOverviewPage: React.FC = () => {

@@ -8,8 +8,8 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { ArrowLeft, AlertTriangle, CheckCircle, Info, Calculator, Clock, PlayCircle, Settings, Box, RefreshCw } from 'lucide-react';
 import { generateRecommendationForProduct, updateRecommendationStatus } from '../services/recommendationService';
 import { PlannerDecision, OverrideFlags } from '../../../types/recommendation';
-import { useAuth } from '../../../../features/auth/context/AuthContext';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useAuth } from '../../auth/context/AuthContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const RecommendationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();

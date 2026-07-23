@@ -13,9 +13,11 @@ vi.mock('../../features/auth/context/AuthContext', () => ({
 
 vi.mock('../../contexts/SiteContext', () => ({
   useSiteContext: () => ({
-    currentSite: { id: 'site-1', name: 'Site 1' },
-    sites: [{ id: 'site-1', name: 'Site 1' }],
-    switchSite: vi.fn()
+    tenantId: 'tenant-1',
+    siteId: 'site-1',
+    siteName: 'Site 1',
+    availableSites: [{ tenantId: 'tenant-1', siteId: 'site-1', siteName: 'Site 1', tenantName: 'Tenant 1', timezone: 'UTC' }],
+    setSite: vi.fn()
   })
 }));
 

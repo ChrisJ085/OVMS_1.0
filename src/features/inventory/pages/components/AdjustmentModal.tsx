@@ -5,7 +5,7 @@ import { ProductLookup } from '../../components/ProductLookup';
 import { LocationLookup } from '../../components/LocationLookup';
 import { adjustInventory, transferInventory } from '../../services/inventoryService';
 import { UnitOfMeasure } from '../../../../types/configuration';
-import { useAuth } from '../../../../features/auth/context/AuthContext';
+import { useAuth } from '../../../auth/context/AuthContext';
 import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export type AdjustmentType = 'INCREASE' | 'DECREASE' | 'TRANSFER';
