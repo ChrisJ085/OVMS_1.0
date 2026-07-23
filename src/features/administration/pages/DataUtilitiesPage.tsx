@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { Download, Upload, Database, CheckCircle, AlertTriangle, XCircle, RotateCcw } from 'lucide-react';
 import Papa from 'papaparse';
 import { ValidationResult } from '../../../types/importExport';
 import { validateImportData, commitImportData } from '../services/importExportService';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
+import { useAuth } from '../../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 type ImportType = 'PRODUCTS' | 'LOCATIONS' | 'INVENTORY' | 'PLANNING_RULES' | 'PRODUCTION_EVENTS' | 'PROMOTIONS';
 
 export const DataUtilitiesPage: React.FC = () => {
-  const { tenantId, siteId, currentUser, developmentMode } = useDevelopmentContext();
+  const { currentUser } = useAuth();
+  const { tenantId, siteId } = useSiteContext();
+  const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
   const [activeTab, setActiveTab] = useState<'imports' | 'history' | 'exports'>('imports');
 
   const [selectedType, setSelectedType] = useState<ImportType>('PRODUCTS');

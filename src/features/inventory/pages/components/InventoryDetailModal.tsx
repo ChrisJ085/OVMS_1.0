@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, History, Archive, AlertTriangle } from 'lucide-react';
 import { InventoryBalance, InventoryMovement } from '../../../../types/inventory';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { subscribeToBalances, subscribeToMovements } from '../../services/inventoryService';
 import { subscribeToCollection } from '../../../../services/firestoreBase';
 import { collections } from '../../../configuration/services/configurationService';
@@ -9,6 +8,7 @@ import { StorageArea, UnitOfMeasure } from '../../../../types/configuration';
 import { where } from 'firebase/firestore';
 import { Location } from '../../../../types/inventory';
 import { DataTable } from '../../../../components/ui/DataTable';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface InventoryDetailModalProps {
   isOpen: boolean;
@@ -21,7 +21,7 @@ interface InventoryDetailModalProps {
 export const InventoryDetailModal: React.FC<InventoryDetailModalProps> = ({ 
   isOpen, onClose, productId, productCode, productDesc
 }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);

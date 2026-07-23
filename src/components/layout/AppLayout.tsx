@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useMatches } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { WifiOff } from 'lucide-react';
+import { usePageTitle } from '../../hooks/usePageTitle';
 
 export const AppLayout: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
+  const matches = useMatches();
+  const currentMatch = matches[matches.length - 1];
+  const title = (currentMatch?.handle as any)?.title;
+  usePageTitle(title);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);

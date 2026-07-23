@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToLocations } from '../services/locationService';
 import { Location } from '../../../types/inventory';
 import { Search } from 'lucide-react';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 interface LocationLookupProps {
   value?: string; // locationId
@@ -11,7 +11,7 @@ interface LocationLookupProps {
 }
 
 export const LocationLookup: React.FC<LocationLookupProps> = ({ value, onChange, disabled }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [locations, setLocations] = useState<Location[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);

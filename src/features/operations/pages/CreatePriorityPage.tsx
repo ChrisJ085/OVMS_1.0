@@ -2,16 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { Recommendation } from '../../../types/recommendation';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { createPriority, checkDuplicatePriority } from '../services/priorityService';
 import { getProduct } from '../../inventory/services/productService';
+import { useAuth } from '../../../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const CreatePriorityPage: React.FC = () => {
-  const { tenantId, siteId, currentUser } = useDevelopmentContext();
+  const { currentUser } = useAuth();
+  const { tenantId, siteId } = useSiteContext();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const recommendationId = searchParams.get('recommendationId');

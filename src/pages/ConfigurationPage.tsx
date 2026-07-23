@@ -6,7 +6,6 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../components/ui/States';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { Settings, Plus, RotateCcw } from 'lucide-react';
-import { useDevelopmentContext } from '../contexts/DevelopmentContext';
 import { 
   collections, 
   seedDevelopmentConfiguration,
@@ -18,6 +17,7 @@ import {
 import { subscribeToCollection } from '../services/firestoreBase';
 import { where } from 'firebase/firestore';
 import { ConfigItemModal } from '../features/configuration/components/ConfigItemModal';
+import { useSiteContext } from '../../contexts/SiteContext';
 
 const TABS = [
   { id: 'sites', label: 'Sites', collection: collections.SITES, codeField: 'siteCode' },
@@ -31,7 +31,8 @@ const TABS = [
 ];
 
 export const ConfigurationPage: React.FC = () => {
-  const { tenantId, siteId, developmentMode } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
+  const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
   const [activeTab, setActiveTab] = useState(TABS[0]);
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

@@ -4,15 +4,15 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { DataTable } from '../../../components/ui/DataTable';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { Search } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToMovements } from '../services/inventoryService';
 import { InventoryMovement } from '../../../types/inventory';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { Location } from '../../../types/inventory';
 import { where } from 'firebase/firestore';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const InventoryMovementsPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   

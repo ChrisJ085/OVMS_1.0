@@ -7,13 +7,15 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { ArrowLeft, AlertTriangle, CheckCircle, Info, Calculator, Clock, PlayCircle, Settings, Box, RefreshCw } from 'lucide-react';
 import { generateRecommendationForProduct, updateRecommendationStatus } from '../services/recommendationService';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { PlannerDecision, OverrideFlags } from '../../../types/recommendation';
+import { useAuth } from '../../../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const RecommendationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { userProfile } = useAuth();
+  const { tenantId, siteId } = useSiteContext();
   
   const [rec, setRec] = useState<Recommendation | null>(null);
   const [loading, setLoading] = useState(true);
@@ -343,41 +345,83 @@ export const RecommendationDetailPage: React.FC = () => {
           {isEditable ? (
             <SectionCard title="Planner Decision">
               <div className="space-y-4">
-                {!isOverriding && !isDismissing ? (
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-slate-400">Please review the recommendation and choose an action.</p>
-                    </div>
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={() => setIsDismissing(true)} 
-                        className="px-4 py-2 border border-slate-700 rounded-md text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors"
-                      >
-                        Dismiss
-                      </button>
-                      <button 
-                        onClick={() => setIsOverriding(true)} 
-                        className="px-4 py-2 border border-brand-500/30 rounded-md text-sm font-medium text-brand-400 hover:bg-brand-500/10 transition-colors"
-                      >
-                        Override
-                      </button>
-                      <button 
-                        onClick={handleApprove} 
-                        disabled={actionLoading || !out.recommendedActionTypeId} 
-                        className="px-4 py-2 bg-brand-500 rounded-md text-sm font-medium text-slate-900 hover:bg-brand-400 transition-colors disabled:opacity-50"
-                      >
-                        Approve
-                      </button>
-                    </div>
-                  </div>
-                ) : isOverriding ? (
-                  <div className="space-y-4 bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-medium text-slate-200">Override Recommendation</h3>
-                      <button className="text-sm text-slate-400 hover:text-slate-200" onClick={() => setIsOverriding(false)}>Cancel</button>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
+                {(() => {
+                  const configIssues = out.dataQualityIssues.filter(i => i.code === 'CONFIGURATION_MISSING');
+                  const hasConfigIssues = configIssues.length > 0;
+                  const isAuthorizedToEditSettings = userProfile && (userProfile.role === 'PLATFORM_SUPERUSER' || userProfile.role === 'TENANT_ADMIN');
+
+                  return (
+                    <>
+                      {hasConfigIssues && (
+                        <div className="p-4 bg-red-950/40 border border-red-800 rounded-lg space-y-3">
+                          <div className="flex items-start gap-3 justify-between">
+                            <div className="flex items-start gap-3">
+                              <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <h3 className="text-sm font-semibold text-red-200">Decision Engine Configuration Incomplete</h3>
+                                <p className="text-xs text-red-400 mt-1">
+                                  The decision engine was evaluated without a complete or valid site-specific configuration. 
+                                  Approval is blocked until these settings are resolved.
+                                </p>
+                                <ul className="list-disc list-inside text-xs text-red-400/80 mt-2 space-y-1">
+                                  {configIssues.map((issue, idx) => (
+                                    <li key={idx}>{issue.message}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                            {isAuthorizedToEditSettings && (
+                              <button
+                                onClick={() => navigate('/admin/decision-settings')}
+                                className="px-3 py-1.5 bg-red-900/60 hover:bg-red-900 text-red-200 rounded text-xs font-semibold transition-colors flex-shrink-0"
+                              >
+                                Go to Settings
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {!isOverriding && !isDismissing ? (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm text-slate-400">
+                              {hasConfigIssues 
+                                ? "Recommendation evaluation is incomplete due to missing configuration." 
+                                : "Please review the recommendation and choose an action."}
+                            </p>
+                          </div>
+                          <div className="flex gap-3">
+                            <button 
+                              onClick={() => setIsDismissing(true)} 
+                              className="px-4 py-2 border border-slate-700 rounded-md text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+                            >
+                              Dismiss
+                            </button>
+                            <button 
+                              onClick={() => setIsOverriding(true)} 
+                              disabled={hasConfigIssues}
+                              className="px-4 py-2 border border-brand-500/30 rounded-md text-sm font-medium text-brand-400 hover:bg-brand-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              Override
+                            </button>
+                            <button 
+                              onClick={handleApprove} 
+                              disabled={actionLoading || !out.recommendedActionTypeId || hasConfigIssues} 
+                              className="px-4 py-2 bg-brand-500 rounded-md text-sm font-medium text-slate-900 hover:bg-brand-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              Approve
+                            </button>
+                          </div>
+                        </div>
+                      ) : isOverriding ? (
+                        <div className="space-y-4 bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                          <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-medium text-slate-200">Override Recommendation</h3>
+                            <button className="text-sm text-slate-400 hover:text-slate-200" onClick={() => setIsOverriding(false)}>Cancel</button>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-slate-400 mb-1">Action Type</label>
                         <select 
@@ -455,6 +499,9 @@ export const RecommendationDetailPage: React.FC = () => {
                     </div>
                   </div>
                 )}
+                </>
+                  );
+                })()}
               </div>
             </SectionCard>
           ) : (

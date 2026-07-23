@@ -3,9 +3,9 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { ProductionEvent } from '../../../../types/production';
 import { UnitOfMeasure } from '../../../../types/configuration';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { updateProductionEvent } from '../../services/productionService';
 import { Timestamp } from 'firebase/firestore';
+import { useSiteContext } from '../../../../../contexts/SiteContext';
 
 interface ProductionActionModalProps {
   isOpen: boolean;
@@ -18,7 +18,7 @@ interface ProductionActionModalProps {
 export const ProductionActionModal: React.FC<ProductionActionModalProps> = ({ 
   isOpen, onClose, item, actionType, uoms 
 }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [submitting, setSubmitting] = useState(false);
   const [actualQuantity, setActualQuantity] = useState<string>('');
   const [delayReason, setDelayReason] = useState<string>('');

@@ -1,17 +1,12 @@
 import React from 'react';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
 import { Building2, Settings2, LogOut, User, Shield } from 'lucide-react';
+import { useAuth } from '../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../contexts/SiteContext';
 
 export const Header: React.FC = () => {
-  const { 
-    siteId, 
-    siteName, 
-    availableSites, 
-    setSite, 
-    developmentMode,
-    userProfile,
-    logout 
-  } = useDevelopmentContext();
+  const { userProfile, logout } = useAuth();
+  const { siteId, siteName, availableSites, setSite } = useSiteContext();
+  const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
 
   const handleLogout = async () => {
     try {

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { Recommendation } from '../../../types/recommendation';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
@@ -9,6 +8,7 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { generateRecommendationForProduct } from '../services/recommendationService';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 const SUMMARY_TILES = [
   { id: 'requires-review', label: 'Requires Review', color: 'bg-blue-900 text-blue-100 border-blue-700' },
@@ -20,7 +20,7 @@ const SUMMARY_TILES = [
 ];
 
 export const RecommendationsWorkspacePage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const navigate = useNavigate();
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);

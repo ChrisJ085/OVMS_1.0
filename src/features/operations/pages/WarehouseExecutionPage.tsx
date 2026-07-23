@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { Priority, PriorityStatus } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { CheckCircle, Clock, AlertTriangle, Activity, Package, ArrowRight, Play, Check, Pause, Ban } from 'lucide-react';
 import { executePriorityUpdate } from '../services/priorityService';
+import { useSiteContext } from '../../../../features/configuration/context/SiteContext';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -20,7 +20,7 @@ const TABS = [
 ];
 
 export const WarehouseExecutionPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('new');

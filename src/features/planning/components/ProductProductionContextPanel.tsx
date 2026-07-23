@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { getProductProductionContext } from '../services/productionService';
 import { ProductProductionContext, ProductionRiskStatus } from '../../../types/production';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
@@ -9,13 +8,14 @@ import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductionLine } from '../../../types/configuration';
 import { where } from 'firebase/firestore';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface ProductProductionContextPanelProps {
   productId: string;
 }
 
 export const ProductProductionContextPanel: React.FC<ProductProductionContextPanelProps> = ({ productId }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [context, setContext] = useState<ProductProductionContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [lines, setLines] = useState<ProductionLine[]>([]);

@@ -5,14 +5,14 @@ import { DataTable } from '../../../components/ui/DataTable';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { Plus, Search, CalendarDays } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToPromotions } from '../services/promotionService';
 import { PromotionWithPhase } from '../../../types/promotion';
 import { PromotionModal } from './components/PromotionModal';
 import { useNavigate } from 'react-router-dom';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const PromotionsPage: React.FC = () => {
-  const { tenantId } = useDevelopmentContext();
+  const { tenantId } = useSiteContext();
   const navigate = useNavigate();
   const [promotions, setPromotions] = useState<PromotionWithPhase[]>([]);
   

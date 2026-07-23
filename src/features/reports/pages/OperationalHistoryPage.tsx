@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Search, Filter, Calendar, Download } from 'lucide-react';
 import { Priority } from '../../../types/priority';
 import { Recommendation } from '../../../types/recommendation';
 import { OperationalException } from '../../../types/exception';
 import { Announcement } from '../../../types/announcement';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 // Normalised history item
 interface HistoryEvent {
@@ -23,7 +23,7 @@ interface HistoryEvent {
 }
 
 export const OperationalHistoryPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [loading, setLoading] = useState(false);
   const [events, setEvents] = useState<HistoryEvent[]>([]);
   

@@ -3,10 +3,10 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { ProductionEvent } from '../../../../types/production';
 import { ProductionLine, UnitOfMeasure } from '../../../../types/configuration';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { createProductionEvent, updateProductionEvent } from '../../services/productionService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { Timestamp } from 'firebase/firestore';
+import { useSiteContext } from '../../../../../contexts/SiteContext';
 
 interface ProductionEventModalProps {
   isOpen: boolean;
@@ -19,7 +19,7 @@ interface ProductionEventModalProps {
 export const ProductionEventModal: React.FC<ProductionEventModalProps> = ({ 
   isOpen, onClose, item, lines, uoms 
 }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<ProductionEvent>>({});
   const [submitting, setSubmitting] = useState(false);
   const [plannedStartInput, setPlannedStartInput] = useState('');

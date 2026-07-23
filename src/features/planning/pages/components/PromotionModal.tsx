@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { Promotion, PromotionImportance, PromotionStatus } from '../../../../types/promotion';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { createPromotion, updatePromotion } from '../../services/promotionService';
 import { Timestamp } from 'firebase/firestore';
+import { useSiteContext } from '../../../../../contexts/SiteContext';
 
 interface PromotionModalProps {
   isOpen: boolean;
@@ -15,7 +15,7 @@ interface PromotionModalProps {
 export const PromotionModal: React.FC<PromotionModalProps> = ({ 
   isOpen, onClose, item
 }) => {
-  const { tenantId } = useDevelopmentContext();
+  const { tenantId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<Promotion>>({});
   const [submitting, setSubmitting] = useState(false);
   

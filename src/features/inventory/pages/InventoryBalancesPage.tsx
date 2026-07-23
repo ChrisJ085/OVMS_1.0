@@ -4,7 +4,6 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { DataTable } from '../../../components/ui/DataTable';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { Plus, Search, Archive, AlertTriangle } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToBalances, COLLECTIONS } from '../services/inventoryService';
 import { subscribeToProducts } from '../services/productService';
 import { InventoryBalance } from '../../../types/inventory';
@@ -15,9 +14,10 @@ import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { where } from 'firebase/firestore';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const InventoryBalancesPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);

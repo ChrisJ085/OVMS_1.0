@@ -342,4 +342,181 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     expect(output.dataQualityIssues.some(i => i.code === 'PROMOTION_CONFLICT')).toBe(true);
     expect(output.dataQualityIssues.length).toBeGreaterThanOrEqual(3);
   });
+
+  // Scenario 15: Valid configuration resolution and production output integrity
+  it('Scenario 15: Valid configuration resolution and production output integrity returns custom version and correct IDs', () => {
+    const customConfig: DecisionConfiguration = {
+      configurationVersion: 'v2.1.4',
+      holdActionId: 'ACT_HOLD_CUSTOM',
+      reviewActionId: 'ACT_REVIEW_CUSTOM',
+      releaseActionId: 'ACT_RELEASE_CUSTOM',
+      asPerScheduleActionId: 'ACT_SCHED_CUSTOM',
+      urgentPriorityId: 'PRIO_URGENT_CUSTOM',
+      normalPriorityId: 'PRIO_NORMAL_CUSTOM',
+      lowPriorityId: 'PRIO_LOW_CUSTOM',
+      validActionIds: ['ACT_HOLD_CUSTOM', 'ACT_REVIEW_CUSTOM', 'ACT_RELEASE_CUSTOM', 'ACT_SCHED_CUSTOM'],
+      validPriorityIds: ['PRIO_URGENT_CUSTOM', 'PRIO_NORMAL_CUSTOM', 'PRIO_LOW_CUSTOM'],
+      validDestinationIds: ['DEST_DC1']
+    };
+
+    const input = createBaseInput({
+      inventoryTotal: 250, // Available = 150
+      planningRule: {
+        ...basePlanningRule,
+        defaultActionTypeId: 'ACT_RELEASE_CUSTOM',
+        defaultPriorityLevelId: 'PRIO_NORMAL_CUSTOM'
+      },
+      configuration: customConfig
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.versionInfo.configurationVersion).toBe('v2.1.4');
+    expect(output.recommendedActionTypeId).toBe('ACT_RELEASE_CUSTOM');
+    expect(output.recommendedPriorityLevelId).toBe('PRIO_NORMAL_CUSTOM');
+    expect(output.dataQualityIssues.some(i => i.code === 'CONFIGURATION_MISSING')).toBe(false);
+  });
+
+  // Scenario 16: Missing configuration fallback in production evaluation
+  it('Scenario 16: Missing configuration in production evaluation returns CONFIGURATION_MISSING', () => {
+    const input = createBaseInput({
+      configuration: null // No configuration supplied
+    });
+
+    // We do not pass a configOverride, representing production evaluation
+    const output = evaluateDecision(input, undefined);
+
+    expect(output.dataQualityStatus).toBe('CONFIGURATION_MISSING');
+    expect(output.dataQualityIssues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking)).toBe(true);
+    expect(output.recommendedActionTypeId).toBeNull();
+  });
+
+  // Scenario 17: Incomplete configuration triggers CONFIGURATION_MISSING
+  it('Scenario 17: Incomplete configuration missing required releaseActionId triggers blocking CONFIGURATION_MISSING', () => {
+    const incompleteConfig: DecisionConfiguration = {
+      configurationVersion: 'v1.0.0',
+      holdActionId: 'ACT_HOLD',
+      reviewActionId: 'ACT_REVIEW',
+      releaseActionId: null, // Missing!
+      urgentPriorityId: 'PRIO_URGENT',
+      normalPriorityId: 'PRIO_NORMAL',
+      lowPriorityId: 'PRIO_LOW'
+    };
+
+    const input = createBaseInput({
+      configuration: incompleteConfig
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.dataQualityIssues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking)).toBe(true);
+    expect(output.reasonCodes).toContain('CONFIGURATION_MISSING');
+  });
+
+  // Scenario 18: Inactive action reference detection
+  it('Scenario 18: Inactive action reference detection flags blocking CONFIGURATION_MISSING', () => {
+    const config: DecisionConfiguration = {
+      ...DEFAULT_DECISION_CONFIG,
+      holdActionId: 'ACT_HOLD_INACTIVE',
+      validActionIds: ['ACT_REVIEW', 'ACT_RELEASE'],
+      inactiveActionIds: ['ACT_HOLD_INACTIVE']
+    };
+
+    const input = createBaseInput({ configuration: config });
+    const issues = validateDecisionOutput({ recommendedActionTypeId: 'ACT_RELEASE' }, input, config);
+
+    expect(issues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking && i.message.includes('inactive'))).toBe(true);
+  });
+
+  // Scenario 19: Unknown priority reference detection
+  it('Scenario 19: Unknown priority reference detection flags blocking CONFIGURATION_MISSING', () => {
+    const config: DecisionConfiguration = {
+      ...DEFAULT_DECISION_CONFIG,
+      urgentPriorityId: 'PRIO_UNKNOWN',
+      validPriorityIds: ['PRIO_NORMAL', 'PRIO_LOW']
+    };
+
+    const input = createBaseInput({ configuration: config });
+    const issues = validateDecisionOutput({ recommendedActionTypeId: 'ACT_RELEASE' }, input, config);
+
+    expect(issues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking && i.message.includes('unknown'))).toBe(true);
+  });
+
+  // Scenario 20: Inactive destination reference detection
+  it('Scenario 20: Inactive destination reference detection flags non-blocking warning CONFIGURATION_MISSING', () => {
+    const config: DecisionConfiguration = {
+      ...DEFAULT_DECISION_CONFIG,
+      defaultDestinationRules: {
+        defaultDestinationId: 'DEST_INACTIVE'
+      },
+      validDestinationIds: ['DEST_ACTIVE'],
+      inactiveDestinationIds: ['DEST_INACTIVE']
+    };
+
+    const input = createBaseInput({ configuration: config });
+    const issues = validateDecisionOutput({ recommendedActionTypeId: 'ACT_RELEASE' }, input, config);
+
+    expect(issues.some(i => i.code === 'CONFIGURATION_MISSING' && !i.blocking && i.severity === 'WARNING' && i.message.includes('inactive'))).toBe(true);
+  });
+
+  // Scenario 21: Output validation blocks unknown recommended action ID
+  it('Scenario 21: Output validation blocks unknown recommended action ID', () => {
+    const config: DecisionConfiguration = {
+      ...DEFAULT_DECISION_CONFIG,
+      validActionIds: ['ACT_HOLD', 'ACT_REVIEW', 'ACT_RELEASE']
+    };
+
+    const input = createBaseInput({ configuration: config });
+    const invalidOutput = {
+      recommendedActionTypeId: 'ACT_UNKNOWN_999'
+    };
+
+    const issues = validateDecisionOutput(invalidOutput, input, config);
+
+    expect(issues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking && i.message.includes('unknown'))).toBe(true);
+  });
+
+  // Scenario 22: Output validation blocks inactive recommended priority ID
+  it('Scenario 22: Output validation blocks inactive recommended priority ID', () => {
+    const config: DecisionConfiguration = {
+      ...DEFAULT_DECISION_CONFIG,
+      validPriorityIds: ['PRIO_NORMAL', 'PRIO_LOW'],
+      inactivePriorityIds: ['PRIO_URGENT']
+    };
+
+    const input = createBaseInput({ configuration: config });
+    const invalidOutput = {
+      recommendedActionTypeId: 'ACT_RELEASE',
+      recommendedPriorityLevelId: 'PRIO_URGENT'
+    };
+
+    const issues = validateDecisionOutput(invalidOutput, input, config);
+
+    expect(issues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking && i.message.includes('inactive'))).toBe(true);
+  });
+
+  // Scenario 23: Missing configuration version detection
+  it('Scenario 23: Missing configuration version detection flags blocking CONFIGURATION_MISSING', () => {
+    const config: DecisionConfiguration = {
+      ...DEFAULT_DECISION_CONFIG,
+      configurationVersion: '' // Missing version
+    };
+
+    const input = createBaseInput({ configuration: config });
+    const issues = validateDecisionOutput({ recommendedActionTypeId: 'ACT_RELEASE' }, input, config);
+
+    expect(issues.some(i => i.code === 'CONFIGURATION_MISSING' && i.blocking && i.message.includes('version'))).toBe(true);
+  });
+
+  // Scenario 24: Unresolved action/priority IDs do not return placeholders
+  it('Scenario 24: Unresolved action/priority IDs do not return placeholder strings', () => {
+    const input = createBaseInput({
+      configuration: null // Missing configuration
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.recommendedActionTypeId).toBeNull();
+    expect(output.recommendedPriorityLevelId).toBeNull();
+  });
 });

@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { OperationalException, ExceptionStatus } from '../../../types/exception';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { updateExceptionStatus, runExceptionEvaluation } from '../services/exceptionService';
 import { AlertTriangle, Clock, CheckCircle, Search, Filter, MessageSquare, Ban, Play } from 'lucide-react';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
 export const ExceptionCentrePage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [exceptions, setExceptions] = useState<OperationalException[]>([]);
   const [loading, setLoading] = useState(true);
   const [operatorName, setOperatorName] = useState(() => localStorage.getItem(DEV_OPERATOR_KEY) || 'Dev Operator');

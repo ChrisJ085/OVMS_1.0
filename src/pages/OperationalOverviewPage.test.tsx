@@ -14,15 +14,23 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-let mockDevContext = {
+let mockAuthContext = {
   userProfile: { role: 'PLANNER', tenantId: 'tenant-1', siteId: 'site-1' },
+};
+
+let mockSiteContext = {
   tenantId: 'tenant-1',
   siteId: 'site-1',
   site: { siteId: 'site-1', tenantId: 'tenant-1', siteName: 'Milton Keynes' },
+  siteName: 'Milton Keynes',
 };
 
-vi.mock('../contexts/DevelopmentContext', () => ({
-  useDevelopmentContext: () => mockDevContext,
+vi.mock('../features/auth/context/AuthContext', () => ({
+  useAuth: () => mockAuthContext,
+}));
+
+vi.mock('../contexts/SiteContext', () => ({
+  useSiteContext: () => mockSiteContext,
 }));
 
 // Mock Firestore functions
@@ -79,11 +87,14 @@ describe('OperationalOverviewPage Test Suite', () => {
     mockRecommendationsDocs = [];
     mockImportDocs = [];
     mockEntriesDocs = [];
-    mockDevContext = {
+    mockAuthContext = {
       userProfile: { role: 'PLANNER', tenantId: 'tenant-1', siteId: 'site-1' },
+    };
+    mockSiteContext = {
       tenantId: 'tenant-1',
       siteId: 'site-1',
       site: { siteId: 'site-1', tenantId: 'tenant-1', siteName: 'Milton Keynes' },
+      siteName: 'Milton Keynes',
     };
   });
 
@@ -103,8 +114,8 @@ describe('OperationalOverviewPage Test Suite', () => {
   });
 
   it('renders Warehouse Operator overview with execution shortcut', () => {
-    mockDevContext = {
-      ...mockDevContext,
+    mockAuthContext = {
+      ...mockAuthContext,
       userProfile: { role: 'WAREHOUSE_OPERATOR', tenantId: 'tenant-1', siteId: 'site-1' },
     };
 
@@ -119,8 +130,8 @@ describe('OperationalOverviewPage Test Suite', () => {
   });
 
   it('renders Viewer overview in read-only mode', () => {
-    mockDevContext = {
-      ...mockDevContext,
+    mockAuthContext = {
+      ...mockAuthContext,
       userProfile: { role: 'VIEWER', tenantId: 'tenant-1', siteId: 'site-1' },
     };
 
@@ -159,10 +170,11 @@ describe('OperationalOverviewPage Test Suite', () => {
   });
 
   it('handles cross-site switch by displaying updated site name', () => {
-    mockDevContext = {
-      ...mockDevContext,
+    mockSiteContext = {
+      ...mockSiteContext,
       site: { siteId: 'site-2', tenantId: 'tenant-1', siteName: 'Northampton Hub' },
       siteId: 'site-2',
+      siteName: 'Northampton Hub',
     };
 
     render(

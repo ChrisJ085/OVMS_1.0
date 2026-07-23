@@ -3,8 +3,8 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { Location } from '../../../../types/inventory';
 import { StorageArea } from '../../../../types/configuration';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { createLocation, updateLocation } from '../../services/locationService';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -16,7 +16,7 @@ interface LocationModalProps {
 export const LocationModal: React.FC<LocationModalProps> = ({ 
   isOpen, onClose, item, storageAreas 
 }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<Location>>({});
   const [submitting, setSubmitting] = useState(false);
 

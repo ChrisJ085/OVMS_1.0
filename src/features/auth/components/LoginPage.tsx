@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Eye, EyeOff, Lock, Mail, AlertTriangle, Database, Info } from 'lucide-react';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { isFirebaseConfigured } from '../../../config/firebase';
+import { usePageTitle } from '../../../hooks/usePageTitle';
 
 interface LoginPageProps {
   onLoginSuccess: (email: string, pass: string) => Promise<void>;
@@ -14,6 +15,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   authError, 
   loading
 }) => {
+  usePageTitle('Login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -48,7 +50,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             OVMS Control Center
           </h1>
           <p className="text-sm text-slate-400">
-            Out-of-Stock Vulnerability Management System
+            Operations Visual Management System
           </p>
         </div>
 

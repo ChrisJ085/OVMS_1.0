@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from '../../../features/auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import {
   createSessionRecord,

@@ -70,57 +70,142 @@ exports.bootstrapSuperuser = functions.https.onCall(async (data, context) => {
 /**
  * 2. Create User Profile & Auth account (restricted to PLATFORM_SUPERUSER and TENANT_ADMIN)
  */
-exports.createTenantUser = functions.https.onCall(async (data, context) => {
-  // Check authentication
+exports.createOvmsUser = functions.https.onCall(async (data, context) => {
+  // 1. Require the caller to be authenticated
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
   }
 
   const callerUid = context.auth.uid;
+  
+  // 2. Load the caller's trusted user profile
   const callerProfileSnap = await db.collection('users').doc(callerUid).get();
   if (!callerProfileSnap.exists) {
     throw new functions.https.HttpsError('permission-denied', 'Caller profile not found.');
   }
 
   const callerProfile = callerProfileSnap.data();
-  const { email, displayName, jobTitle, role, tenantId, siteIds, temporaryPassword } = data;
 
-  // Enforce role permission hierarchy
+  // 3. Confirm caller accountStatus is ACTIVE
+  if (callerProfile.accountStatus !== 'ACTIVE') {
+    throw new functions.https.HttpsError('permission-denied', 'Your administrator account is not active.');
+  }
+
+  // 4. Confirm caller role is PLATFORM_SUPERUSER or TENANT_ADMIN
   if (callerProfile.role !== 'PLATFORM_SUPERUSER' && callerProfile.role !== 'TENANT_ADMIN') {
     throw new functions.https.HttpsError('permission-denied', 'Only Platform Superusers and Tenant Admins can create users.');
   }
 
-  // Tenant Admin cannot create users for another tenant, nor can they create superusers
+  const { email, displayName, jobTitle, role, tenantId, siteIds, accountStatus, temporaryPassword } = data;
+
+  // 5. Validate all inputs
+  if (!email || !displayName || !role) {
+    throw new functions.https.HttpsError('invalid-argument', 'Email, Display Name, and Role are required.');
+  }
+
+  const validRoles = ['PLATFORM_SUPERUSER', 'TENANT_ADMIN', 'PLANNER', 'WAREHOUSE_OPERATOR', 'VIEWER', 'DISPLAY'];
+  if (!validRoles.includes(role)) {
+    throw new functions.https.HttpsError('invalid-argument', `Invalid role specified: ${role}`);
+  }
+
+  // Enforce specific role creation permissions
   if (callerProfile.role === 'TENANT_ADMIN') {
-    if (tenantId !== callerProfile.tenantId) {
-      throw new functions.https.HttpsError('permission-denied', 'Tenant Admins can only create users within their own tenant.');
-    }
     if (role === 'PLATFORM_SUPERUSER') {
       throw new functions.https.HttpsError('permission-denied', 'Tenant Admins cannot create Platform Superusers.');
     }
+    if (tenantId !== callerProfile.tenantId) {
+      throw new functions.https.HttpsError('permission-denied', 'Tenant Admins can only create users within their own tenant.');
+    }
   }
 
+  // Display role special requirements
+  if (role === 'DISPLAY') {
+    if (!siteIds || siteIds.length === 0) {
+      throw new functions.https.HttpsError('invalid-argument', 'Display users require at least one assigned site.');
+    }
+  }
+
+  // Validate site assignments against tenant
+  if (siteIds && siteIds.length > 0) {
+    const defaultSites = [
+      { tenantId: 'tenant_dev', siteId: 'site_barrow' },
+      { tenantId: 'tenant_dev', siteId: 'site_test' },
+    ];
+
+    for (const sId of siteIds) {
+      const isDefault = defaultSites.some(ds => ds.tenantId === tenantId && ds.siteId === sId);
+      if (isDefault) {
+        continue;
+      }
+
+      // Check Firestore locations collection
+      const locSnap = await db.collection('locations')
+        .where('tenantId', '==', tenantId)
+        .where('siteId', '==', sId)
+        .limit(1)
+        .get();
+
+      if (locSnap.empty) {
+        throw new functions.https.HttpsError('invalid-argument', `Site ID '${sId}' does not exist or does not belong to tenant '${tenantId}'.`);
+      }
+    }
+
+    // Tenant Admin must not create users assigned to sites outside their own permitted sites
+    if (callerProfile.role === 'TENANT_ADMIN') {
+      if (callerProfile.siteIds && callerProfile.siteIds.length > 0) {
+        for (const sId of siteIds) {
+          if (!callerProfile.siteIds.includes(sId)) {
+            throw new functions.https.HttpsError('permission-denied', `You are not permitted to administer site '${sId}'.`);
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Duplicate Handling (Check Auth and Firestore before creation)
+  let existingAuthUser = null;
   try {
-    // 1. Create Auth Account
-    const userRecord = await admin.auth().createUser({
-      email,
+    existingAuthUser = await admin.auth().getUserByEmail(email);
+  } catch (err) {
+    if (err.code !== 'auth/user-not-found') {
+      throw new functions.https.HttpsError('internal', `Auth duplicate verification failed: ${err.message}`);
+    }
+  }
+  if (existingAuthUser) {
+    throw new functions.https.HttpsError('already-exists', 'An account with this email address already exists in Firebase Authentication.');
+  }
+
+  const querySnapshot = await db.collection('users').where('email', '==', email.toLowerCase().trim()).get();
+  if (!querySnapshot.empty) {
+    throw new functions.https.HttpsError('already-exists', 'A user profile with this email address already exists in Firestore.');
+  }
+
+  // 7. Create Firebase Authentication user
+  let userRecord;
+  try {
+    userRecord = await admin.auth().createUser({
+      email: email.toLowerCase().trim(),
       password: temporaryPassword || 'TempPass123!',
       displayName,
     });
+  } catch (error) {
+    throw new functions.https.HttpsError('internal', `Failed to create Authentication account: ${error.message}`);
+  }
 
+  // 8. Create user profile in Firestore
+  try {
     const timestampNow = admin.firestore.FieldValue.serverTimestamp();
 
-    // 2. Create Firestore profile
     const profilePayload = {
       uid: userRecord.uid,
-      email,
+      email: email.toLowerCase().trim(),
       displayName,
       jobTitle: jobTitle || '',
       role,
       tenantId: role === 'PLATFORM_SUPERUSER' ? null : tenantId,
       siteIds: role === 'PLATFORM_SUPERUSER' ? [] : (siteIds || []),
-      accountStatus: 'ACTIVE',
-      requiresPasswordChange: true,
+      accountStatus: accountStatus || 'ACTIVE',
+      requiresPasswordChange: true, // Forces first-login password change!
       failedLoginAttempts: 0,
       failedAttemptWindowStartedAt: null,
       lockedAt: null,
@@ -134,9 +219,50 @@ exports.createTenantUser = functions.https.onCall(async (data, context) => {
 
     await db.collection('users').doc(userRecord.uid).set(profilePayload);
 
-    return { success: true, uid: userRecord.uid };
+    // 9. Write an Audit record
+    const auditPayload = {
+      tenantId: role === 'PLATFORM_SUPERUSER' ? null : tenantId,
+      siteId: (siteIds && siteIds.length > 0) ? siteIds[0] : null,
+      eventType: 'USER_CREATION',
+      entityType: 'UserProfile',
+      entityId: userRecord.uid,
+      summary: `Created user account for ${email} with role ${role}`,
+      performedBy: callerUid,
+      createdDate: timestampNow,
+      timestamp: timestampNow,
+    };
+    await db.collection('auditLogs').add(auditPayload);
+
+    return {
+      success: true,
+      uid: userRecord.uid,
+      message: `User ${email} successfully created with role ${role}.`
+    };
   } catch (error) {
-    throw new functions.https.HttpsError('already-exists', error.message);
+    // 10. ROLLBACK (Delete Auth user if Firestore profile creation fails)
+    try {
+      await admin.auth().deleteUser(userRecord.uid);
+    } catch (deleteErr) {
+      console.error(`Rollback deletion failed for Auth user ${userRecord.uid}:`, deleteErr);
+    }
+
+    // Record failed operation securely
+    try {
+      const timestampNow = admin.firestore.FieldValue.serverTimestamp();
+      await db.collection('auditLogs').add({
+        tenantId: role === 'PLATFORM_SUPERUSER' ? null : tenantId,
+        eventType: 'USER_CREATION_FAILED',
+        entityType: 'UserProfile',
+        summary: `Failed to create user profile for ${email}: ${error.message}`,
+        performedBy: callerUid,
+        createdDate: timestampNow,
+        timestamp: timestampNow,
+      });
+    } catch (auditErr) {
+      console.error('Failed to log failed user creation audit:', auditErr);
+    }
+
+    throw new functions.https.HttpsError('internal', `Failed to create Firestore profile document (Rollback initiated): ${error.message}`);
   }
 });
 

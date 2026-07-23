@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { collection, query, where, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { Priority } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { CheckCircle, Clock, AlertTriangle, Plus, Activity, Archive, CalendarDays, Ban } from 'lucide-react';
 import { updatePriorityStatus } from '../services/priorityService';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 const SUMMARY_TILES = [
   { id: 'active', label: 'Active', icon: <Activity className="w-5 h-5 mb-2 text-blue-400"/>, color: 'bg-blue-900/30 text-blue-200 border-blue-800' },
@@ -20,7 +20,7 @@ const SUMMARY_TILES = [
 ];
 
 export const OperationalPrioritiesPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [priorities, setPriorities] = useState<Priority[]>([]);

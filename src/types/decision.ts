@@ -88,6 +88,12 @@ export interface DecisionConfiguration {
   productionStalenessHoursThreshold?: number;
   nearProductionDaysWindow?: number;
   capacityWarningThresholdPercentage?: number;
+  validActionIds?: string[];
+  validPriorityIds?: string[];
+  validDestinationIds?: string[];
+  inactiveActionIds?: string[];
+  inactivePriorityIds?: string[];
+  inactiveDestinationIds?: string[];
 }
 
 export interface DecisionInputSnapshot {

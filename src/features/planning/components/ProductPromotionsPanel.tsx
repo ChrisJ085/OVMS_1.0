@@ -1,18 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToProductPromotions, detectOverlappingPromotions } from '../services/promotionService';
 import { PromotionProductRule, PromotionWithPhase } from '../../../types/promotion';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { Tag, AlertTriangle, ChevronRight } from 'lucide-react';
 import { LoadingState } from '../../../components/ui/States';
 import { useNavigate } from 'react-router-dom';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface ProductPromotionsPanelProps {
   productId: string;
 }
 
 export const ProductPromotionsPanel: React.FC<ProductPromotionsPanelProps> = ({ productId }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const navigate = useNavigate();
   const [rules, setRules] = useState<PromotionProductRule[]>([]);
   const [promotions, setPromotions] = useState<Record<string, PromotionWithPhase>>({});

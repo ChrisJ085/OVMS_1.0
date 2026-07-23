@@ -3,8 +3,8 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { Product } from '../../../../types/product';
 import { ProductCategory, UnitOfMeasure, Destination } from '../../../../types/configuration';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { createProduct, updateProduct } from '../../services/productService';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -18,7 +18,7 @@ interface ProductModalProps {
 export const ProductModal: React.FC<ProductModalProps> = ({ 
   isOpen, onClose, item, categories, units, destinations 
 }) => {
-  const { tenantId } = useDevelopmentContext();
+  const { tenantId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<Product>>({
     operationallyRelevant: true
   });

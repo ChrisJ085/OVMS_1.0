@@ -1,15 +1,17 @@
 import React, { useEffect } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
 import { hasPermission } from '../../config/rolePermissions';
 import { AccessDeniedPage } from './AccessDeniedPage';
+import { useAuth } from '../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../contexts/SiteContext';
 
 interface DisplayRouteProps {
   children?: React.ReactNode;
 }
 
 export const DisplayRoute: React.FC<DisplayRouteProps> = ({ children }) => {
-  const { user, userProfile, loading, siteId, setSite, availableSites } = useDevelopmentContext();
+  const { user, userProfile, loading } = useAuth();
+  const { siteId, setSite, availableSites } = useSiteContext();
 
   useEffect(() => {
     if (userProfile && userProfile.role === 'DISPLAY') {

@@ -94,10 +94,81 @@ export const validateDecisionOutput = (
 ): DataQualityIssue[] => {
   const issues: DataQualityIssue[] = [];
 
+  // Detect missing configuration version
+  if (!config || !config.configurationVersion) {
+    issues.push({
+      code: 'CONFIGURATION_MISSING',
+      severity: 'BLOCKING',
+      blocking: true,
+      message: 'Decision configuration version is missing.',
+      sourceArea: 'CONFIGURATION'
+    });
+  }
+
+  const checkConfigRef = (id: string | null | undefined, validList?: string[], inactiveList?: string[], name = '') => {
+    if (!id) return;
+    if (validList && !validList.includes(id)) {
+      const isInactive = inactiveList && inactiveList.includes(id);
+      issues.push({
+        code: 'CONFIGURATION_MISSING',
+        severity: name.includes('Priority') || name.includes('Action') ? 'BLOCKING' : 'WARNING',
+        blocking: name.includes('Priority') || name.includes('Action'),
+        message: isInactive ? `Configuration reference ${name} (${id}) is inactive.` : `Configuration reference ${name} (${id}) is unknown.`,
+        sourceArea: 'CONFIGURATION'
+      });
+    }
+  };
+
+  if (config) {
+    checkConfigRef(config.holdActionId, config.validActionIds, config.inactiveActionIds, 'holdActionId');
+    checkConfigRef(config.reviewActionId, config.validActionIds, config.inactiveActionIds, 'reviewActionId');
+    checkConfigRef(config.releaseActionId, config.validActionIds, config.inactiveActionIds, 'releaseActionId');
+    checkConfigRef(config.asPerScheduleActionId, config.validActionIds, config.inactiveActionIds, 'asPerScheduleActionId');
+    checkConfigRef(config.urgentPriorityId, config.validPriorityIds, config.inactivePriorityIds, 'urgentPriorityId');
+    checkConfigRef(config.normalPriorityId, config.validPriorityIds, config.inactivePriorityIds, 'normalPriorityId');
+    checkConfigRef(config.lowPriorityId, config.validPriorityIds, config.inactivePriorityIds, 'lowPriorityId');
+    checkConfigRef(config.defaultDestinationRules?.defaultDestinationId, config.validDestinationIds, config.inactiveDestinationIds, 'defaultDestinationId');
+  }
+
   const action = output.recommendedActionTypeId;
   const quantity = output.recommendedQuantity ?? 0;
   const destination = output.recommendedDestinationId;
   const available = output.availableToRelease ?? 0;
+
+  // Validate recommended fields against config valid/inactive lists
+  if (action && config && config.validActionIds && !config.validActionIds.includes(action)) {
+    const isInactive = config.inactiveActionIds && config.inactiveActionIds.includes(action);
+    issues.push({
+      code: 'CONFIGURATION_MISSING',
+      severity: 'BLOCKING',
+      blocking: true,
+      message: isInactive ? `Recommended action ID ${action} is inactive.` : `Recommended action ID ${action} is unknown.`,
+      sourceArea: 'CONFIGURATION'
+    });
+  }
+
+  const priority = output.recommendedPriorityLevelId;
+  if (priority && config && config.validPriorityIds && !config.validPriorityIds.includes(priority)) {
+    const isInactive = config.inactivePriorityIds && config.inactivePriorityIds.includes(priority);
+    issues.push({
+      code: 'CONFIGURATION_MISSING',
+      severity: 'BLOCKING',
+      blocking: true,
+      message: isInactive ? `Recommended priority ID ${priority} is inactive.` : `Recommended priority ID ${priority} is unknown.`,
+      sourceArea: 'CONFIGURATION'
+    });
+  }
+
+  if (destination && config && config.validDestinationIds && !config.validDestinationIds.includes(destination)) {
+    const isInactive = config.inactiveDestinationIds && config.inactiveDestinationIds.includes(destination);
+    issues.push({
+      code: 'CONFIGURATION_MISSING',
+      severity: 'WARNING',
+      blocking: false,
+      message: isInactive ? `Recommended destination ID ${destination} is inactive.` : `Recommended destination ID ${destination} is unknown.`,
+      sourceArea: 'CONFIGURATION'
+    });
+  }
 
   // Negative quantity check
   if (quantity < 0) {
@@ -111,7 +182,7 @@ export const validateDecisionOutput = (
   }
 
   // HOLD action consistency
-  if (action && action === config.holdActionId) {
+  if (action && config && action === config.holdActionId) {
     if (quantity > 0) {
       issues.push({
         code: 'ACTION_QUANTITY_CONTRADICTION',
@@ -124,7 +195,7 @@ export const validateDecisionOutput = (
   }
 
   // REVIEW action consistency
-  if (action && action === config.reviewActionId) {
+  if (action && config && action === config.reviewActionId) {
     if (quantity > 0) {
       issues.push({
         code: 'ACTION_QUANTITY_CONTRADICTION',
@@ -137,7 +208,7 @@ export const validateDecisionOutput = (
   }
 
   // RELEASE action consistency
-  if (action && action === config.releaseActionId) {
+  if (action && config && action === config.releaseActionId) {
     if (quantity <= 0) {
       issues.push({
         code: 'ACTION_QUANTITY_CONTRADICTION',
@@ -198,8 +269,8 @@ export const evaluateDecision = (
   const recommendationLines: string[] = [];
   const traceLines: string[] = [];
 
-  // 1. Configuration Resolution & Validation
-  const config: DecisionConfiguration | null = input.configuration || configOverride || DEFAULT_DECISION_CONFIG;
+  // 1. Configuration Resolution & Validation (No operational fallback DEFAULT_DECISION_CONFIG in production)
+  const config: DecisionConfiguration | null = input.configuration || configOverride || null;
 
   const isConfigIncomplete = !config || 
     !config.holdActionId || 

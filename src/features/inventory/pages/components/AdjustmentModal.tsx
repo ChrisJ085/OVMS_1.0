@@ -4,8 +4,9 @@ import { FormField } from '../../../../components/ui/FormField';
 import { ProductLookup } from '../../components/ProductLookup';
 import { LocationLookup } from '../../components/LocationLookup';
 import { adjustInventory, transferInventory } from '../../services/inventoryService';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { UnitOfMeasure } from '../../../../types/configuration';
+import { useAuth } from '../../../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export type AdjustmentType = 'INCREASE' | 'DECREASE' | 'TRANSFER';
 
@@ -22,7 +23,8 @@ interface AdjustmentModalProps {
 export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({ 
   isOpen, onClose, defaultType = 'INCREASE', defaultProductId, defaultProductCode, defaultProductDesc, units
 }) => {
-  const { tenantId, siteId, user } = useDevelopmentContext();
+  const { user } = useAuth();
+  const { tenantId, siteId } = useSiteContext();
   const [type, setType] = useState<AdjustmentType>(defaultType);
   const [submitting, setSubmitting] = useState(false);
   

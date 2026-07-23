@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, Timestamp, orderBy, limit } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { useDevelopmentContext } from '../contexts/DevelopmentContext';
 import { Priority, PriorityStatus } from '../types/priority';
 import { Recommendation } from '../types/recommendation';
 import { OperationalException, ExceptionSeverity } from '../types/exception';
@@ -12,6 +11,8 @@ import { SiteSettings } from '../types/settings';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SectionCard } from '../components/ui/SectionCard';
 import { StatusBadge, BadgeVariant } from '../components/ui/StatusBadge';
+import { useAuth } from '../features/auth/context/AuthContext';
+import { useSiteContext } from '../../contexts/SiteContext';
 import {
   Activity,
   AlertTriangle,
@@ -37,8 +38,72 @@ import {
   Tv
 } from 'lucide-react';
 
+// Timezone-aware start of today and start of following day calculation
+export const getSiteTimezoneBoundaries = (timezone: string = 'Europe/London') => {
+  const now = new Date();
+  try {
+    const dtf = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    
+    const parts = dtf.formatToParts(now);
+    const partMap: Record<string, string> = {};
+    parts.forEach(p => {
+      partMap[p.type] = p.value;
+    });
+    
+    const year = parseInt(partMap.year, 10);
+    const month = parseInt(partMap.month, 10);
+    const day = parseInt(partMap.day, 10);
+
+    const getUTCOffsetInMinutes = (tz: string, date: Date): number => {
+      const formatterUTC = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'UTC',
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+      const formatterTZ = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+
+      const getVal = (partsArr: Intl.DateTimeFormatPart[]) => {
+        const m: Record<string, number> = {};
+        partsArr.forEach(p => {
+          if (p.type !== 'literal') m[p.type] = parseInt(p.value, 10);
+        });
+        return Date.UTC(m.year, m.month - 1, m.day, m.hour, m.minute, m.second);
+      };
+
+      const utcTime = getVal(formatterUTC.formatToParts(date));
+      const tzTime = getVal(formatterTZ.formatToParts(date));
+      return Math.round((tzTime - utcTime) / 60000);
+    };
+
+    const targetLocalMidnightUTC = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+    const approxStart = new Date(targetLocalMidnightUTC);
+    const offsetMins = getUTCOffsetInMinutes(timezone, approxStart);
+    const startOfToday = new Date(targetLocalMidnightUTC - offsetMins * 60000);
+
+    const targetNextLocalMidnightUTC = Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0);
+    const nextOffsetMins = getUTCOffsetInMinutes(timezone, new Date(targetNextLocalMidnightUTC));
+    const startOfNextDay = new Date(targetNextLocalMidnightUTC - nextOffsetMins * 60000);
+
+    return { startOfToday, startOfNextDay };
+  } catch (err) {
+    console.error('Error calculating timezone boundaries, falling back to local time:', err);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfNextDay = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+    return { startOfToday, startOfNextDay };
+  }
+};
+
 export const OperationalOverviewPage: React.FC = () => {
-  const { tenantId, siteId, site, userProfile } = useDevelopmentContext();
+  const { userProfile } = useAuth();
+  const { tenantId, siteId, site } = useSiteContext();
   const navigate = useNavigate();
 
   const role = userProfile?.role || 'VIEWER';
@@ -61,6 +126,17 @@ export const OperationalOverviewPage: React.FC = () => {
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [panelErrors, setPanelErrors] = useState<{
+    priorities?: string;
+    recommendations?: string;
+    production?: string;
+    exceptions?: string;
+    freshness?: string;
+    announcements?: string;
+    promotions?: string;
+    sessions?: string;
+  }>({});
 
   // Time formatting helper in site timezone
   const formatSiteTime = (ts: any) => {
@@ -99,6 +175,19 @@ export const OperationalOverviewPage: React.FC = () => {
 
   // Main Data Loading & Listeners
   useEffect(() => {
+    // Clear old overview data immediately on site switch
+    setPriorities([]);
+    setExceptions([]);
+    setAnnouncements([]);
+    setRecommendations([]);
+    setLatestImport(null);
+    setProductionEntries([]);
+    setProductionEvents([]);
+    setSiteSettings(null);
+    setActivePromotionsCount(0);
+    setActiveSessionsCount(0);
+    setPanelErrors({});
+
     if (!tenantId || !siteId) {
       setLoading(false);
       return;
@@ -107,70 +196,118 @@ export const OperationalOverviewPage: React.FC = () => {
     setLoading(true);
     setError(null);
 
-    // 1. Real-time priorities listener
-    const prioritiesQuery = query(
-      collection(db, 'priorities'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
+    // 1. Real-time priorities listener (limited to active/open statuses)
+    let unsubPriorities = () => {};
+    try {
+      const prioritiesQuery = query(
+        collection(db, 'priorities'),
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId),
+        where('priorityStatus', 'in', ['ACTIVE', 'SCHEDULED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
+      );
 
-    const unsubPriorities = onSnapshot(
-      prioritiesQuery,
-      (snap) => {
-        const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Priority));
-        fetched.sort((a, b) => {
-          const tA = (a.createdDate as any)?.toMillis?.() || 0;
-          const tB = (b.createdDate as any)?.toMillis?.() || 0;
-          return tB - tA;
-        });
-        setPriorities(fetched);
-      },
-      (err) => {
-        console.error('Error listening to priorities:', err);
-        setError('Failed to load operational priorities');
-      }
-    );
+      unsubPriorities = onSnapshot(
+        prioritiesQuery,
+        (snap) => {
+          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Priority));
+          fetched.sort((a, b) => {
+            const tA = (a.createdDate as any)?.toMillis?.() || 0;
+            const tB = (b.createdDate as any)?.toMillis?.() || 0;
+            return tB - tA;
+          });
+          setPriorities(fetched);
+          setPanelErrors((prev) => ({ ...prev, priorities: undefined }));
+        },
+        (err) => {
+          console.error('Error listening to priorities:', err);
+          setPanelErrors((prev) => ({ ...prev, priorities: 'Failed to load operational priorities' }));
+        }
+      );
+    } catch (err: any) {
+      console.error('Failed to setup priorities listener:', err);
+      setPanelErrors((prev) => ({ ...prev, priorities: 'Failed to initialize priorities' }));
+    }
 
-    // 2. Real-time exceptions listener
-    const exceptionsQuery = query(
-      collection(db, 'exceptions'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
+    // 2. Real-time exceptions listener (limited to active/open statuses)
+    let unsubExceptions = () => {};
+    try {
+      const exceptionsQuery = query(
+        collection(db, 'exceptions'),
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId),
+        where('exceptionStatus', 'in', ['OPEN', 'ACKNOWLEDGED'])
+      );
 
-    const unsubExceptions = onSnapshot(
-      exceptionsQuery,
-      (snap) => {
-        const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as OperationalException));
-        setExceptions(fetched);
-      },
-      (err) => {
-        console.error('Error listening to exceptions:', err);
-      }
-    );
+      unsubExceptions = onSnapshot(
+        exceptionsQuery,
+        (snap) => {
+          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as OperationalException));
+          setExceptions(fetched);
+          setPanelErrors((prev) => ({ ...prev, exceptions: undefined }));
+        },
+        (err) => {
+          console.error('Error listening to exceptions:', err);
+          setPanelErrors((prev) => ({ ...prev, exceptions: 'Failed to load exceptions' }));
+        }
+      );
+    } catch (err: any) {
+      console.error('Failed to setup exceptions listener:', err);
+      setPanelErrors((prev) => ({ ...prev, exceptions: 'Failed to initialize exceptions' }));
+    }
 
-    // 3. Real-time announcements listener
-    const announcementsQuery = query(
-      collection(db, 'announcements'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
+    // 3. Real-time announcements listener (limited to active/open statuses)
+    let unsubAnnouncements = () => {};
+    try {
+      const announcementsQuery = query(
+        collection(db, 'announcements'),
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId),
+        where('active', '==', true)
+      );
 
-    const unsubAnnouncements = onSnapshot(
-      announcementsQuery,
-      (snap) => {
-        const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Announcement));
-        setAnnouncements(fetched);
-      },
-      (err) => {
-        console.error('Error listening to announcements:', err);
-      }
-    );
+      unsubAnnouncements = onSnapshot(
+        announcementsQuery,
+        (snap) => {
+          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Announcement));
+          setAnnouncements(fetched);
+          setPanelErrors((prev) => ({ ...prev, announcements: undefined }));
+        },
+        (err) => {
+          console.error('Error listening to announcements:', err);
+          setPanelErrors((prev) => ({ ...prev, announcements: 'Failed to load announcements' }));
+        }
+      );
+    } catch (err: any) {
+      console.error('Failed to setup announcements listener:', err);
+      setPanelErrors((prev) => ({ ...prev, announcements: 'Failed to initialize announcements' }));
+    }
 
-    // 4. One-time query for recommendations
+    // 4. One-time query for recommendations, imports, production plan entries, promotions, sessions, settings
     const fetchOneTimeData = async () => {
+      let activeTimezone = 'Europe/London';
+      
+      // 4a. Site Settings
       try {
-        // Recommendations
+        const settingsQuery = query(
+          collection(db, 'siteSettings'),
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          limit(1)
+        );
+        const settingsSnap = await getDocs(settingsQuery);
+        if (!settingsSnap.empty) {
+          const settingsObj = { id: settingsSnap.docs[0].id, ...settingsSnap.docs[0].data() } as SiteSettings;
+          setSiteSettings(settingsObj);
+          if (settingsObj.timezone) {
+            activeTimezone = settingsObj.timezone;
+          }
+        }
+      } catch (err: any) {
+        console.error('Error fetching site settings:', err);
+      }
+
+      // 4b. Recommendations
+      try {
         const recsQuery = query(
           collection(db, 'recommendations'),
           where('tenantId', '==', tenantId),
@@ -180,8 +317,14 @@ export const OperationalOverviewPage: React.FC = () => {
         );
         const recsSnap = await getDocs(recsQuery);
         setRecommendations(recsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Recommendation)));
+        setPanelErrors((prev) => ({ ...prev, recommendations: undefined }));
+      } catch (err: any) {
+        console.error('Error fetching recommendations:', err);
+        setPanelErrors((prev) => ({ ...prev, recommendations: 'Failed to load recommended actions' }));
+      }
 
-        // Latest SAP Plan Import
+      // 4c. Latest SAP Plan Import
+      try {
         const importsQuery = query(
           collection(db, 'productionPlanImports'),
           where('tenantId', '==', tenantId),
@@ -195,18 +338,36 @@ export const OperationalOverviewPage: React.FC = () => {
         } else {
           setLatestImport(null);
         }
+        setPanelErrors((prev) => ({ ...prev, freshness: undefined }));
+      } catch (err: any) {
+        console.error('Error fetching latest import:', err);
+        setPanelErrors((prev) => ({ ...prev, freshness: 'Failed to load sync status' }));
+      }
 
-        // Today's Production Entries
+      // 4d. Today's Production Plan Entries
+      try {
+        const { startOfToday, startOfNextDay } = getSiteTimezoneBoundaries(activeTimezone);
+        const startTimestamp = typeof Timestamp.fromDate === 'function' ? Timestamp.fromDate(startOfToday) : startOfToday;
+        const endTimestamp = typeof Timestamp.fromDate === 'function' ? Timestamp.fromDate(startOfNextDay) : startOfNextDay;
+
         const prodEntriesQuery = query(
           collection(db, 'productionPlanEntries'),
           where('tenantId', '==', tenantId),
           where('siteId', '==', siteId),
-          limit(100)
+          where('productionDate', '>=', startTimestamp),
+          where('productionDate', '<', endTimestamp),
+          limit(500)
         );
         const entriesSnap = await getDocs(prodEntriesQuery);
         setProductionEntries(entriesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as ProductionPlanEntry)));
+        setPanelErrors((prev) => ({ ...prev, production: undefined }));
+      } catch (err: any) {
+        console.error('Error fetching production entries:', err);
+        setPanelErrors((prev) => ({ ...prev, production: 'Failed to load today’s production data' }));
+      }
 
-        // Production Events (running/delayed lines)
+      // 4e. Production Events
+      try {
         const prodEventsQuery = query(
           collection(db, 'productionEvents'),
           where('tenantId', '==', tenantId),
@@ -214,44 +375,64 @@ export const OperationalOverviewPage: React.FC = () => {
         );
         const eventsSnap = await getDocs(prodEventsQuery);
         setProductionEvents(eventsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as ProductionEvent)));
+      } catch (err: any) {
+        console.error('Error fetching production events:', err);
+      }
 
-        // Active Promotions
+      // 4f. Active Promotions
+      try {
         const promosQuery = query(
           collection(db, 'promotions'),
           where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId)
+          where('siteId', '==', siteId),
+          where('promotionStatus', '==', 'ACTIVE')
         );
         const promosSnap = await getDocs(promosQuery);
-        setActivePromotionsCount(promosSnap.size);
+        const promosList = promosSnap.docs.map((doc) => doc.data());
+        const now = new Date();
+        const activePromos = promosList.filter((p: any) => {
+          if (p.status === 'archived' || p.status === 'inactive') return false;
+          const startDate = p.startDate || p.startAt;
+          const endDate = p.endDate || p.endAt;
+          if (!startDate || !endDate) return false;
 
-        // Site Settings
-        const settingsQuery = query(
-          collection(db, 'siteSettings'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(1)
-        );
-        const settingsSnap = await getDocs(settingsQuery);
-        if (!settingsSnap.empty) {
-          setSiteSettings({ id: settingsSnap.docs[0].id, ...settingsSnap.docs[0].data() } as SiteSettings);
-        }
+          const startMs = startDate.toDate ? startDate.toDate().getTime() : new Date(startDate).getTime();
+          const endMs = endDate.toDate ? endDate.toDate().getTime() : new Date(endDate).getTime();
+          
+          const preBuildStart = p.preBuildStartDate || p.preBuildStartAt;
+          const preBuildMs = preBuildStart ? (preBuildStart.toDate ? preBuildStart.toDate().getTime() : new Date(preBuildStart).getTime()) : startMs;
 
-        // Active Sessions (for Admin)
-        if (isSuperOrAdmin) {
+          const nowMs = now.getTime();
+          return nowMs >= preBuildMs && nowMs <= endMs;
+        });
+        setActivePromotionsCount(activePromos.length);
+        setPanelErrors((prev) => ({ ...prev, promotions: undefined }));
+      } catch (err: any) {
+        console.error('Error fetching promotions:', err);
+        setPanelErrors((prev) => ({ ...prev, promotions: 'Failed to load active promotions' }));
+      }
+
+      // 4g. Active Sessions (for Admin)
+      if (isSuperOrAdmin) {
+        try {
           const sessionsQuery = query(
-            collection(db, 'userSessions'),
+            collection(db, 'sessions'),
+            where('tenantId', '==', tenantId),
             where('status', '==', 'ACTIVE'),
             limit(50)
           );
           const sessionsSnap = await getDocs(sessionsQuery);
           setActiveSessionsCount(sessionsSnap.size);
+          setPanelErrors((prev) => ({ ...prev, sessions: undefined }));
+        } catch (err: any) {
+          console.error('Error fetching active sessions:', err);
+          setPanelErrors((prev) => ({ ...prev, sessions: 'Failed to load active sessions' }));
         }
-      } catch (err: any) {
-        console.error('Error fetching overview data:', err);
-        setError(err.message || 'Error loading operational overview data');
-      } finally {
-        setLoading(false);
+      } else {
+        setActiveSessionsCount(0);
       }
+
+      setLoading(false);
     };
 
     fetchOneTimeData();
@@ -704,15 +885,22 @@ export const OperationalOverviewPage: React.FC = () => {
             title="Active Operational Priorities"
             description="Highest-impact active priorities requiring floor action"
             actions={
-              <button
-                onClick={() => navigate('/operations/priorities')}
-                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
-              >
-                View all ({priorities.length}) <ArrowRight className="w-3 h-3" />
-              </button>
+              !panelErrors.priorities && (
+                <button
+                  onClick={() => navigate('/operations/priorities')}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                >
+                  View all ({priorities.length}) <ArrowRight className="w-3 h-3" />
+                </button>
+              )
             }
           >
-            {priorities.length === 0 ? (
+            {panelErrors.priorities ? (
+              <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
+                <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{panelErrors.priorities}</span>
+              </div>
+            ) : priorities.length === 0 ? (
               <div className="text-center py-8 text-slate-500 text-sm">
                 <CheckCircle className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
                 No active or blocked priorities for this site.
@@ -797,15 +985,22 @@ export const OperationalOverviewPage: React.FC = () => {
               title="Recommendations Awaiting Review"
               description="Automated Decision Engine outputs requiring planner sign-off"
               actions={
-                <button
-                  onClick={() => navigate('/planning/recommendations')}
-                  className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
-                >
-                  Workspace ({counts.awaitingRecs}) <ArrowRight className="w-3 h-3" />
-                </button>
+                !panelErrors.recommendations && (
+                  <button
+                    onClick={() => navigate('/planning/recommendations')}
+                    className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                  >
+                    Workspace ({counts.awaitingRecs}) <ArrowRight className="w-3 h-3" />
+                  </button>
+                )
               }
             >
-              {counts.awaitingRecs === 0 ? (
+              {panelErrors.recommendations ? (
+                <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
+                  <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>{panelErrors.recommendations}</span>
+                </div>
+              ) : counts.awaitingRecs === 0 ? (
                 <div className="text-center py-8 text-slate-500 text-sm">
                   <CheckCircle className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
                   No recommendations awaiting review. All clear!
@@ -866,12 +1061,14 @@ export const OperationalOverviewPage: React.FC = () => {
             title="Production Today"
             description="Active line status and planned SAP production schedule"
             actions={
-              <button
-                onClick={() => navigate('/planning/production')}
-                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
-              >
-                Full Schedule <ArrowRight className="w-3 h-3" />
-              </button>
+              !panelErrors.production && (
+                <button
+                  onClick={() => navigate('/planning/production')}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                >
+                  Full Schedule <ArrowRight className="w-3 h-3" />
+                </button>
+              )
             }
           >
             {/* Notice constraint: Planned production is NOT inventory */}
@@ -882,7 +1079,12 @@ export const OperationalOverviewPage: React.FC = () => {
               </span>
             </div>
 
-            {!latestImport ? (
+            {panelErrors.production ? (
+              <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
+                <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{panelErrors.production}</span>
+              </div>
+            ) : !latestImport ? (
               <div className="text-center py-6 text-slate-500 text-sm">
                 <FileSpreadsheet className="w-8 h-8 text-slate-600 mx-auto mb-2" />
                 SAP production plan has not been imported for this site.
@@ -929,15 +1131,22 @@ export const OperationalOverviewPage: React.FC = () => {
             title="Open Operational Exceptions"
             description="Active alerts grouped by severity"
             actions={
-              <button
-                onClick={() => navigate('/operations/exceptions')}
-                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
-              >
-                Centre ({exceptions.filter((e) => e.exceptionStatus === 'OPEN').length}) <ArrowRight className="w-3 h-3" />
-              </button>
+              !panelErrors.exceptions && (
+                <button
+                  onClick={() => navigate('/operations/exceptions')}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                >
+                  Centre ({exceptions.filter((e) => e.exceptionStatus === 'OPEN').length}) <ArrowRight className="w-3 h-3" />
+                </button>
+              )
             }
           >
-            {exceptions.filter((e) => e.exceptionStatus === 'OPEN').length === 0 ? (
+            {panelErrors.exceptions ? (
+              <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
+                <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{panelErrors.exceptions}</span>
+              </div>
+            ) : exceptions.filter((e) => e.exceptionStatus === 'OPEN').length === 0 ? (
               <div className="text-center py-6 text-slate-500 text-xs">
                 <CheckCircle className="w-6 h-6 text-emerald-500/40 mx-auto mb-1" />
                 No open operational exceptions.
@@ -975,17 +1184,24 @@ export const OperationalOverviewPage: React.FC = () => {
 
           {/* Panel 5: Data Freshness Status */}
           <SectionCard title="Data Freshness" description="Source sync and timestamp status">
-            <div className="space-y-3">
-              {freshnessData.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/60 last:border-0">
-                  <div>
-                    <div className="font-medium text-slate-200">{item.name}</div>
-                    <div className="text-[11px] text-slate-500">{item.lastUpdated}</div>
+            {panelErrors.freshness ? (
+              <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
+                <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{panelErrors.freshness}</span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {freshnessData.map((item, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-800/60 last:border-0">
+                    <div>
+                      <div className="font-medium text-slate-200">{item.name}</div>
+                      <div className="text-[11px] text-slate-500">{item.lastUpdated}</div>
+                    </div>
+                    <StatusBadge variant={item.variant} label={item.statusLabel} />
                   </div>
-                  <StatusBadge variant={item.variant} label={item.statusLabel} />
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </SectionCard>
 
           {/* Panel 6: Active Site Announcements */}
@@ -993,7 +1209,7 @@ export const OperationalOverviewPage: React.FC = () => {
             title="Site Announcements"
             description="Active messages for current shift"
             actions={
-              isPlanner ? (
+              isPlanner && !panelErrors.announcements ? (
                 <button
                   onClick={() => navigate('/operations/announcements')}
                   className="text-xs text-amber-400 hover:text-amber-300 font-medium"
@@ -1003,7 +1219,12 @@ export const OperationalOverviewPage: React.FC = () => {
               ) : undefined
             }
           >
-            {activeAnnouncements.length === 0 ? (
+            {panelErrors.announcements ? (
+              <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
+                <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{panelErrors.announcements}</span>
+              </div>
+            ) : activeAnnouncements.length === 0 ? (
               <div className="text-center py-6 text-slate-500 text-xs">
                 <Megaphone className="w-6 h-6 text-slate-600 mx-auto mb-1" />
                 No active site announcements.

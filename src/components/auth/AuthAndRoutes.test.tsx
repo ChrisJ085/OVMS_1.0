@@ -4,10 +4,15 @@ import { describe, it, expect, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { AccessDeniedPage } from './AccessDeniedPage';
 
-vi.mock('../../contexts/DevelopmentContext', () => ({
-  useDevelopmentContext: () => ({
+vi.mock('../../features/auth/context/AuthContext', () => ({
+  useAuth: () => ({
     userProfile: { role: 'VIEWER', tenantId: 'tenant-1', siteId: 'site-1' },
     logout: vi.fn(),
+  })
+}));
+
+vi.mock('../../contexts/SiteContext', () => ({
+  useSiteContext: () => ({
     currentSite: { id: 'site-1', name: 'Site 1' },
     sites: [{ id: 'site-1', name: 'Site 1' }],
     switchSite: vi.fn()

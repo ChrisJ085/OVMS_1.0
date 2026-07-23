@@ -1,13 +1,13 @@
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
+import { useAuth } from '../../features/auth/context/AuthContext';
 
 interface AuthenticatedRouteProps {
   children?: React.ReactNode;
 }
 
 export const AuthenticatedRoute: React.FC<AuthenticatedRouteProps> = ({ children }) => {
-  const { user, userProfile, loading } = useDevelopmentContext();
+  const { user, userProfile, loading } = useAuth();
 
   if (loading) {
     return (

@@ -6,7 +6,6 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToProducts, setProductStatus } from '../services/productService';
 import { Product } from '../../../types/product';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -15,9 +14,10 @@ import { ProductCategory, UnitOfMeasure, Destination } from '../../../types/conf
 import { where } from 'firebase/firestore';
 import { ProductModal } from './components/ProductModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const ProductsPage: React.FC = () => {
-  const { tenantId } = useDevelopmentContext();
+  const { tenantId } = useSiteContext();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);

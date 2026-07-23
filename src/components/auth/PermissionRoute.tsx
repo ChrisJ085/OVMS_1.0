@@ -1,8 +1,9 @@
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
 import { Permission, hasAnyPermission } from '../../config/rolePermissions';
 import { AccessDeniedPage } from './AccessDeniedPage';
+import { useAuth } from '../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../contexts/SiteContext';
 
 interface PermissionRouteProps {
   requiredPermissions?: Permission | Permission[];
@@ -13,7 +14,8 @@ export const PermissionRoute: React.FC<PermissionRouteProps> = ({
   requiredPermissions,
   children,
 }) => {
-  const { user, userProfile, loading, siteId } = useDevelopmentContext();
+  const { user, userProfile, loading } = useAuth();
+  const { siteId } = useSiteContext();
 
   if (loading) {
     return (

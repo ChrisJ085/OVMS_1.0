@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { DecisionInputSnapshot, DecisionOutput, ReasonCode } from '../../../types/decision';
 import { evaluateDecision } from '../services/decisionEngine';
 import { ProductPlanningRule, ControllingThresholdMode } from '../../../types/planning';
@@ -10,9 +9,10 @@ import { PromotionProductRule, PromotionWithPhase } from '../../../types/promoti
 import { Timestamp } from 'firebase/firestore';
 import { AlertCircle, Target, CheckCircle2, Factory, TrendingUp, HelpCircle } from 'lucide-react';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const DecisionEngineScenariosPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [selectedScenario, setSelectedScenario] = useState<number>(0);
   const [output, setOutput] = useState<DecisionOutput | null>(null);
 

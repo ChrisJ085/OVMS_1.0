@@ -6,7 +6,6 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToLocations, setLocationStatus } from '../services/locationService';
 import { Location } from '../../../types/inventory';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -14,9 +13,10 @@ import { collections } from '../../configuration/services/configurationService';
 import { StorageArea } from '../../../types/configuration';
 import { where } from 'firebase/firestore';
 import { LocationModal } from './components/LocationModal';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const LocationsPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [locations, setLocations] = useState<Location[]>([]);
   const [storageAreas, setStorageAreas] = useState<StorageArea[]>([]);
   

@@ -11,6 +11,8 @@ import { PromotionProductRule, Promotion } from '../../../types/promotion';
 import { ServiceResult } from '../../../types/common';
 import { getProduct } from '../../inventory/services/productService';
 
+import { getDecisionConfiguration } from './decisionConfigurationService';
+
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const PROMOTIONS_COLLECTION = 'promotions';
 const PROMOTION_RULES_COLLECTION = 'promotionProductRules';
@@ -91,6 +93,8 @@ export const generateRecommendationForProduct = async (
       }
     }
 
+    const configuration = await getDecisionConfiguration(tenantId, siteId);
+
     const inputSnapshot: DecisionInputSnapshot = {
       tenantId,
       siteId,
@@ -103,7 +107,8 @@ export const generateRecommendationForProduct = async (
       productionContext,
       activePromotionImpacts,
       existingActivePriorities: [], // To be implemented later
-      evaluationTime: new Date()
+      evaluationTime: new Date(),
+      configuration
     };
 
     // 2. Evaluate Decision

@@ -6,7 +6,6 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search, Calendar, CheckCircle2, XCircle, Play, Pause, Square, AlertCircle, Clock } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToProductionEvents, updateProductionEvent } from '../services/productionService';
 import { ProductionEvent } from '../../../types/production';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -15,9 +14,10 @@ import { ProductionLine, UnitOfMeasure } from '../../../types/configuration';
 import { where, Timestamp } from 'firebase/firestore';
 import { ProductionEventModal } from './components/ProductionEventModal';
 import { ProductionActionModal } from './components/ProductionActionModal';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const ProductionPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [events, setEvents] = useState<ProductionEvent[]>([]);
   const [lines, setLines] = useState<ProductionLine[]>([]);
   const [uoms, setUoms] = useState<UnitOfMeasure[]>([]);

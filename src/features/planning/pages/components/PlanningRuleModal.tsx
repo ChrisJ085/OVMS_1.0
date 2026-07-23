@@ -3,10 +3,10 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { ProductPlanningRule, ControllingThresholdMode } from '../../../../types/planning';
 import { Destination } from '../../../../types/configuration';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { createPlanningRule, updatePlanningRule } from '../../services/planningRuleService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { Timestamp } from 'firebase/firestore';
+import { useSiteContext } from '../../../../../contexts/SiteContext';
 
 interface PlanningRuleModalProps {
   isOpen: boolean;
@@ -18,7 +18,7 @@ interface PlanningRuleModalProps {
 export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({ 
   isOpen, onClose, item, destinations 
 }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<ProductPlanningRule>>({});
   const [submitting, setSubmitting] = useState(false);
   const [effectiveFromInput, setEffectiveFromInput] = useState('');

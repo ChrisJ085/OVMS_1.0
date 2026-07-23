@@ -6,7 +6,6 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToPlanningRules, setPlanningRuleStatus, calculatePlanningMetrics } from '../services/planningRuleService';
 import { ProductPlanningRule } from '../../../types/planning';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -17,9 +16,10 @@ import { InventoryBalance } from '../../../types/inventory';
 import { where } from 'firebase/firestore';
 import { PlanningRuleModal } from './components/PlanningRuleModal';
 import { PlanningRuleDetailModal } from './components/PlanningRuleDetailModal';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const ProductPlanningRulesPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [rules, setRules] = useState<ProductPlanningRule[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);

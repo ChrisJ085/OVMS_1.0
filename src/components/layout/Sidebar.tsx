@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
 import { Permission, hasPermission } from '../../config/rolePermissions';
+import { useAuth } from '../../features/auth/context/AuthContext';
 import { 
   LayoutDashboard, 
   Target, 
@@ -90,7 +90,7 @@ const ALL_NAVIGATION: NavGroup[] = [
 ];
 
 export const Sidebar: React.FC = () => {
-  const { userProfile } = useDevelopmentContext();
+  const { userProfile } = useAuth();
   const role = userProfile?.role;
 
   // Filter navigation dynamically based on central permissions configuration

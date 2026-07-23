@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Download, FileText, Calendar, Filter } from 'lucide-react';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 type ReportType = 'PRIORITY_PERFORMANCE' | 'DDXM_STOCK' | 'RECOMMENDATION_OVERRIDE' | 'INVENTORY_MOVEMENT' | 'EXCEPTION_REPORT' | 'PRODUCTION_CONTEXT';
 
 export const ReportsListPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   
   const [selectedReport, setSelectedReport] = useState<ReportType>('PRIORITY_PERFORMANCE');
   

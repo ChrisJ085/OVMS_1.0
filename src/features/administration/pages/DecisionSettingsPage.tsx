@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { getSiteSettings, updateSiteSettings } from '../services/settingsService';
 import { SiteSettings } from '../../../types/settings';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { Save } from 'lucide-react';
+import { useAuth } from '../../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const DecisionSettingsPage: React.FC = () => {
-  const { tenantId, siteId, currentUser } = useDevelopmentContext();
+  const { currentUser } = useAuth();
+  const { tenantId, siteId } = useSiteContext();
   const [settings, setSettings] = useState<Partial<SiteSettings>>({
     upcomingProductionWindowHours: 12,
     promotionLookAheadDays: 7,

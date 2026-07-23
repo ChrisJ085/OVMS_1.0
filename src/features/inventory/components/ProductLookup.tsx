@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToProducts } from '../services/productService';
 import { Product } from '../../../types/product';
 import { Search } from 'lucide-react';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 interface ProductLookupProps {
   value?: string; // productId
@@ -11,7 +11,7 @@ interface ProductLookupProps {
 }
 
 export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, disabled }) => {
-  const { tenantId } = useDevelopmentContext();
+  const { tenantId } = useSiteContext();
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);

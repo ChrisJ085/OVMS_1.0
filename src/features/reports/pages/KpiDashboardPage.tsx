@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Activity, Clock, CheckCircle, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const KpiDashboardPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [loading, setLoading] = useState(true);
   
   // KPI State

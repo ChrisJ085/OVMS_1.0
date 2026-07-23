@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { Priority, PriorityStatus } from '../../../types/priority';
 import { Announcement } from '../../../types/announcement';
 import { OperationalException } from '../../../types/exception';
+import { useSiteContext } from '../../../../features/configuration/context/SiteContext';
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play, 
   Package, LayoutGrid, AlertCircle, TrendingDown,
@@ -41,7 +41,7 @@ const STATUS_ICONS: Record<string, any> = {
 };
 
 export const TVDashboardPage: React.FC = () => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [exceptions, setExceptions] = useState<OperationalException[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);

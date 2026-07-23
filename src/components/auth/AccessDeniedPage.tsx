@@ -1,12 +1,12 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
 import { ShieldAlert, Home, LogOut } from 'lucide-react';
+import { useAuth } from '../../features/auth/context/AuthContext';
 
 export const AccessDeniedPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { userProfile, logout } = useDevelopmentContext();
+  const { userProfile, logout } = useAuth();
 
   const attemptedArea = location.pathname;
   const currentRole = userProfile?.role || 'VIEWER';

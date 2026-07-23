@@ -1,5 +1,6 @@
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import { DevelopmentProvider, useDevelopmentContext } from '../contexts/DevelopmentContext';
+import { AppProviders } from './AppProviders';
+import { useAuth } from '../features/auth/context/AuthContext';
 import { LoginPage } from '../features/auth/components/LoginPage';
 import { PasswordChangePage } from '../features/auth/components/PasswordChangePage';
 import { AppLayout } from '../components/layout/AppLayout';
@@ -50,45 +51,45 @@ export const router = createBrowserRouter([
       </PermissionRoute>
     ),
     children: [
-      { index: true, element: <OperationalOverviewPage /> },
+      { index: true, element: <OperationalOverviewPage />, handle: { title: 'Operational Overview' } },
       
       // Planning routes
-      { path: 'planning/recommendations', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><RecommendationsWorkspacePage /></PermissionRoute> },
-      { path: 'planning/recommendations/:id', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><RecommendationDetailPage /></PermissionRoute> },
-      { path: 'planning/rules', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><ProductPlanningRulesPage /></PermissionRoute> },
-      { path: 'planning/production', element: <PermissionRoute requiredPermissions="VIEW_PRODUCTION_PLAN"><ProductionPage /></PermissionRoute> },
-      { path: 'planning/production-plan', element: <PermissionRoute requiredPermissions="VIEW_PRODUCTION_PLAN"><ProductionPlanPage /></PermissionRoute> },
-      { path: 'planning/promotions', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionsPage /></PermissionRoute> },
-      { path: 'planning/promotions/:id', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionDetailPage /></PermissionRoute> },
-      { path: 'planning/decision-engine-test', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><DecisionEngineScenariosPage /></PermissionRoute> },
+      { path: 'planning/recommendations', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><RecommendationsWorkspacePage /></PermissionRoute>, handle: { title: 'Recommendation Workspace' } },
+      { path: 'planning/recommendations/:id', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><RecommendationDetailPage /></PermissionRoute>, handle: { title: 'Recommendation Detail' } },
+      { path: 'planning/rules', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><ProductPlanningRulesPage /></PermissionRoute>, handle: { title: 'Planning Rules' } },
+      { path: 'planning/production', element: <PermissionRoute requiredPermissions="VIEW_PRODUCTION_PLAN"><ProductionPage /></PermissionRoute>, handle: { title: 'Production Plan' } },
+      { path: 'planning/production-plan', element: <PermissionRoute requiredPermissions="VIEW_PRODUCTION_PLAN"><ProductionPlanPage /></PermissionRoute>, handle: { title: 'Production Plan' } },
+      { path: 'planning/promotions', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionsPage /></PermissionRoute>, handle: { title: 'Promotions' } },
+      { path: 'planning/promotions/:id', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionDetailPage /></PermissionRoute>, handle: { title: 'Promotion Detail' } },
+      { path: 'planning/decision-engine-test', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><DecisionEngineScenariosPage /></PermissionRoute>, handle: { title: 'Decision Scenarios' } },
       
       // Operations routes
-      { path: 'operations/priorities', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><OperationalPrioritiesPage /></PermissionRoute> },
-      { path: 'operations/priorities/new', element: <PermissionRoute requiredPermissions="MANAGE_PRIORITIES"><CreatePriorityPage /></PermissionRoute> },
-      { path: 'operations/warehouse', element: <PermissionRoute requiredPermissions="UPDATE_WAREHOUSE_EXECUTION"><WarehouseExecutionPage /></PermissionRoute> },
-      { path: 'operations/announcements', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><AnnouncementsPage /></PermissionRoute> },
-      { path: 'operations/exceptions', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><ExceptionCentrePage /></PermissionRoute> },
+      { path: 'operations/priorities', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><OperationalPrioritiesPage /></PermissionRoute>, handle: { title: 'Operational Priorities' } },
+      { path: 'operations/priorities/new', element: <PermissionRoute requiredPermissions="MANAGE_PRIORITIES"><CreatePriorityPage /></PermissionRoute>, handle: { title: 'Create Priority' } },
+      { path: 'operations/warehouse', element: <PermissionRoute requiredPermissions="UPDATE_WAREHOUSE_EXECUTION"><WarehouseExecutionPage /></PermissionRoute>, handle: { title: 'Warehouse Execution' } },
+      { path: 'operations/announcements', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><AnnouncementsPage /></PermissionRoute>, handle: { title: 'Announcements' } },
+      { path: 'operations/exceptions', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><ExceptionCentrePage /></PermissionRoute>, handle: { title: 'Exceptions' } },
       
       // Inventory routes
-      { path: 'inventory/products', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><ProductsPage /></PermissionRoute> },
-      { path: 'inventory/balances', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><InventoryBalancesPage /></PermissionRoute> },
-      { path: 'inventory/locations', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><LocationsPage /></PermissionRoute> },
-      { path: 'inventory/movements', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><InventoryMovementsPage /></PermissionRoute> },
+      { path: 'inventory/products', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><ProductsPage /></PermissionRoute>, handle: { title: 'Inventory Products' } },
+      { path: 'inventory/balances', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><InventoryBalancesPage /></PermissionRoute>, handle: { title: 'Inventory Balances' } },
+      { path: 'inventory/locations', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><LocationsPage /></PermissionRoute>, handle: { title: 'Inventory Locations' } },
+      { path: 'inventory/movements', element: <PermissionRoute requiredPermissions="VIEW_INVENTORY"><InventoryMovementsPage /></PermissionRoute>, handle: { title: 'Inventory Movements' } },
       
       // Reports routes
-      { path: 'reports/history', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><OperationalHistoryPage /></PermissionRoute> },
-      { path: 'reports/kpi', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><KpiDashboardPage /></PermissionRoute> },
-      { path: 'reports/list', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><ReportsListPage /></PermissionRoute> },
+      { path: 'reports/history', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><OperationalHistoryPage /></PermissionRoute>, handle: { title: 'Operational History' } },
+      { path: 'reports/kpi', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><KpiDashboardPage /></PermissionRoute>, handle: { title: 'KPI Dashboard' } },
+      { path: 'reports/list', element: <PermissionRoute requiredPermissions="VIEW_REPORTS"><ReportsListPage /></PermissionRoute>, handle: { title: 'Reports' } },
       
       // Administration routes
-      { path: 'admin/overview', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><AdminOverviewPage /></PermissionRoute> },
-      { path: 'admin/site-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><SiteSettingsPage /></PermissionRoute> },
-      { path: 'admin/configuration', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><ConfigurationPage /></PermissionRoute> },
-      { path: 'admin/dashboard-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DashboardSettingsPage /></PermissionRoute> },
-      { path: 'admin/decision-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DecisionSettingsPage /></PermissionRoute> },
-      { path: 'admin/data-freshness', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DataFreshnessSettingsPage /></PermissionRoute> },
-      { path: 'admin/audit-log', element: <PermissionRoute requiredPermissions="VIEW_AUDIT_LOG"><AuditLogPage /></PermissionRoute> },
-      { path: 'admin/data-utilities', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><DataUtilitiesPage /></PermissionRoute> },
+      { path: 'admin/overview', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><AdminOverviewPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/site-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><SiteSettingsPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/configuration', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><ConfigurationPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/dashboard-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DashboardSettingsPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/decision-settings', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DecisionSettingsPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/data-freshness', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DataFreshnessSettingsPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/audit-log', element: <PermissionRoute requiredPermissions="VIEW_AUDIT_LOG"><AuditLogPage /></PermissionRoute>, handle: { title: 'Administration' } },
+      { path: 'admin/data-utilities', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><DataUtilitiesPage /></PermissionRoute>, handle: { title: 'Administration' } },
     ],
   },
   {
@@ -99,7 +100,7 @@ export const router = createBrowserRouter([
       </DisplayRoute>
     ),
     children: [
-      { index: true, element: <TVDashboardPage /> },
+      { index: true, element: <TVDashboardPage />, handle: { title: 'TV Dashboard' } },
     ],
   },
   {
@@ -110,16 +111,18 @@ export const router = createBrowserRouter([
       </DisplayRoute>
     ),
     children: [
-      { index: true, element: <TVDashboardPage /> },
+      { index: true, element: <TVDashboardPage />, handle: { title: 'TV Dashboard' } },
     ],
   },
   {
     path: '/access-denied',
     element: <AccessDeniedPage />,
+    handle: { title: 'Access Denied' }
   },
   {
     path: '*',
     element: <AccessDeniedPage />,
+    handle: { title: 'Access Denied' }
   },
 ]);
 
@@ -133,7 +136,7 @@ function AppRouterWrapper() {
     logout, 
     changePassword, 
     requiresPasswordChange 
-  } = useDevelopmentContext();
+  } = useAuth();
 
   if (loading) {
     return (
@@ -170,8 +173,8 @@ function AppRouterWrapper() {
 
 export function AppRoutes() {
   return (
-    <DevelopmentProvider>
+    <AppProviders>
       <AppRouterWrapper />
-    </DevelopmentProvider>
+    </AppProviders>
   );
 }

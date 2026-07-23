@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { getSiteSettings, updateSiteSettings } from '../services/settingsService';
 import { SiteSettings } from '../../../types/settings';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { Save } from 'lucide-react';
+import { useAuth } from '../../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const SiteSettingsPage: React.FC = () => {
-  const { tenantId, siteId, currentUser, userProfile } = useDevelopmentContext();
+  const { currentUser, userProfile } = useAuth();
+  const { tenantId, siteId } = useSiteContext();
   const canEditConfig = userProfile?.role === 'TENANT_ADMIN' || userProfile?.role === 'PLATFORM_SUPERUSER';
   const [settings, setSettings] = useState<Partial<SiteSettings>>({
     siteName: '',

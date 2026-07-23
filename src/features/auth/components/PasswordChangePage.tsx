@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Lock, Eye, EyeOff, AlertTriangle, CheckCircle } from 'lucide-react';
+import { usePageTitle } from '../../../hooks/usePageTitle';
 
 interface PasswordChangePageProps {
   onSubmit: (newPass: string) => Promise<void>;
@@ -14,6 +15,7 @@ export const PasswordChangePage: React.FC<PasswordChangePageProps> = ({
   error,
   onLogout
 }) => {
+  usePageTitle('Reset Password');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -55,7 +57,7 @@ export const PasswordChangePage: React.FC<PasswordChangePageProps> = ({
             Password Reset Required
           </h1>
           <p className="text-sm text-slate-400 leading-relaxed">
-            As a security measure, you must update your temporary password before accessing the Out-of-Stock Vulnerability Management System.
+            As a security measure, you must update your temporary password before accessing the Operations Visual Management System.
           </p>
         </div>
 

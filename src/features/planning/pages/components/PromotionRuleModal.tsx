@@ -3,9 +3,9 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { PromotionProductRule } from '../../../../types/promotion';
 import { Destination, ActionType } from '../../../../types/configuration';
-import { useDevelopmentContext } from '../../../../contexts/DevelopmentContext';
 import { createPromotionRule, updatePromotionRule } from '../../services/promotionService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
+import { useSiteContext } from '../../../../../contexts/SiteContext';
 
 interface PromotionRuleModalProps {
   isOpen: boolean;
@@ -19,7 +19,7 @@ interface PromotionRuleModalProps {
 export const PromotionRuleModal: React.FC<PromotionRuleModalProps> = ({ 
   isOpen, onClose, promotionId, item, destinations, actionTypes
 }) => {
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<PromotionProductRule>>({});
   const [submitting, setSubmitting] = useState(false);
 

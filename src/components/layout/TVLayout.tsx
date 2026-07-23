@@ -1,11 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
-import { useDevelopmentContext } from '../../contexts/DevelopmentContext';
+import { Outlet, useMatches } from 'react-router-dom';
 import { LogOut, Settings, X, Building2 } from 'lucide-react';
+import { usePageTitle } from '../../hooks/usePageTitle';
+import { useAuth } from '../../features/auth/context/AuthContext';
+import { useSiteContext } from '../../contexts/SiteContext';
 
 export const TVLayout: React.FC = () => {
-  const { userProfile, siteName, availableSites, siteId, setSite, logout } = useDevelopmentContext();
+  const { userProfile, logout } = useAuth();
+  const { siteName, availableSites, siteId, setSite } = useSiteContext();
   const [showControlModal, setShowControlModal] = useState(false);
+  
+  const matches = useMatches();
+  const currentMatch = matches[matches.length - 1];
+  const title = (currentMatch?.handle as any)?.title;
+  usePageTitle(title);
 
   // Toggle controls on Ctrl+Shift+L or Escape
   useEffect(() => {

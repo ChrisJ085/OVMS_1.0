@@ -6,7 +6,6 @@ import { DataTable } from '../../../components/ui/DataTable';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { Plus, Search, CalendarDays, ArrowLeft, Trash2, Edit2, AlertTriangle } from 'lucide-react';
-import { useDevelopmentContext } from '../../../contexts/DevelopmentContext';
 import { subscribeToPromotion, subscribeToPromotionRules, updatePromotion, updatePromotionRule } from '../services/promotionService';
 import { PromotionWithPhase, PromotionProductRule } from '../../../types/promotion';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -16,11 +15,12 @@ import { where } from 'firebase/firestore';
 import { PromotionRuleModal } from './components/PromotionRuleModal';
 import { PromotionModal } from './components/PromotionModal';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 export const PromotionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { tenantId, siteId } = useDevelopmentContext();
+  const { tenantId, siteId } = useSiteContext();
   
   const [promotion, setPromotion] = useState<PromotionWithPhase | null>(null);
   const [rules, setRules] = useState<PromotionProductRule[]>([]);
