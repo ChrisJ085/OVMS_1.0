@@ -17,7 +17,7 @@ import {
 import { subscribeToCollection } from '../services/firestoreBase';
 import { where } from 'firebase/firestore';
 import { ConfigItemModal } from '../features/configuration/components/ConfigItemModal';
-import { useSiteContext } from '../../contexts/SiteContext';
+import { useSiteContext } from '../contexts/SiteContext';
 
 const TABS = [
   { id: 'sites', label: 'Sites', collection: collections.SITES, codeField: 'siteCode' },
@@ -261,7 +261,7 @@ export const ConfigurationPage: React.FC = () => {
             className="flex items-center gap-2 text-sm font-medium text-slate-300 hover:text-white transition-colors bg-slate-800 border border-slate-600 px-3 py-1.5 rounded-md hover:bg-slate-700"
           >
             <Plus className="w-4 h-4" />
-            Add {activeTab.label.split(' ')[0]}
+            Add {activeTab?.label ? activeTab.label.split(' ')[0] : ''}
           </button>
         }
       >

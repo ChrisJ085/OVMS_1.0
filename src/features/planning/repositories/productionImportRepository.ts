@@ -16,11 +16,16 @@ export const productionImportRepository = {
         importsRef,
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
-        orderBy('uploadedAt', 'desc'),
         limit(limitCount)
       );
       const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionPlanImport));
+      const imports = snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionPlanImport));
+      imports.sort((a, b) => {
+        const tA = a.uploadedAt ? (typeof a.uploadedAt === 'string' ? new Date(a.uploadedAt).getTime() : ((a.uploadedAt as any).toMillis ? (a.uploadedAt as any).toMillis() : new Date(a.uploadedAt as any).getTime())) : 0;
+        const tB = b.uploadedAt ? (typeof b.uploadedAt === 'string' ? new Date(b.uploadedAt).getTime() : ((b.uploadedAt as any).toMillis ? (b.uploadedAt as any).toMillis() : new Date(b.uploadedAt as any).getTime())) : 0;
+        return tB - tA;
+      });
+      return imports;
     } catch (err) {
       throw toAppError(err, 'FETCH_IMPORT_HISTORY_FAILED');
     }

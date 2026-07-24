@@ -22,11 +22,15 @@ export const AuditLogPage: React.FC = () => {
           collection(db, 'auditLogs'),
           where('tenantId', '==', tenantId),
           where('siteId', '==', siteId),
-          orderBy('timestamp', 'desc'),
           limit(100)
         );
         const snap = await getDocs(q);
         const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AuditEvent));
+        data.sort((a, b) => {
+          const tA = a.timestamp ? (typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : ((a.timestamp as any).toMillis ? (a.timestamp as any).toMillis() : new Date(a.timestamp as any).getTime())) : 0;
+          const tB = b.timestamp ? (typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : ((b.timestamp as any).toMillis ? (b.timestamp as any).toMillis() : new Date(b.timestamp as any).getTime())) : 0;
+          return tB - tA;
+        });
         setLogs(data);
       } catch (err: any) {
         setError(err.message);

@@ -3,7 +3,7 @@ import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore
 import { db } from '../../../config/firebase';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Activity, Clock, CheckCircle, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const KpiDashboardPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -115,11 +115,15 @@ export const KpiDashboardPage: React.FC = () => {
       const qRecs = query(
         collection(db, 'recommendations'),
         where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('createdDate', '>=', startOfDayTs)
+        where('siteId', '==', siteId)
       );
       const rSnap = await getDocs(qRecs);
-      const recs = rSnap.docs.map(d => d.data() as any);
+      const recs = rSnap.docs.map(d => d.data() as any).filter(r => {
+        const rawTs = r.createdDate || r.generatedAt;
+        if (!rawTs) return false;
+        const d = (rawTs as any)?.toDate ? (rawTs as any).toDate() : new Date(rawTs as any);
+        return !isNaN(d.getTime()) && d >= startOfDay;
+      });
       
       let recAccepted = 0, recRejected = 0, recOverride = 0;
       recs.forEach(r => {

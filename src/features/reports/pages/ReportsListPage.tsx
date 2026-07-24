@@ -3,7 +3,7 @@ import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore
 import { db } from '../../../config/firebase';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Download, FileText, Calendar, Filter } from 'lucide-react';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 type ReportType = 'PRIORITY_PERFORMANCE' | 'DDXM_STOCK' | 'RECOMMENDATION_OVERRIDE' | 'INVENTORY_MOVEMENT' | 'EXCEPTION_REPORT' | 'PRODUCTION_CONTEXT';
 
@@ -30,8 +30,8 @@ export const ReportsListPage: React.FC = () => {
     setGeneratedAt(null);
     
     try {
-      const startTimestamp = Timestamp.fromDate(new Date(startDate + 'T00:00:00'));
-      const endTimestamp = Timestamp.fromDate(new Date(endDate + 'T23:59:59'));
+      const startMs = new Date(startDate + 'T00:00:00').getTime();
+      const endMs = new Date(endDate + 'T23:59:59').getTime();
       
       let data: any[] = [];
       let cols: string[] = [];
@@ -40,19 +40,20 @@ export const ReportsListPage: React.FC = () => {
         const q = query(
           collection(db, 'priorities'),
           where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          where('createdDate', '>=', startTimestamp),
-          where('createdDate', '<=', endTimestamp)
+          where('siteId', '==', siteId)
         );
         const snap = await getDocs(q);
         
         cols = ['ID', 'Level', 'Status', 'Product', 'Assigned To', 'Created', 'Completed', 'Cycle Time (hrs)'];
         data = snap.docs.map(doc => {
           const d = doc.data();
+          const created = (d.createdDate as any)?.toDate ? (d.createdDate as any).toDate() : new Date(d.createdDate as any);
+          const cMs = created.getTime();
+          if (isNaN(cMs) || cMs < startMs || cMs > endMs) return null;
+
           const pCode = d.productCodeSnapshot || '-';
           if (productCode && !pCode.toLowerCase().includes(productCode.toLowerCase())) return null;
           
-          const created = (d.createdDate as any)?.toDate?.() || new Date();
           const comp = (d.completedAt as any)?.toDate?.();
           let cycleTime = '-';
           if (comp) {
@@ -74,15 +75,16 @@ export const ReportsListPage: React.FC = () => {
         const q = query(
           collection(db, 'exceptions'),
           where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          where('createdDate', '>=', startTimestamp),
-          where('createdDate', '<=', endTimestamp)
+          where('siteId', '==', siteId)
         );
         const snap = await getDocs(q);
         
         cols = ['ID', 'Type', 'Severity', 'Status', 'Entity', 'Message', 'Created'];
         data = snap.docs.map(doc => {
           const d = doc.data();
+          const created = (d.createdDate as any)?.toDate ? (d.createdDate as any).toDate() : new Date(d.createdDate as any);
+          const cMs = created.getTime();
+          if (isNaN(cMs) || cMs < startMs || cMs > endMs) return null;
           return {
             ID: doc.id,
             Type: d.exceptionType,

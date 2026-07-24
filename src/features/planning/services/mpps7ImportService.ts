@@ -530,15 +530,20 @@ export const evaluatePlanComparison = async (
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('status', '==', 'COMMITTED'),
-      orderBy('periodStart', 'desc'),
-      limit(1)
+      limit(20)
     );
     const activeSnap = await getDocs(activeQuery);
     if (activeSnap.empty) {
       return { status: 'NEWER_NON_OVERLAPPING', message: 'No active committed plans exist in system.' };
     }
 
-    const activeDoc = activeSnap.docs[0].data() as ProductionPlanImport;
+    const importsList = activeSnap.docs.map(d => d.data() as ProductionPlanImport);
+    importsList.sort((a, b) => {
+      const tA = a.periodStart ? (typeof a.periodStart === 'string' ? new Date(a.periodStart).getTime() : ((a.periodStart as any).toMillis ? (a.periodStart as any).toMillis() : new Date(a.periodStart as any).getTime())) : 0;
+      const tB = b.periodStart ? (typeof b.periodStart === 'string' ? new Date(b.periodStart).getTime() : ((b.periodStart as any).toMillis ? (b.periodStart as any).toMillis() : new Date(b.periodStart as any).getTime())) : 0;
+      return tB - tA;
+    });
+    const activeDoc = importsList[0];
     const activeStart = activeDoc.periodStart?.toDate ? activeDoc.periodStart.toDate() : new Date(activeDoc.periodStart as any || Date.now());
     const activeEnd = activeDoc.periodEnd?.toDate ? activeDoc.periodEnd.toDate() : new Date(activeDoc.periodEnd as any || Date.now());
 
@@ -547,8 +552,10 @@ export const evaluatePlanComparison = async (
     const activeStartMs = activeStart.getTime();
     const activeEndMs = activeEnd.getTime();
 
-    const activeStartStr = activeStart.toISOString().split('T')[0];
-    const activeEndStr = activeEnd.toISOString().split('T')[0];
+    const safeIsoDate = (d: Date) => (!d || isNaN(d.getTime())) ? '' : d.toISOString().split('T')[0];
+
+    const activeStartStr = safeIsoDate(activeStart);
+    const activeEndStr = safeIsoDate(activeEnd);
 
     if (newStartMs === activeStartMs && newEndMs === activeEndMs) {
       return {
@@ -561,7 +568,7 @@ export const evaluatePlanComparison = async (
     if (newEndMs < activeStartMs) {
       return {
         status: 'OLDER_THAN_ACTIVE',
-        message: `Import period ends (${newEnd.toISOString().split('T')[0]}) before current active plan start (${activeStartStr}).`,
+        message: `Import period ends (${safeIsoDate(newEnd)}) before current active plan start (${activeStartStr}).`,
         activeStart: activeStartStr,
         activeEnd: activeEndStr
       };
@@ -785,7 +792,7 @@ export const createImportPreview = async (
       }
       reconciliationByProduct[productKey].parsedCases += qty;
 
-      const dateKeyStr = dateCol.date.toISOString().split('T')[0];
+      const dateKeyStr = dateCol.date && !isNaN(dateCol.date.getTime()) ? dateCol.date.toISOString().split('T')[0] : 'UNKNOWN_DATE';
       if (!reconciliationByDate[dateKeyStr]) {
         reconciliationByDate[dateKeyStr] = { parsedCases: 0 };
       }
@@ -926,7 +933,7 @@ export const createImportPreview = async (
         importId: previewImportId,
         sourceSheetName: selectedSheetName,
         sourceRowNumber: idx + headerRowIndex + 2,
-        productionLineCode: lineObj ? lineObj.lineCode : (resourceVal.split('_')[0] || resourceVal),
+        productionLineCode: lineObj ? lineObj.lineCode : (resourceVal ? (resourceVal.split('_')[0] || resourceVal) : ''),
         productionLineName: lineObj ? lineObj.lineName : resourceVal,
         productCode: skuVal,
         sourceProductDescription: descVal,
@@ -1019,8 +1026,8 @@ export const createImportPreview = async (
       rolloverDatesCount: rolloverCount
     },
     dateSequence: {
-      startDate: periodStart.toISOString().split('T')[0],
-      endDate: periodEnd.toISOString().split('T')[0],
+      startDate: periodStart && !isNaN(periodStart.getTime()) ? periodStart.toISOString().split('T')[0] : '',
+      endDate: periodEnd && !isNaN(periodEnd.getTime()) ? periodEnd.toISOString().split('T')[0] : '',
       totalDateColumns: dateColumns.length,
       isValidSequence: sequenceIssues.length === 0 && duplicateKeys.length === 0,
       issues: sequenceIssues

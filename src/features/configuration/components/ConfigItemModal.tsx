@@ -110,7 +110,7 @@ export const ConfigItemModal: React.FC<ConfigItemModalProps> = ({ isOpen, onClos
             <FormField 
               label="SAP Resource Aliases (Comma separated)" 
               value={Array.isArray(formData.sapResourceAliases) ? formData.sapResourceAliases.join(', ') : (formData.sapResourceAliases || '')} 
-              onChange={(e) => handleChange('sapResourceAliases', e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean))} 
+              onChange={(e) => handleChange('sapResourceAliases', (e.target.value || '').split(',').map((s: string) => s.trim()).filter(Boolean))} 
               placeholder="e.g. FCL5, LINE5" 
             />
           </>

@@ -7,7 +7,7 @@ import { Priority } from '../../../types/priority';
 import { Recommendation } from '../../../types/recommendation';
 import { OperationalException } from '../../../types/exception';
 import { Announcement } from '../../../types/announcement';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 // Normalised history item
 interface HistoryEvent {
@@ -43,35 +43,40 @@ export const OperationalHistoryPage: React.FC = () => {
     const fetchHistory = async () => {
       setLoading(true);
       try {
-        const startTimestamp = Timestamp.fromDate(new Date(startDate + 'T00:00:00'));
-        const endTimestamp = Timestamp.fromDate(new Date(endDate + 'T23:59:59'));
+        const startMs = new Date(startDate + 'T00:00:00').getTime();
+        const endMs = new Date(endDate + 'T23:59:59').getTime();
         
         const history: HistoryEvent[] = [];
+
+        const isBetween = (ts: Date) => {
+          const t = ts.getTime();
+          return !isNaN(t) && t >= startMs && t <= endMs;
+        };
 
         // Fetch Priorities
         if (eventTypeFilter === 'ALL' || eventTypeFilter === 'PRIORITY') {
           const qPriorities = query(
             collection(db, 'priorities'),
             where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId),
-            where('createdDate', '>=', startTimestamp),
-            where('createdDate', '<=', endTimestamp)
+            where('siteId', '==', siteId)
           );
           const pSnap = await getDocs(qPriorities);
           pSnap.docs.forEach(doc => {
             const data = doc.data() as Priority;
-            const ts = (data.createdDate as any)?.toDate?.() || new Date(data.createdDate as any);
-            history.push({
-              id: `p-${doc.id}`,
-              sourceId: doc.id,
-              type: 'PRIORITY',
-              timestamp: ts,
-              title: `Priority: ${data.priorityLevelId}`,
-              description: data.latestProgressNote || `Created priority for ${data.productCodeSnapshot}`,
-              status: data.priorityStatus,
-              actor: 'System',
-              metadata: data
-            });
+            const ts = (data.createdDate as any)?.toDate ? (data.createdDate as any).toDate() : new Date(data.createdDate as any);
+            if (isBetween(ts)) {
+              history.push({
+                id: `p-${doc.id}`,
+                sourceId: doc.id,
+                type: 'PRIORITY',
+                timestamp: ts,
+                title: `Priority: ${data.priorityLevelId}`,
+                description: data.latestProgressNote || `Created priority for ${data.productCodeSnapshot}`,
+                status: data.priorityStatus,
+                actor: 'System',
+                metadata: data
+              });
+            }
           });
         }
 
@@ -80,25 +85,26 @@ export const OperationalHistoryPage: React.FC = () => {
           const qRecs = query(
             collection(db, 'recommendations'),
             where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId),
-            where('createdDate', '>=', startTimestamp),
-            where('createdDate', '<=', endTimestamp)
+            where('siteId', '==', siteId)
           );
           const rSnap = await getDocs(qRecs);
           rSnap.docs.forEach(doc => {
             const data = doc.data() as Recommendation;
-            const ts = (data.createdDate as any)?.toDate?.() || new Date(data.createdDate as any);
-            history.push({
-              id: `r-\${doc.id}`,
-              sourceId: doc.id,
-              type: 'RECOMMENDATION',
-              timestamp: ts,
-              title: `Recommendation: \${data.reasonCode}`,
-              description: `Recommended \${data.recommendedAction.type} for \${data.productId}`,
-              status: data.status,
-              actor: 'System',
-              metadata: data
-            });
+            const rawTs = data.createdDate || data.generatedAt;
+            const ts = (rawTs as any)?.toDate ? (rawTs as any).toDate() : new Date(rawTs as any);
+            if (isBetween(ts)) {
+              history.push({
+                id: `r-${doc.id}`,
+                sourceId: doc.id,
+                type: 'RECOMMENDATION',
+                timestamp: ts,
+                title: `Recommendation: ${data.decisionOutput?.recommendedActionTypeId || 'System'}`,
+                description: `Recommended ${data.decisionOutput?.recommendedQuantity || 0} for ${data.productCodeSnapshot || data.productId || 'product'}`,
+                status: data.recommendationStatus || 'AWAITING_REVIEW',
+                actor: 'System',
+                metadata: data
+              });
+            }
           });
         }
 
@@ -107,25 +113,25 @@ export const OperationalHistoryPage: React.FC = () => {
           const qExceptions = query(
             collection(db, 'exceptions'),
             where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId),
-            where('createdDate', '>=', startTimestamp),
-            where('createdDate', '<=', endTimestamp)
+            where('siteId', '==', siteId)
           );
           const eSnap = await getDocs(qExceptions);
           eSnap.docs.forEach(doc => {
             const data = doc.data() as OperationalException;
-            const ts = (data.createdDate as any)?.toDate?.() || new Date(data.createdDate as any);
-            history.push({
-              id: `e-\${doc.id}`,
-              sourceId: doc.id,
-              type: 'EXCEPTION',
-              timestamp: ts,
-              title: `Exception: \${data.title}`,
-              description: data.message,
-              status: data.exceptionStatus,
-              actor: 'System',
-              metadata: data
-            });
+            const ts = (data.createdDate as any)?.toDate ? (data.createdDate as any).toDate() : new Date(data.createdDate as any);
+            if (isBetween(ts)) {
+              history.push({
+                id: `e-${doc.id}`,
+                sourceId: doc.id,
+                type: 'EXCEPTION',
+                timestamp: ts,
+                title: `Exception: ${data.title}`,
+                description: data.message,
+                status: data.exceptionStatus,
+                actor: 'System',
+                metadata: data
+              });
+            }
           });
         }
 
@@ -134,25 +140,25 @@ export const OperationalHistoryPage: React.FC = () => {
           const qAnn = query(
             collection(db, 'announcements'),
             where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId),
-            where('createdDate', '>=', startTimestamp),
-            where('createdDate', '<=', endTimestamp)
+            where('siteId', '==', siteId)
           );
           const aSnap = await getDocs(qAnn);
           aSnap.docs.forEach(doc => {
             const data = doc.data() as Announcement;
-            const ts = (data.createdDate as any)?.toDate?.() || new Date(data.createdDate as any);
-            history.push({
-              id: `a-\${doc.id}`,
-              sourceId: doc.id,
-              type: 'ANNOUNCEMENT',
-              timestamp: ts,
-              title: `Announcement: \${data.title}`,
-              description: data.message,
-              status: data.active ? 'ACTIVE' : 'INACTIVE',
-              actor: 'System',
-              metadata: data
-            });
+            const ts = (data.createdDate as any)?.toDate ? (data.createdDate as any).toDate() : new Date(data.createdDate as any);
+            if (isBetween(ts)) {
+              history.push({
+                id: `a-${doc.id}`,
+                sourceId: doc.id,
+                type: 'ANNOUNCEMENT',
+                timestamp: ts,
+                title: `Announcement: ${data.title}`,
+                description: data.message,
+                status: data.active ? 'ACTIVE' : 'INACTIVE',
+                actor: 'System',
+                metadata: data
+              });
+            }
           });
         }
 

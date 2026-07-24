@@ -6,7 +6,7 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { createAnnouncement, updateAnnouncement } from '../services/announcementService';
 import { Megaphone, AlertTriangle, Clock, Activity, CheckCircle, Ban, Edit, Plus } from 'lucide-react';
 import { Timestamp } from 'firebase/firestore';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -39,12 +39,16 @@ export const AnnouncementsPage: React.FC = () => {
     const q = query(
       collection(db, 'announcements'),
       where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      orderBy('createdDate', 'desc')
+      where('siteId', '==', siteId)
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
       const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement));
+      fetched.sort((a, b) => {
+        const tA = a.createdDate ? (typeof a.createdDate === 'string' ? new Date(a.createdDate).getTime() : ((a.createdDate as any).toMillis ? (a.createdDate as any).toMillis() : new Date(a.createdDate as any).getTime())) : 0;
+        const tB = b.createdDate ? (typeof b.createdDate === 'string' ? new Date(b.createdDate).getTime() : ((b.createdDate as any).toMillis ? (b.createdDate as any).toMillis() : new Date(b.createdDate as any).getTime())) : 0;
+        return tB - tA;
+      });
       setAnnouncements(fetched);
       setLoading(false);
     }, (err) => {

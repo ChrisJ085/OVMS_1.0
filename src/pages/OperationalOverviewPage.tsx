@@ -12,7 +12,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { SectionCard } from '../components/ui/SectionCard';
 import { StatusBadge, BadgeVariant } from '../components/ui/StatusBadge';
 import { useAuth } from '../features/auth/context/AuthContext';
-import { useSiteContext } from '../../contexts/SiteContext';
+import { useSiteContext } from '../contexts/SiteContext';
 import {
   Activity,
   AlertTriangle,
@@ -312,11 +312,16 @@ export const OperationalOverviewPage: React.FC = () => {
           collection(db, 'recommendations'),
           where('tenantId', '==', tenantId),
           where('siteId', '==', siteId),
-          orderBy('generatedAt', 'desc'),
-          limit(50)
+          limit(100)
         );
         const recsSnap = await getDocs(recsQuery);
-        setRecommendations(recsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Recommendation)));
+        const recs = recsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Recommendation));
+        recs.sort((a, b) => {
+          const tA = a.generatedAt ? (typeof a.generatedAt === 'string' ? new Date(a.generatedAt).getTime() : ((a.generatedAt as any).toMillis ? (a.generatedAt as any).toMillis() : new Date(a.generatedAt as any).getTime())) : 0;
+          const tB = b.generatedAt ? (typeof b.generatedAt === 'string' ? new Date(b.generatedAt).getTime() : ((b.generatedAt as any).toMillis ? (b.generatedAt as any).toMillis() : new Date(b.generatedAt as any).getTime())) : 0;
+          return tB - tA;
+        });
+        setRecommendations(recs.slice(0, 50));
         setPanelErrors((prev) => ({ ...prev, recommendations: undefined }));
       } catch (err: any) {
         console.error('Error fetching recommendations:', err);
@@ -329,12 +334,17 @@ export const OperationalOverviewPage: React.FC = () => {
           collection(db, 'productionPlanImports'),
           where('tenantId', '==', tenantId),
           where('siteId', '==', siteId),
-          orderBy('uploadedAt', 'desc'),
-          limit(1)
+          limit(20)
         );
         const importSnap = await getDocs(importsQuery);
         if (!importSnap.empty) {
-          setLatestImport({ id: importSnap.docs[0].id, ...importSnap.docs[0].data() } as ProductionPlanImport);
+          const imports = importSnap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionPlanImport));
+          imports.sort((a, b) => {
+            const tA = a.uploadedAt ? (typeof a.uploadedAt === 'string' ? new Date(a.uploadedAt).getTime() : ((a.uploadedAt as any).toMillis ? (a.uploadedAt as any).toMillis() : new Date(a.uploadedAt as any).getTime())) : 0;
+            const tB = b.uploadedAt ? (typeof b.uploadedAt === 'string' ? new Date(b.uploadedAt).getTime() : ((b.uploadedAt as any).toMillis ? (b.uploadedAt as any).toMillis() : new Date(b.uploadedAt as any).getTime())) : 0;
+            return tB - tA;
+          });
+          setLatestImport(imports[0]);
         } else {
           setLatestImport(null);
         }
@@ -347,19 +357,30 @@ export const OperationalOverviewPage: React.FC = () => {
       // 4d. Today's Production Plan Entries
       try {
         const { startOfToday, startOfNextDay } = getSiteTimezoneBoundaries(activeTimezone);
-        const startTimestamp = typeof Timestamp.fromDate === 'function' ? Timestamp.fromDate(startOfToday) : startOfToday;
-        const endTimestamp = typeof Timestamp.fromDate === 'function' ? Timestamp.fromDate(startOfNextDay) : startOfNextDay;
 
         const prodEntriesQuery = query(
           collection(db, 'productionPlanEntries'),
           where('tenantId', '==', tenantId),
           where('siteId', '==', siteId),
-          where('productionDate', '>=', startTimestamp),
-          where('productionDate', '<', endTimestamp),
-          limit(500)
+          limit(1000)
         );
         const entriesSnap = await getDocs(prodEntriesQuery);
-        setProductionEntries(entriesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as ProductionPlanEntry)));
+        const allEntries = entriesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as ProductionPlanEntry));
+        const filteredEntries = allEntries.filter((e) => {
+          if (!e.productionDate) return false;
+          let ms = 0;
+          if (typeof e.productionDate === 'string') {
+            ms = new Date(e.productionDate).getTime();
+          } else if (typeof (e.productionDate as any).toMillis === 'function') {
+            ms = (e.productionDate as any).toMillis();
+          } else if (typeof (e.productionDate as any).seconds === 'number') {
+            ms = (e.productionDate as any).seconds * 1000;
+          } else if (e.productionDate instanceof Date) {
+            ms = e.productionDate.getTime();
+          }
+          return ms >= startOfToday.getTime() && ms < startOfNextDay.getTime();
+        });
+        setProductionEntries(filteredEntries);
         setPanelErrors((prev) => ({ ...prev, production: undefined }));
       } catch (err: any) {
         console.error('Error fetching production entries:', err);
@@ -481,8 +502,16 @@ export const OperationalOverviewPage: React.FC = () => {
     // Production today calculations
     const todayStr = new Date().toISOString().split('T')[0];
     const todayEntries = productionEntries.filter((e) => {
-      if (!e.productionDate) return false;
-      const d = e.productionDate.toDate ? e.productionDate.toDate() : new Date(e.productionDate as any);
+      if (!e || !e.productionDate) return false;
+      let d: Date;
+      if (typeof (e.productionDate as any)?.toDate === 'function') {
+        d = (e.productionDate as any).toDate();
+      } else if (e.productionDate instanceof Date) {
+        d = e.productionDate;
+      } else {
+        d = new Date(e.productionDate as any);
+      }
+      if (!d || isNaN(d.getTime())) return false;
       return d.toISOString().split('T')[0] === todayStr;
     });
 

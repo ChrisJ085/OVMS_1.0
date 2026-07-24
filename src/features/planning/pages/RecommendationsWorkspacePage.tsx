@@ -8,7 +8,7 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { generateRecommendationForProduct } from '../services/recommendationService';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 const SUMMARY_TILES = [
   { id: 'requires-review', label: 'Requires Review', color: 'bg-blue-900 text-blue-100 border-blue-700' },
@@ -34,11 +34,15 @@ export const RecommendationsWorkspacePage: React.FC = () => {
       const q = query(
         collection(db, 'recommendations'),
         where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        orderBy('generatedAt', 'desc')
+        where('siteId', '==', siteId)
       );
       const snap = await getDocs(q);
       const recs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Recommendation));
+      recs.sort((a, b) => {
+        const tA = a.generatedAt ? (typeof a.generatedAt === 'string' ? new Date(a.generatedAt).getTime() : ((a.generatedAt as any).toMillis ? (a.generatedAt as any).toMillis() : new Date(a.generatedAt as any).getTime())) : 0;
+        const tB = b.generatedAt ? (typeof b.generatedAt === 'string' ? new Date(b.generatedAt).getTime() : ((b.generatedAt as any).toMillis ? (b.generatedAt as any).toMillis() : new Date(b.generatedAt as any).getTime())) : 0;
+        return tB - tA;
+      });
       setRecommendations(recs);
     } catch (e) {
       console.error('Error fetching recommendations:', e);

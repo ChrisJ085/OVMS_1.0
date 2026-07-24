@@ -260,7 +260,7 @@ export const AdminOverviewPage: React.FC = () => {
     setCreatingUserMsg(null);
 
     const actualTenantId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId.trim() : userProfile?.tenantId;
-    const sitesArray = newUserSiteIds.split(',').map(s => s.trim()).filter(Boolean);
+    const sitesArray = (newUserSiteIds || '').split(',').map(s => s.trim()).filter(Boolean);
 
     try {
       const functionsInstance = getFunctions(app!);
