@@ -25,6 +25,7 @@ export interface ProductPlanningRule extends BaseDocument {
   overrideRequiresReason: boolean;
   effectiveFrom: Timestamp;
   effectiveTo: Timestamp | null;
+  untilSwitchedOff?: boolean;
   notes: string;
 }
 

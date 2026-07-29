@@ -34,16 +34,38 @@ export const calculateFileHash = async (file: File): Promise<string> => {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
-// 2. Helper to Parse SAP Date Header (e.g. "Tue 21.07" or Serial Date)
+// 2. Helper to Parse SAP Date Header (e.g. "Tue 21.07", "21-07", "21-Jul", or Serial Date)
+const MONTH_MAP: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+};
+
 export const parseSapDate = (dateStr: string, referenceYear: number = new Date().getFullYear()): Date | null => {
   if (!dateStr) return null;
   const cleaned = dateStr.trim();
-  const match = cleaned.match(/^([A-Za-z]{3}\s+)?(\d{1,2})[./](\d{1,2})$/);
-  if (!match) return null;
-  const day = parseInt(match[2], 10);
-  const month = parseInt(match[3], 10) - 1; // 0-indexed month
-  if (month < 0 || month > 11 || day < 1 || day > 31) return null;
-  return new Date(Date.UTC(referenceYear, month, day, 0, 0, 0, 0));
+  const match = cleaned.match(/^([A-Za-z]{3,9}\s+)?(\d{1,2})[-./](\d{1,2})$/);
+  if (match) {
+    const day = parseInt(match[2], 10);
+    const month = parseInt(match[3], 10) - 1; // 0-indexed month
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+      return new Date(Date.UTC(referenceYear, month, day, 0, 0, 0, 0));
+    }
+  }
+
+  // Check DD-Mon or Mon-DD
+  const alphaMatch = cleaned.match(/^(\d{1,2})[-/ ]([A-Za-z]{3,9})$/) || cleaned.match(/^([A-Za-z]{3,9})[-/ ](\d{1,2})$/);
+  if (alphaMatch) {
+    const p1 = alphaMatch[1];
+    const p2 = alphaMatch[2];
+    const isP1Num = !isNaN(Number(p1));
+    const day = isP1Num ? parseInt(p1, 10) : parseInt(p2, 10);
+    const monthStr = (isP1Num ? p2 : p1).substring(0, 3).toLowerCase();
+    const month = MONTH_MAP[monthStr];
+    if (month && day >= 1 && day <= 31) {
+      return new Date(Date.UTC(referenceYear, month - 1, day, 0, 0, 0, 0));
+    }
+  }
+  return null;
 };
 
 export const resolveHeaderDate = (cellValue: any, referenceYear: number = new Date().getFullYear()): Date | null => {
@@ -73,7 +95,7 @@ export const calculatePlannedPallets = (
   if (casesPerPallet === null || casesPerPallet === undefined || casesPerPallet <= 0 || isNaN(casesPerPallet)) {
     return null;
   }
-  return Math.round((plannedCases / casesPerPallet) * 100) / 100;
+  return Math.ceil(plannedCases / casesPerPallet);
 };
 
 // 5. Inspect MPPS7 Workbook Structure
@@ -122,7 +144,7 @@ export const inspectMpps7Workbook = (workbook: XLSX.WorkBook): WorkbookInspectio
       }
 
       const range = XLSX.utils.decode_range(worksheet['!ref']);
-      const maxRowsToInspect = Math.min(range.e.r, 15);
+      const maxRowsToInspect = Math.min(range.e.r, 30);
       let foundHeaderRow = -1;
       let foundHeaders: string[] = [];
 
@@ -137,8 +159,15 @@ export const inspectMpps7Workbook = (workbook: XLSX.WorkBook): WorkbookInspectio
         }
 
         const rowStrLower = rowHeaders.map(h => h.toLowerCase());
-        const hasResource = rowStrLower.some(h => h.includes('resource') || h === 'line');
-        const hasProduct = rowStrLower.some(h => h.includes('product number') || h.includes('material') || h === 'sku');
+        const hasResource = rowStrLower.some(h => 
+          h.includes('resource') || h.includes('line') || h.includes('machine') || 
+          h.includes('work center') || h.includes('workcenter') || h.includes('asset') || 
+          h.includes('plant') || h.includes('wc')
+        );
+        const hasProduct = rowStrLower.some(h => 
+          h.includes('product') || h.includes('material') || h.includes('sku') || 
+          h.includes('item') || h.includes('part') || h.includes('article')
+        );
 
         if (hasResource && hasProduct) {
           foundHeaderRow = r;
@@ -736,10 +765,19 @@ export const createImportPreview = async (
 
     for (const k of Object.keys(row)) {
       const kl = k.trim().toLowerCase();
-      if (kl === 'resource' || kl === 'line' || kl === 'machine') resourceVal = String(row[k] || '').trim();
-      else if (kl === 'product number' || kl === 'material' || kl === 'sku' || kl === 'product code') skuVal = String(row[k] || '').trim();
-      else if (kl === 'product short description' || kl === 'description' || kl === 'product name') descVal = String(row[k] || '').trim();
-      else if (kl === 'base unit of measure' || kl === 'uom' || kl === 'unit') uomVal = String(row[k] || '').trim();
+      if (!resourceVal && (kl === 'resource' || kl === 'line' || kl === 'machine' || kl.includes('resource') || kl.includes('line') || kl.includes('work center') || kl.includes('workcenter') || kl.includes('asset') || kl.includes('plant'))) {
+        resourceVal = String(row[k] || '').trim();
+      } else if (!skuVal && (kl === 'product number' || kl === 'material' || kl === 'sku' || kl === 'product code' || kl === 'item' || kl.includes('product') || kl.includes('material') || kl.includes('sku') || kl.includes('item') || kl.includes('part') || kl.includes('article'))) {
+        if (!kl.includes('description') && !kl.includes('name') && !kl.includes('short') && !kl.includes('desc')) {
+          skuVal = String(row[k] || '').trim();
+        } else if (!descVal) {
+          descVal = String(row[k] || '').trim();
+        }
+      } else if (!descVal && (kl.includes('description') || kl.includes('name') || kl.includes('desc'))) {
+        descVal = String(row[k] || '').trim();
+      } else if (!uomVal && (kl.includes('uom') || kl.includes('unit') || kl.includes('base unit') || kl.includes('measure'))) {
+        uomVal = String(row[k] || '').trim();
+      }
     }
 
     const sourceTotalVal = sourceTotalColKey && row[sourceTotalColKey] !== undefined && row[sourceTotalColKey] !== ''
@@ -858,25 +896,71 @@ export const createImportPreview = async (
         rowStatus = 'ERROR';
       }
 
-      // 5. Unit of Measure Validation
-      const cleanUom = uomVal ? uomVal.trim().toUpperCase() : 'CS';
-      if (!isSupportedUnit(cleanUom)) {
-        unsupportedUnitsFoundSet.add(uomVal || 'MISSING');
-        rowErrors.push(`Unsupported Unit of Measure "${uomVal}". Configured supported units: ${SUPPORTED_BASE_UNITS.join(', ')}.`);
+      // 5. Unit of Measure & Cases Per Pallet Validation
+      let cleanUom = uomVal ? uomVal.trim().toUpperCase() : 'CS';
+      let casesPerPalletVal: number | null = null;
+      let calculatedPalletsVal: number | null = null;
+      let isUomSelectionRequired = false;
+
+      if (productObj) {
+        const configs = (productObj.configurations && productObj.configurations.length > 0)
+          ? productObj.configurations
+          : [{ unitOfMeasureId: productObj.unitOfMeasureId || uomVal || 'CS', casesPerPallet: productObj.casesPerPallet, unitsPerCase: productObj.unitsPerCase }];
+
+        if (configs.length === 1) {
+          // When a product has only one configuration, system must assume that cases per pallet and UoM will be whatever is set within Products table
+          casesPerPalletVal = configs[0].casesPerPallet;
+          if (configs[0].unitOfMeasureId && (productObj.configurations || productObj.unitOfMeasureId)) {
+            cleanUom = configs[0].unitOfMeasureId.trim().toUpperCase();
+          }
+        } else if (configs.length > 1) {
+          // Where a product has more than one Product Configuration, only these should have Data Validation Issues if UoM is not chosen/matched
+          const explicitMatch = configs.find(c => c.unitOfMeasureId.trim().toUpperCase() === cleanUom);
+          const defaultMatch = productObj.defaultImportUomId
+            ? configs.find(c => c.unitOfMeasureId.trim().toUpperCase() === productObj.defaultImportUomId?.trim().toUpperCase())
+            : null;
+
+          if (explicitMatch) {
+            casesPerPalletVal = explicitMatch.casesPerPallet;
+            cleanUom = explicitMatch.unitOfMeasureId.trim().toUpperCase();
+          } else if (defaultMatch) {
+            casesPerPalletVal = defaultMatch.casesPerPallet;
+            cleanUom = defaultMatch.unitOfMeasureId.trim().toUpperCase();
+          } else {
+            isUomSelectionRequired = true;
+          }
+        }
+      }
+
+      const isConfiguredUnit = Boolean(
+        productObj &&
+        productObj.configurations &&
+        productObj.configurations.length > 0 &&
+        productObj.configurations.some(c => c.unitOfMeasureId.trim().toUpperCase() === cleanUom)
+      ) || Boolean(
+        productObj &&
+        productObj.unitOfMeasureId &&
+        productObj.unitOfMeasureId.trim().toUpperCase() === cleanUom
+      );
+
+      if (!isSupportedUnit(cleanUom) && !isConfiguredUnit) {
+        unsupportedUnitsFoundSet.add(uomVal || cleanUom || 'MISSING');
+        rowErrors.push(`Unsupported Unit of Measure "${cleanUom}". Configured supported units: ${SUPPORTED_BASE_UNITS.join(', ')}.`);
         validationCodes.push('UNIT_NOT_SUPPORTED');
         rowStatus = 'ERROR';
       }
 
-      // 6. Cases Per Pallet Validation (Return null and mark error if missing / invalid)
-      const casesPerPalletVal = productObj?.casesPerPallet && productObj.casesPerPallet > 0 ? productObj.casesPerPallet : null;
-      let calculatedPalletsVal: number | null = null;
-
-      if (!casesPerPalletVal || casesPerPalletVal <= 0) {
-        rowErrors.push(`Cases per Pallet (CS/Pallet) conversion rate is missing or zero for SKU: ${skuVal}. Pallet quantity cannot be calculated.`);
+      if (isUomSelectionRequired) {
+        rowErrors.push(`Product SKU "${skuVal}" has multiple Unit of Measure configurations. Please choose the Unit of Measure from those listed within the Product itself.`);
+        validationCodes.push('UOM_SELECTION_REQUIRED');
+        rowStatus = 'ERROR';
+        calculatedPalletsVal = null;
+      } else if (!casesPerPalletVal || casesPerPalletVal <= 0) {
+        rowErrors.push(`Cases per Pallet (CS/Pallet) conversion rate for UoM "${cleanUom}" is missing or zero for SKU: ${skuVal}. Pallet quantity cannot be calculated.`);
         validationCodes.push('CASES_PER_PALLET_MISSING');
         rowStatus = 'ERROR';
         calculatedPalletsVal = null;
-      } else if (isSupportedUnit(cleanUom)) {
+      } else if (isSupportedUnit(cleanUom) || isConfiguredUnit) {
         calculatedPalletsVal = calculatePlannedPallets(qty, casesPerPalletVal);
       } else {
         calculatedPalletsVal = null;
@@ -941,7 +1025,7 @@ export const createImportPreview = async (
         matchedProductDescription: productObj ? productObj.description : null,
         productionDate: Timestamp.fromDate(dateCol.date),
         plannedQuantity: qty,
-        sourceUnitOfMeasure: uomVal || 'CS',
+        sourceUnitOfMeasure: uomVal || cleanUom || 'CS',
         casesPerPallet: casesPerPalletVal,
         calculatedPallets: calculatedPalletsVal,
         rowStatus,

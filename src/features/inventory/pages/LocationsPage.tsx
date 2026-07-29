@@ -5,7 +5,7 @@ import { DataTable } from '../../../components/ui/DataTable';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, ClipboardPaste } from 'lucide-react';
 import { subscribeToLocations, setLocationStatus } from '../services/locationService';
 import { Location } from '../../../types/inventory';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -13,6 +13,7 @@ import { collections } from '../../configuration/services/configurationService';
 import { StorageArea } from '../../../types/configuration';
 import { where } from 'firebase/firestore';
 import { LocationModal } from './components/LocationModal';
+import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const LocationsPage: React.FC = () => {
@@ -29,6 +30,7 @@ export const LocationsPage: React.FC = () => {
 
   const [modalState, setModalState] = useState<{isOpen: boolean, item?: Location}>({ isOpen: false });
   const [actionItem, setActionItem] = useState<{item: Location, action: 'deactivate' | 'reactivate'} | null>(null);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -131,13 +133,22 @@ export const LocationsPage: React.FC = () => {
       <SectionCard 
         title="Locations"
         actions={
-          <button 
-            onClick={() => setModalState({ isOpen: true })}
-            className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add Location
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setIsPasteModalOpen(true)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors"
+            >
+              <ClipboardPaste className="w-4 h-4 text-brand-400" />
+              Paste Stock Update
+            </button>
+            <button 
+              onClick={() => setModalState({ isOpen: true })}
+              className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add Location
+            </button>
+          </div>
         }
       >
         <div className="flex flex-col md:flex-row gap-4 mb-6">
@@ -196,6 +207,11 @@ export const LocationsPage: React.FC = () => {
         isDestructive={actionItem?.action === 'deactivate'}
         onConfirm={confirmAction}
         onCancel={() => setActionItem(null)}
+      />
+
+      <PasteInventoryModal
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
       />
 
       <LocationModal

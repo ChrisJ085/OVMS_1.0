@@ -3,16 +3,19 @@ import { subscribeToProducts } from '../services/productService';
 import { Product } from '../../../types/product';
 import { Search } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection } from '../../../services/firestoreBase';
+import { where } from 'firebase/firestore';
 
 interface ProductLookupProps {
   value?: string; // productId
-  onChange: (productId: string, productCode: string, description: string) => void;
+  onChange: (product: Product) => void;
   disabled?: boolean;
 }
 
 export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, disabled }) => {
   const { tenantId } = useSiteContext();
   const [products, setProducts] = useState<Product[]>([]);
+  const [units, setUnits] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -26,7 +29,20 @@ export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, d
       },
       (err) => console.error('Failed to load products for lookup', err)
     );
-    return () => unsubscribe();
+
+    const unsubUnits = subscribeToCollection<any>(
+      'unitsOfMeasure',
+      [where('tenantId', '==', tenantId)],
+      (items) => {
+        setUnits(items);
+      },
+      console.error
+    );
+
+    return () => {
+      unsubscribe();
+      unsubUnits();
+    };
   }, [tenantId]);
 
   useEffect(() => {
@@ -40,7 +56,11 @@ export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, d
   }, []);
 
   const selectedProduct = products.find(p => p.id === value);
-  const displayValue = selectedProduct ? `${selectedProduct.productCode} - ${selectedProduct.description}` : searchTerm;
+  const getUnitName = (id: string) => units.find(u => u.id === id)?.name || id;
+
+  const displayValue = selectedProduct 
+    ? `${selectedProduct.productCode} - ${selectedProduct.description} (${getUnitName(selectedProduct.unitOfMeasureId)}, ${selectedProduct.casesPerPallet || 0} CPP)` 
+    : searchTerm;
 
   const filteredProducts = products.filter(p => 
     p.productCode.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -80,12 +100,20 @@ export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, d
                 key={product.id}
                 className="cursor-pointer select-none relative px-4 py-2 hover:bg-slate-700 text-slate-200 flex flex-col"
                 onClick={() => {
-                  onChange(product.id as string, product.productCode, product.description);
+                  onChange(product);
                   setIsOpen(false);
                 }}
               >
-                <span className="font-medium text-slate-100">{product.productCode}</span>
+                <div className="flex justify-between items-start">
+                  <span className="font-medium text-slate-100">{product.productCode}</span>
+                  <span className="text-[10px] text-slate-500 bg-slate-900 px-1 rounded">
+                    {getUnitName(product.unitOfMeasureId)}
+                  </span>
+                </div>
                 <span className="text-xs text-slate-400 truncate">{product.description}</span>
+                <span className="text-[10px] text-slate-500 italic">
+                  {product.casesPerPallet || 0} Cases per Pallet
+                </span>
               </div>
             ))
           )}

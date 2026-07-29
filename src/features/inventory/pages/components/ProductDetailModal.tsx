@@ -64,18 +64,22 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     <dd className="text-sm text-slate-200 font-medium">{getCategoryName(item.categoryId)}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-slate-500 mb-1">Unit of Measure</dt>
-                    <dd className="text-sm text-slate-200 font-medium">{getUnitName(item.unitOfMeasureId)}</dd>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <dt className="text-xs text-slate-500 mb-1">Cases/Pallet</dt>
-                      <dd className="text-sm text-slate-200 font-medium">{item.casesPerPallet ?? '-'}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-slate-500 mb-1">Units/Case</dt>
-                      <dd className="text-sm text-slate-200 font-medium">{item.unitsPerCase ?? '-'}</dd>
-                    </div>
+                    <dt className="text-xs text-slate-500 mb-2">Configurations (UoM / Pallet / Case)</dt>
+                    <dd className="space-y-2">
+                      {item.configurations?.map((config, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2 bg-slate-900/50 border border-slate-700/50 rounded text-sm">
+                          <span className="text-slate-200 font-medium">{getUnitName(config.unitOfMeasureId)}</span>
+                          <div className="flex items-center gap-3 text-xs text-slate-400">
+                            <span>{config.casesPerPallet ?? '-'} CS/Pal</span>
+                            {config.unitsPerCase && <span>{config.unitsPerCase} Units/CS</span>}
+                          </div>
+                        </div>
+                      )) || (
+                        <div className="flex items-center justify-between p-2 bg-slate-900/50 border border-slate-700/50 rounded text-sm text-slate-400 italic">
+                          Legacy: {getUnitName(item.unitOfMeasureId)} ({item.casesPerPallet ?? '-'} CS/Pal)
+                        </div>
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-slate-500 mb-1">Default Destination</dt>

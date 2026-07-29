@@ -43,15 +43,35 @@ export const areProductCodesEqual = (codeA: string, codeB: string): boolean => {
 /**
  * Searches an array of existing products to find any product matching
  * exact, padded, or normalised code equivalencies.
+ * Optionally checks for matching configuration (UoM, Cases per Pallet)
  */
 export const findDuplicateProduct = (
   targetCode: string,
-  existingProducts: Product[]
+  existingProducts: Product[],
+  config?: {
+    unitOfMeasureId?: string;
+    casesPerPallet?: number | null;
+    unitsPerCase?: number | null;
+  }
 ): Product | null => {
   if (!targetCode || !existingProducts.length) return null;
 
   for (const product of existingProducts) {
     if (areProductCodesEqual(targetCode, product.productCode)) {
+      // If config is provided, only return as duplicate if config also matches
+      if (config) {
+        const uomMatch = !config.unitOfMeasureId || product.unitOfMeasureId === config.unitOfMeasureId;
+        const cppMatch = config.casesPerPallet === undefined || product.casesPerPallet === config.casesPerPallet;
+        const upcMatch = config.unitsPerCase === undefined || product.unitsPerCase === config.unitsPerCase;
+        
+        if (uomMatch && cppMatch && upcMatch) {
+          return product;
+        }
+        // If config doesn't match, continue searching for one that does
+        continue;
+      }
+      
+      // If no config provided, the first matching code is considered a duplicate (legacy behavior)
       return product;
     }
   }

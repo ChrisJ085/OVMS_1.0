@@ -110,8 +110,22 @@ export const ProductsPage: React.FC = () => {
     { header: 'Product Code', accessor: 'productCode' as const },
     { header: 'Description', accessor: 'description' as const },
     { header: 'Category', accessor: (row: Product) => getCategoryName(row.categoryId) },
-    { header: 'Unit', accessor: (row: Product) => getUnitName(row.unitOfMeasureId) },
-    { header: 'Cases per Pallet', accessor: (row: Product) => row.casesPerPallet ?? '-' },
+    { 
+      header: 'Configurations', 
+      accessor: (row: Product) => (
+        <div className="flex flex-wrap gap-1">
+          {row.configurations?.map((c, i) => (
+            <span key={i} className="text-[10px] px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-300">
+              {getUnitName(c.unitOfMeasureId)} ({c.casesPerPallet ?? '-'})
+            </span>
+          )) || (
+            <span className="text-xs text-slate-500">
+              {getUnitName(row.unitOfMeasureId)} ({row.casesPerPallet ?? '-'})
+            </span>
+          )}
+        </div>
+      )
+    },
     { header: 'Default Destination', accessor: (row: Product) => getDestinationName(row.defaultDestinationId) },
     { 
       header: 'Op Relevant', 

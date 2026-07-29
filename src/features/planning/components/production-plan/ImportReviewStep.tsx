@@ -4,7 +4,7 @@ import { ImportDiagnosticsPanel } from '../ImportDiagnosticsPanel';
 import { MasterDataIssuesPanel } from '../MasterDataIssuesPanel';
 import { ImportReviewTable } from './ImportReviewTable';
 import { Product } from '../../../../types/product';
-import { ProductionLine } from '../../../../types/configuration';
+import { ProductionLine, UnitOfMeasure } from '../../../../types/configuration';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -14,6 +14,7 @@ export const formatUTCDate = (d: Date) => {
 interface ImportReviewStepProps {
   previewData: ParsedPlanPreview;
   products: Product[];
+  units: UnitOfMeasure[];
   productionLines: ProductionLine[];
   tenantId: string;
   siteId: string;
@@ -42,6 +43,7 @@ interface ImportReviewStepProps {
 export const ImportReviewStep: React.FC<ImportReviewStepProps> = ({
   previewData,
   products,
+  units,
   productionLines,
   tenantId,
   siteId,
@@ -95,6 +97,7 @@ export const ImportReviewStep: React.FC<ImportReviewStepProps> = ({
         <MasterDataIssuesPanel
           rows={previewData.rows}
           existingProducts={products}
+          existingUnits={units}
           existingLines={productionLines}
           tenantId={tenantId}
           siteId={siteId}

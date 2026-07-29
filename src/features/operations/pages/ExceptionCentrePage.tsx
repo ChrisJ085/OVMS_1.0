@@ -6,7 +6,7 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { updateExceptionStatus, runExceptionEvaluation } from '../services/exceptionService';
 import { AlertTriangle, Clock, CheckCircle, Search, Filter, MessageSquare, Ban, Play } from 'lucide-react';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 

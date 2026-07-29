@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { ProductionPlanRow } from '../../../types/production';
 import { Product } from '../../../types/product';
-import { ProductionLine } from '../../../types/configuration';
+import { ProductionLine, UnitOfMeasure } from '../../../types/configuration';
 import { MissingProductResolution } from './MissingProductResolution';
 import { MissingProductionLineResolution } from './MissingProductionLineResolution';
-import { updateProductDescriptionInMaster, updateCasesPerPalletInMaster, activateProductInMaster } from '../services/productMappingService';
+import { updateProductDescriptionInMaster, updateCasesPerPalletInMaster, activateProductInMaster, selectProductImportUomInMaster } from '../services/productMappingService';
 import { AlertTriangle, AlertCircle, CheckCircle2, FileSpreadsheet, PlusCircle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface MasterDataIssuesPanelProps {
   rows: ProductionPlanRow[];
   existingProducts: Product[];
+  existingUnits: UnitOfMeasure[];
   existingLines: ProductionLine[];
   tenantId: string;
   siteId: string;
@@ -20,12 +21,14 @@ interface MasterDataIssuesPanelProps {
 export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
   rows,
   existingProducts,
+  existingUnits,
   existingLines,
   tenantId,
   siteId,
   userProfileName,
   onRevalidate
 }) => {
+  const getUnitName = (id: string) => existingUnits.find(u => u.id === id)?.name || id;
   const [selectedProductIssue, setSelectedProductIssue] = useState<{
     code: string;
     description: string;
@@ -37,16 +40,41 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
     affectedRows: ProductionPlanRow[];
   } | null>(null);
 
-  const [expandedCategory, setExpandedCategory] = useState<string | null>('PRODUCT_NOT_FOUND');
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
+    if (rows.some(r => r.validationCodes.includes('PRODUCT_NOT_FOUND'))) return 'PRODUCT_NOT_FOUND';
+    if (rows.some(r => r.validationCodes.includes('PRODUCTION_LINE_NOT_CONFIGURED'))) return 'PRODUCTION_LINE_NOT_CONFIGURED';
+    if (rows.some(r => r.validationCodes.includes('UOM_SELECTION_REQUIRED'))) return 'UOM_SELECTION_REQUIRED';
+    if (rows.some(r => r.validationCodes.includes('CASES_PER_PALLET_MISSING'))) return 'CASES_PER_PALLET_MISSING';
+    return null;
+  });
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [processedProductIds, setProcessedProductIds] = useState<Set<string>>(new Set());
+
+  // Reset processed IDs when rows change (e.g. after a full revalidation)
+  React.useEffect(() => {
+    setProcessedProductIds(new Set());
+  }, [rows]);
 
   // Group rows by issue codes
   const unknownProductRows = rows.filter(r => r.validationCodes.includes('PRODUCT_NOT_FOUND'));
   const unknownLineRows = rows.filter(r => r.validationCodes.includes('PRODUCTION_LINE_NOT_CONFIGURED'));
-  const missingCasesPerPalletRows = rows.filter(r => r.validationCodes.includes('CASES_PER_PALLET_MISSING'));
-  const inactiveProductRows = rows.filter(r => r.validationCodes.includes('PRODUCT_INACTIVE'));
-  const descriptionDiffRows = rows.filter(r => r.validationCodes.includes('DESCRIPTION_DIFFERENCE'));
+  const missingCasesPerPalletRows = rows.filter(r => 
+    r.validationCodes.includes('CASES_PER_PALLET_MISSING') && 
+    !(r.matchedProductId && processedProductIds.has(r.matchedProductId))
+  );
+  const uomSelectionRows = rows.filter(r => 
+    r.validationCodes.includes('UOM_SELECTION_REQUIRED') && 
+    !(r.matchedProductId && processedProductIds.has(r.matchedProductId))
+  );
+  const inactiveProductRows = rows.filter(r => 
+    r.validationCodes.includes('PRODUCT_INACTIVE') && 
+    !(r.matchedProductId && processedProductIds.has(r.matchedProductId))
+  );
+  const descriptionDiffRows = rows.filter(r => 
+    r.validationCodes.includes('DESCRIPTION_DIFFERENCE') && 
+    !(r.matchedProductId && processedProductIds.has(r.matchedProductId))
+  );
   const duplicateSourceRows = rows.filter(r => r.validationCodes.includes('DUPLICATE_SOURCE_ROW'));
 
   // Group unknown products by product code
@@ -70,19 +98,40 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
   });
 
   // Group missing cases per pallet by product
-  const missingCasesMap = new Map<string, { productId: string; code: string; desc: string; rows: ProductionPlanRow[] }>();
+  const missingCasesMap = new Map<string, { productId: string; code: string; desc: string; rows: ProductionPlanRow[]; product?: Product }>();
   missingCasesPerPalletRows.forEach(r => {
     const code = r.productCode;
+    const product = existingProducts.find(p => p.id === r.matchedProductId || p.productCode === code);
     if (r.matchedProductId && !missingCasesMap.has(code)) {
       missingCasesMap.set(code, {
         productId: r.matchedProductId,
         code,
         desc: r.sourceProductDescription,
-        rows: []
+        rows: [],
+        product
       });
     }
     if (r.matchedProductId) {
       missingCasesMap.get(code)?.rows.push(r);
+    }
+  });
+
+  // Group UOM selection required by product
+  const uomSelectionMap = new Map<string, { productId: string; code: string; desc: string; rows: ProductionPlanRow[]; product: Product }>();
+  uomSelectionRows.forEach(r => {
+    const code = r.productCode;
+    const product = existingProducts.find(p => p.id === r.matchedProductId || p.productCode === code);
+    if (r.matchedProductId && product && !uomSelectionMap.has(code)) {
+      uomSelectionMap.set(code, {
+        productId: r.matchedProductId,
+        code,
+        desc: r.sourceProductDescription,
+        rows: [],
+        product
+      });
+    }
+    if (r.matchedProductId && product) {
+      uomSelectionMap.get(code)?.rows.push(r);
     }
   });
 
@@ -124,8 +173,22 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
     const res = await activateProductInMaster(productId, tenantId, siteId, userProfileName);
     setUpdating(false);
     if (res.success) {
-      setActionMessage(`Activated Product Master record. Revalidating...`);
-      onRevalidate();
+      setProcessedProductIds(prev => new Set(prev).add(productId));
+      setActionMessage(`Activated Product Master record. Selection saved locally.`);
+    } else {
+      setActionMessage(`Error: ${res.error}`);
+    }
+  };
+
+  // Handle inline UOM selection
+  const handleSelectUom = async (productId: string, uomId: string) => {
+    setUpdating(true);
+    setActionMessage(null);
+    const res = await selectProductImportUomInMaster(productId, uomId, tenantId, siteId, userProfileName);
+    setUpdating(false);
+    if (res.success) {
+      setProcessedProductIds(prev => new Set(prev).add(productId));
+      setActionMessage(`Selected Unit of Measure "${getUnitName(uomId)}" for product. Issue resolved locally.`);
     } else {
       setActionMessage(`Error: ${res.error}`);
     }
@@ -146,8 +209,8 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
     const res = await updateCasesPerPalletInMaster(productId, rate, tenantId, siteId, userProfileName);
     setUpdating(false);
     if (res.success) {
-      setActionMessage(`Updated Cases per Pallet to ${rate}. Revalidating...`);
-      onRevalidate();
+      setProcessedProductIds(prev => new Set(prev).add(productId));
+      setActionMessage(`Updated Cases per Pallet to ${rate}. Issue resolved locally.`);
     } else {
       setActionMessage(`Error: ${res.error}`);
     }
@@ -157,6 +220,7 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
     unknownProductRows.length +
     unknownLineRows.length +
     missingCasesPerPalletRows.length +
+    uomSelectionRows.length +
     inactiveProductRows.length +
     descriptionDiffRows.length +
     duplicateSourceRows.length;
@@ -165,6 +229,7 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
     unknownProductRows.length +
     unknownLineRows.length +
     missingCasesPerPalletRows.length +
+    uomSelectionRows.length +
     inactiveProductRows.length;
 
   if (totalIssuesCount === 0) {
@@ -209,8 +274,18 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
       </div>
 
       {actionMessage && (
-        <div className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs p-3 rounded-lg">
-          {actionMessage}
+        <div className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs p-3 rounded-lg flex items-center justify-between">
+          <span>{actionMessage}</span>
+          {processedProductIds.size > 0 && (
+            <button 
+              onClick={onRevalidate}
+              disabled={updating}
+              className="px-2.5 py-1.5 bg-cyan-600/40 hover:bg-cyan-600/60 disabled:opacity-50 rounded text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5 border border-cyan-500/30"
+            >
+              <RefreshCw className={`w-3 h-3 ${updating ? 'animate-spin' : ''}`} />
+              Apply & Refresh Workbook
+            </button>
+          )}
         </div>
       )}
 
@@ -403,12 +478,98 @@ export const MasterDataIssuesPanel: React.FC<MasterDataIssuesPanelProps> = ({
                         Impact: {item.rows.length} rows missing pallet calculation
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleFixCasesPerPallet(item.productId)}
-                      className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg flex items-center gap-1.5 self-start sm:self-center font-medium transition-colors"
-                    >
-                      Set Cases per Pallet
-                    </button>
+                    {item.product?.configurations && item.product.configurations.length > 1 ? (
+                      <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                        <span className="text-xs text-slate-400 mr-1">Choose UoM:</span>
+                        {item.product.configurations.map((config, cIdx) => (
+                          <button
+                            key={cIdx}
+                            onClick={() => handleSelectUom(item.productId, config.unitOfMeasureId)}
+                            disabled={updating}
+                            className="px-3 py-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg font-medium transition-colors border border-cyan-500"
+                          >
+                            {getUnitName(config.unitOfMeasureId)} ({config.casesPerPallet ?? '-'} CS/Pal)
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleFixCasesPerPallet(item.productId)}
+                        className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg flex items-center gap-1.5 self-start sm:self-center font-medium transition-colors"
+                      >
+                        Set Cases per Pallet
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 3b. UOM SELECTION REQUIRED */}
+        {uomSelectionRows.length > 0 && (
+          <div className="border border-amber-500/30 rounded-lg bg-amber-950/20 overflow-hidden">
+            <button
+              onClick={() =>
+                setExpandedCategory(
+                  expandedCategory === 'UOM_SELECTION_REQUIRED' ? null : 'UOM_SELECTION_REQUIRED'
+                )
+              }
+              className="w-full p-3.5 flex items-center justify-between text-left hover:bg-amber-900/20 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <span className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
+                  <AlertCircle className="w-4 h-4" />
+                </span>
+                <div>
+                  <div className="text-sm font-semibold text-amber-200">
+                    Unit of Measure Selection Required ({uomSelectionMap.size} products, {uomSelectionRows.length} rows)
+                  </div>
+                  <div className="text-xs text-amber-400/80">
+                    Blocking Error • Product has multiple configurations; choose Unit of Measure for this import
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-500/30 text-amber-200">
+                  Blocking
+                </span>
+                {expandedCategory === 'UOM_SELECTION_REQUIRED' ? (
+                  <ChevronUp className="w-4 h-4 text-slate-400" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                )}
+              </div>
+            </button>
+
+            {expandedCategory === 'UOM_SELECTION_REQUIRED' && (
+              <div className="p-3 border-t border-amber-500/20 bg-slate-900/60 space-y-2">
+                {Array.from(uomSelectionMap.values()).map(item => (
+                  <div
+                    key={item.code}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 gap-3"
+                  >
+                    <div>
+                      <div className="text-xs font-mono font-bold text-cyan-400">{item.code}</div>
+                      <div className="text-xs text-slate-300 font-medium">{item.desc}</div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Impact: {item.rows.length} rows require Unit of Measure selection
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                      <span className="text-xs text-slate-400 mr-1">Choose UoM:</span>
+                      {item.product.configurations?.map((config, cIdx) => (
+                        <button
+                          key={cIdx}
+                          onClick={() => handleSelectUom(item.productId, config.unitOfMeasureId)}
+                          disabled={updating}
+                          className="px-3 py-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg font-medium transition-colors border border-cyan-500"
+                        >
+                          {getUnitName(config.unitOfMeasureId)} ({config.casesPerPallet ?? '-'} CS/Pal)
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>

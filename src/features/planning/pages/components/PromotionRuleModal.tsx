@@ -5,7 +5,7 @@ import { PromotionProductRule } from '../../../../types/promotion';
 import { Destination, ActionType } from '../../../../types/configuration';
 import { createPromotionRule, updatePromotionRule } from '../../services/promotionService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
-import { useSiteContext } from '../../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface PromotionRuleModalProps {
   isOpen: boolean;
@@ -104,10 +104,10 @@ export const PromotionRuleModal: React.FC<PromotionRuleModalProps> = ({
               <label className="text-sm font-medium text-slate-300">Product *</label>
               <ProductLookup 
                 value={formData.productId}
-                onChange={(id, code, desc) => {
-                  handleChange('productId', id);
-                  handleChange('productCodeSnapshot', code);
-                  handleChange('descriptionSnapshot', desc);
+                onChange={(product) => {
+                  handleChange('productId', product.id);
+                  handleChange('productCodeSnapshot', product.productCode);
+                  handleChange('descriptionSnapshot', product.description);
                 }}
                 disabled={!!item}
               />
@@ -174,7 +174,9 @@ export const PromotionRuleModal: React.FC<PromotionRuleModalProps> = ({
                   >
                     <option value="">None</option>
                     {destinations.filter(d => d.status === 'active').map(d => (
-                      <option key={d.id} value={d.id}>{d.destinationName}</option>
+                      <option key={d.id} value={d.id}>
+                        {d.destinationName}{d.destinationCode ? ` (${d.destinationCode})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>

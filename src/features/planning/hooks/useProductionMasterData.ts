@@ -3,11 +3,13 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { ProductionLine } from '../../../types/configuration';
 import { Product } from '../../../types/product';
+import { UnitOfMeasure } from '../../../types/configuration';
 import { toAppError } from '../../../types/error';
 
 export function useProductionMasterData(tenantId: string, siteId: string) {
   const [productionLines, setProductionLines] = useState<ProductionLine[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [units, setUnits] = useState<UnitOfMeasure[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
@@ -39,9 +41,16 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
         const snapProducts = await getDocs(qProducts);
         const fetchedProducts = snapProducts.docs.map(d => ({ id: d.id, ...d.data() } as Product));
 
+        // Fetch Units of Measure
+        const unitsRef = collection(db, 'unitsOfMeasure');
+        const qUnits = query(unitsRef, where('tenantId', '==', tenantId), where('siteId', '==', ''));
+        const snapUnits = await getDocs(qUnits);
+        const fetchedUnits = snapUnits.docs.map(d => ({ id: d.id, ...d.data() } as UnitOfMeasure));
+
         if (isMounted) {
           setProductionLines(fetchedLines);
           setProducts(fetchedProducts);
+          setUnits(fetchedUnits);
           setLoading(false);
         }
       } catch (err) {
@@ -63,6 +72,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
   return {
     productionLines,
     products,
+    units,
     loading,
     error,
     revalidate

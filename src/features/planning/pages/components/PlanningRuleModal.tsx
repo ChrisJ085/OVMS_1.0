@@ -6,7 +6,7 @@ import { Destination } from '../../../../types/configuration';
 import { createPlanningRule, updatePlanningRule } from '../../services/planningRuleService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { Timestamp } from 'firebase/firestore';
-import { useSiteContext } from '../../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface PlanningRuleModalProps {
   isOpen: boolean;
@@ -23,6 +23,7 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [effectiveFromInput, setEffectiveFromInput] = useState('');
   const [effectiveToInput, setEffectiveToInput] = useState('');
+  const [untilSwitchedOff, setUntilSwitchedOff] = useState(true);
 
   useEffect(() => {
     if (isOpen) {
@@ -31,11 +32,13 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
         const fromDate = item.effectiveFrom ? (item.effectiveFrom as any).toDate ? (item.effectiveFrom as any).toDate() : new Date(item.effectiveFrom as any) : new Date();
         setEffectiveFromInput(fromDate.toISOString().slice(0, 16));
         
-        if (item.effectiveTo) {
+        if (item.effectiveTo && !item.untilSwitchedOff) {
           const toDate = (item.effectiveTo as any).toDate ? (item.effectiveTo as any).toDate() : new Date(item.effectiveTo as any);
           setEffectiveToInput(toDate.toISOString().slice(0, 16));
+          setUntilSwitchedOff(false);
         } else {
           setEffectiveToInput('');
+          setUntilSwitchedOff(true);
         }
       } else {
         const activeDest = destinations.filter(d => d.status === 'active');
@@ -63,11 +66,27 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
         const now = new Date();
         setEffectiveFromInput(now.toISOString().slice(0, 16));
         setEffectiveToInput('');
+        setUntilSwitchedOff(true);
       }
     }
-  }, [isOpen, item, destinations]);
+  }, [isOpen, item]);
+
+  useEffect(() => {
+    if (isOpen && !item && !formData.preferredDestinationId && destinations.length > 0) {
+      const activeDest = destinations.filter(d => d.status === 'active');
+      if (activeDest.length > 0) {
+        setFormData(prev => ({ ...prev, preferredDestinationId: activeDest[0].id }));
+      }
+    }
+  }, [isOpen, item, destinations, formData.preferredDestinationId]);
 
   if (!isOpen) return null;
+
+  const selectedPrefDest = destinations.find(d => d.id === formData.preferredDestinationId || d.destinationCode === formData.preferredDestinationId);
+  const currentPrefVal = selectedPrefDest ? selectedPrefDest.id : (formData.preferredDestinationId || '');
+
+  const selectedSecDest = destinations.find(d => d.id === formData.secondaryDestinationId || d.destinationCode === formData.secondaryDestinationId);
+  const currentSecVal = selectedSecDest ? selectedSecDest.id : (formData.secondaryDestinationId || '');
 
   const handleChange = (field: keyof ProductPlanningRule, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -79,12 +98,13 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
     
     // Parse dates
     const fromDate = new Date(effectiveFromInput);
-    const toDate = effectiveToInput ? new Date(effectiveToInput) : null;
+    const toDate = (!untilSwitchedOff && effectiveToInput) ? new Date(effectiveToInput) : null;
     
     const payload = {
       ...formData,
       effectiveFrom: Timestamp.fromDate(fromDate),
       effectiveTo: toDate ? Timestamp.fromDate(toDate) : null,
+      untilSwitchedOff: untilSwitchedOff,
     };
 
     // Data casting for numbers
@@ -137,10 +157,10 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
                 <label className="text-sm font-medium text-slate-300">Product *</label>
                 <ProductLookup 
                   value={formData.productId}
-                  onChange={(id, code, desc) => {
-                    handleChange('productId', id);
-                    handleChange('productCodeSnapshot', code);
-                    handleChange('descriptionSnapshot', desc);
+                  onChange={(product) => {
+                    handleChange('productId', product.id);
+                    handleChange('productCodeSnapshot', product.productCode);
+                    handleChange('descriptionSnapshot', product.description);
                   }}
                   disabled={!!item}
                 />
@@ -215,31 +235,35 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium text-slate-300">Preferred Destination *</label>
                   <select 
-                    value={formData.preferredDestinationId || ''} 
+                    value={currentPrefVal} 
                     onChange={(e) => handleChange('preferredDestinationId', e.target.value)}
                     className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-slate-600"
                     required
                   >
                     <option value="" disabled>Select a destination</option>
                     {destinations
-                      .filter(d => d.status === 'active' || d.id === formData.preferredDestinationId)
+                      .filter(d => d.status === 'active' || d.id === currentPrefVal || d.destinationCode === currentPrefVal)
                       .map(d => (
-                      <option key={d.id} value={d.id}>{d.destinationName}</option>
+                      <option key={d.id} value={d.id}>
+                        {d.destinationName}{d.destinationCode ? ` (${d.destinationCode})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium text-slate-300">Secondary Destination</label>
                   <select 
-                    value={formData.secondaryDestinationId || ''} 
+                    value={currentSecVal} 
                     onChange={(e) => handleChange('secondaryDestinationId', e.target.value || null)}
                     className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-slate-600"
                   >
                     <option value="">None</option>
                     {destinations
-                      .filter(d => d.status === 'active' || d.id === formData.secondaryDestinationId)
+                      .filter(d => d.status === 'active' || d.id === currentSecVal || d.destinationCode === currentSecVal)
                       .map(d => (
-                      <option key={d.id} value={d.id}>{d.destinationName}</option>
+                      <option key={d.id} value={d.id}>
+                        {d.destinationName}{d.destinationCode ? ` (${d.destinationCode})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -278,8 +302,8 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
 
             {/* Effective Dates */}
             <div className="space-y-4">
-              <h3 className="text-sm font-medium text-brand-400 border-b border-slate-800 pb-2">Effective Dates</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <h3 className="text-sm font-medium text-brand-400 border-b border-slate-800 pb-2">Effective Duration</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium text-slate-300">Effective From *</label>
                   <input 
@@ -291,15 +315,52 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-slate-300">Effective To</label>
+                  <label className="text-sm font-medium text-slate-300">Duration Option *</label>
+                  <div className="flex items-center gap-4 py-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+                      <input 
+                        type="radio" 
+                        name="effectiveToMode"
+                        checked={untilSwitchedOff}
+                        onChange={() => {
+                          setUntilSwitchedOff(true);
+                          setEffectiveToInput('');
+                        }}
+                        className="text-brand-500 focus:ring-brand-500 accent-brand-500"
+                      />
+                      <span className="font-medium">Until Switched Off</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+                      <input 
+                        type="radio" 
+                        name="effectiveToMode"
+                        checked={!untilSwitchedOff}
+                        onChange={() => setUntilSwitchedOff(false)}
+                        className="text-brand-500 focus:ring-brand-500 accent-brand-500"
+                      />
+                      <span>Specific End Date</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {!untilSwitchedOff ? (
+                <div className="flex flex-col gap-1.5 max-w-sm">
+                  <label className="text-sm font-medium text-slate-300">Effective To *</label>
                   <input 
                     type="datetime-local" 
                     value={effectiveToInput}
                     onChange={(e) => setEffectiveToInput(e.target.value)}
                     className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-slate-600"
+                    required={!untilSwitchedOff}
                   />
                 </div>
-              </div>
+              ) : (
+                <div className="p-3 bg-slate-800/40 border border-slate-700/60 rounded-md text-xs text-slate-300 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span>Rule will remain active continuously from the Effective From date until it is manually deactivated or switched off.</span>
+                </div>
+              )}
             </div>
 
             <FormField 

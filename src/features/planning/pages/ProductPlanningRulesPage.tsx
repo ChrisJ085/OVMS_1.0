@@ -16,7 +16,7 @@ import { InventoryBalance } from '../../../types/inventory';
 import { where } from 'firebase/firestore';
 import { PlanningRuleModal } from './components/PlanningRuleModal';
 import { PlanningRuleDetailModal } from './components/PlanningRuleDetailModal';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const ProductPlanningRulesPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -53,8 +53,17 @@ export const ProductPlanningRulesPage: React.FC = () => {
 
     const unsubDest = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
-      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)],
-      setDestinations,
+      [where('tenantId', '==', tenantId)],
+      (items) => {
+        const filtered = items
+          .filter(d => !d.siteId || d.siteId === '' || d.siteId === siteId)
+          .sort((a, b) => {
+            if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
+            if (a.sortOrder !== undefined && b.sortOrder !== undefined) return a.sortOrder - b.sortOrder;
+            return (a.destinationName || '').localeCompare(b.destinationName || '');
+          });
+        setDestinations(filtered);
+      },
       console.error
     );
     
@@ -93,15 +102,20 @@ export const ProductPlanningRulesPage: React.FC = () => {
     const matchesSearch = rule.productCodeSnapshot.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           rule.descriptionSnapshot.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? rule.status === 'active' : rule.status !== 'active');
-    const matchesDest = destFilter === 'all' || rule.preferredDestinationId === destFilter;
+    const matchesDest = destFilter === 'all' || rule.preferredDestinationId === destFilter || destinations.find(d => d.id === destFilter)?.destinationCode === rule.preferredDestinationId;
     const matchesBand = bandFilter === 'all' || rule.metrics.status === bandFilter;
     return matchesSearch && matchesStatus && matchesDest && matchesBand;
   });
 
-  const getDestName = (id: string) => destinations.find(d => d.id === id)?.destinationName || id;
+  const getDestName = (id?: string | null) => {
+    if (!id) return '-';
+    const dest = destinations.find(d => d.id === id || d.destinationCode === id);
+    if (!dest) return id;
+    return dest.destinationName ? `${dest.destinationName}${dest.destinationCode ? ` (${dest.destinationCode})` : ''}` : dest.destinationCode;
+  };
 
   const renderDate = (dateVal: any) => {
-    if (!dateVal) return '-';
+    if (!dateVal) return null;
     if (dateVal.toDate) return dateVal.toDate().toLocaleDateString();
     return new Date(dateVal).toLocaleDateString();
   };
@@ -136,8 +150,16 @@ export const ProductPlanningRulesPage: React.FC = () => {
     { header: 'Band Status', accessor: (row: any) => getBandBadge(row.metrics.status) },
     { header: 'Effective', accessor: (row: any) => (
       <div className="text-xs text-slate-400">
-        <div>{renderDate(row.effectiveFrom)}</div>
-        <div>to {renderDate(row.effectiveTo)}</div>
+        <div>From {renderDate(row.effectiveFrom) || '-'}</div>
+        <div>
+          {row.untilSwitchedOff || !row.effectiveTo ? (
+            <span className="inline-block mt-0.5 text-[10px] font-medium text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+              Until Switched Off
+            </span>
+          ) : (
+            `to ${renderDate(row.effectiveTo)}`
+          )}
+        </div>
       </div>
     )},
     {
@@ -232,7 +254,9 @@ export const ProductPlanningRulesPage: React.FC = () => {
           >
             <option value="all">All Destinations</option>
             {destinations.map(d => (
-              <option key={d.id} value={d.id}>{d.destinationName}</option>
+              <option key={d.id} value={d.id}>
+                {d.destinationName}{d.destinationCode ? ` (${d.destinationCode})` : ''}
+              </option>
             ))}
           </select>
           <select

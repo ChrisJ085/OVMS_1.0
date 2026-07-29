@@ -364,3 +364,122 @@ export const getProductInventory = async (
     return null;
   }
 };
+
+export interface BatchInventoryUpdateItem {
+  productId: string;
+  productCodeSnapshot: string;
+  descriptionSnapshot: string;
+  quantity: number;
+  unitOfMeasureId: string;
+}
+
+export interface BatchInventoryUpdateParams {
+  tenantId: string;
+  siteId: string;
+  locationId: string;
+  locationCodeSnapshot: string;
+  items: BatchInventoryUpdateItem[];
+  performedBy: string;
+}
+
+export const batchUpdateInventoryFromPastedData = async (
+  params: BatchInventoryUpdateParams
+): Promise<ServiceResult<{ updatedCount: number }>> => {
+  if (!params.items || params.items.length === 0) {
+    return { success: false, error: 'No items provided for inventory update.' };
+  }
+
+  try {
+    const chunkSize = 200;
+    let totalUpdated = 0;
+
+    for (let i = 0; i < params.items.length; i += chunkSize) {
+      const chunk = params.items.slice(i, i + chunkSize);
+
+      await runTransaction(db, async (transaction) => {
+        for (const item of chunk) {
+          const balancesRef = collection(db, COLLECTIONS.BALANCES);
+          const q = query(
+            balancesRef,
+            where('tenantId', '==', params.tenantId),
+            where('siteId', '==', params.siteId),
+            where('productId', '==', item.productId),
+            where('locationId', '==', params.locationId)
+          );
+
+          const snap = await getDocs(q);
+          let balanceDocRef;
+          let currentQuantity = 0;
+          let balanceDocData: any = null;
+
+          if (!snap.empty) {
+            balanceDocRef = snap.docs[0].ref;
+            balanceDocData = snap.docs[0].data();
+            currentQuantity = balanceDocData.quantity || 0;
+          } else {
+            balanceDocRef = doc(balancesRef);
+          }
+
+          const newQuantity = item.quantity;
+          const delta = newQuantity - currentQuantity;
+
+          if (balanceDocData) {
+            transaction.update(balanceDocRef, {
+              quantity: newQuantity,
+              productCodeSnapshot: item.productCodeSnapshot,
+              descriptionSnapshot: item.descriptionSnapshot,
+              source: 'IMPORT',
+              sourceUpdatedAt: serverTimestamp(),
+              modifiedBy: params.performedBy,
+              modifiedDate: serverTimestamp(),
+            });
+          } else {
+            transaction.set(balanceDocRef, {
+              tenantId: params.tenantId,
+              siteId: params.siteId,
+              productId: item.productId,
+              productCodeSnapshot: item.productCodeSnapshot,
+              descriptionSnapshot: item.descriptionSnapshot,
+              locationId: params.locationId,
+              locationCodeSnapshot: params.locationCodeSnapshot,
+              quantity: newQuantity,
+              unitOfMeasureId: item.unitOfMeasureId || '',
+              source: 'IMPORT',
+              sourceUpdatedAt: serverTimestamp(),
+              createdBy: params.performedBy,
+              createdDate: serverTimestamp(),
+              modifiedBy: params.performedBy,
+              modifiedDate: serverTimestamp(),
+              status: 'active'
+            });
+          }
+
+          const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
+          transaction.set(movementRef, {
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            productId: item.productId,
+            productCodeSnapshot: item.productCodeSnapshot,
+            movementType: delta >= 0 ? 'INCREASE' : 'DECREASE',
+            fromLocationId: delta < 0 ? params.locationId : null,
+            toLocationId: delta >= 0 ? params.locationId : null,
+            quantity: Math.abs(delta),
+            reason: 'Pasted Stock Update',
+            reference: `Stock Update at ${params.locationCodeSnapshot}`,
+            balanceBefore: currentQuantity,
+            balanceAfter: newQuantity,
+            performedBy: params.performedBy,
+            timestamp: serverTimestamp(),
+          });
+
+          totalUpdated++;
+        }
+      });
+    }
+
+    return { success: true, data: { updatedCount: totalUpdated } };
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Failed to update inventory balances.' };
+  }
+};
+

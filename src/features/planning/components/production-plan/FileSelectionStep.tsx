@@ -37,6 +37,10 @@ export const FileSelectionStep: React.FC<FileSelectionStepProps> = ({
             type="file" 
             ref={fileInputRef as any} 
             onChange={onFileSelect} 
+            onClick={(e) => {
+              e.stopPropagation();
+              (e.target as HTMLInputElement).value = '';
+            }}
             className="hidden" 
             accept=".xlsx,.xls"
           />
@@ -56,13 +60,21 @@ export const FileSelectionStep: React.FC<FileSelectionStepProps> = ({
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={onRemoveFile}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveFile();
+                }}
                 className="text-xs text-red-400 hover:text-red-300 transition-colors"
               >
                 Remove
               </button>
               <button
-                onClick={onStartValidation}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStartValidation();
+                }}
                 className="px-4 py-2 bg-brand-500 text-slate-950 font-semibold text-sm rounded-md hover:bg-brand-400 transition-colors shadow-lg"
               >
                 Start Validation

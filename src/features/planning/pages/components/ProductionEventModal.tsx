@@ -6,7 +6,7 @@ import { ProductionLine, UnitOfMeasure } from '../../../../types/configuration';
 import { createProductionEvent, updateProductionEvent } from '../../services/productionService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { Timestamp } from 'firebase/firestore';
-import { useSiteContext } from '../../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface ProductionEventModalProps {
   isOpen: boolean;
@@ -124,10 +124,10 @@ export const ProductionEventModal: React.FC<ProductionEventModalProps> = ({
               <label className="text-sm font-medium text-slate-300">Product *</label>
               <ProductLookup 
                 value={formData.productId}
-                onChange={(id, code, desc) => {
-                  handleChange('productId', id);
-                  handleChange('productCodeSnapshot', code);
-                  handleChange('descriptionSnapshot', desc);
+                onChange={(product) => {
+                  handleChange('productId', product.id);
+                  handleChange('productCodeSnapshot', product.productCode);
+                  handleChange('descriptionSnapshot', product.description);
                 }}
                 disabled={!!item && item.productionStatus !== 'PLANNED'}
               />

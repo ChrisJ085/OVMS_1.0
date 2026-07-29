@@ -5,7 +5,7 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { Tag, AlertTriangle, ChevronRight } from 'lucide-react';
 import { LoadingState } from '../../../components/ui/States';
 import { useNavigate } from 'react-router-dom';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 interface ProductPromotionsPanelProps {
   productId: string;

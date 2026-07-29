@@ -89,7 +89,7 @@ export const AdminOverviewPage: React.FC = () => {
         const siteSettings = await getSiteSettings(tenantId, siteId);
         setSettings(siteSettings);
 
-        const destSnap = await getCountFromServer(query(collection(db!, 'destinations'), where('tenantId', '==', tenantId), where('siteId', '==', siteId)));
+        const destSnap = await getCountFromServer(query(collection(db!, 'destinations'), where('tenantId', '==', tenantId)));
         const lineSnap = await getCountFromServer(query(collection(db!, 'productionLines'), where('tenantId', '==', tenantId), where('siteId', '==', siteId)));
         
         setStats({

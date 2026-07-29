@@ -5,7 +5,7 @@ import { ProductionEvent } from '../../../../types/production';
 import { UnitOfMeasure } from '../../../../types/configuration';
 import { updateProductionEvent } from '../../services/productionService';
 import { Timestamp } from 'firebase/firestore';
-import { useSiteContext } from '../../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface ProductionActionModalProps {
   isOpen: boolean;

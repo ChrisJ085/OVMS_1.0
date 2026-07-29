@@ -40,6 +40,21 @@ vi.mock('firebase/firestore', async () => {
           })
         },
         {
+          id: 'p3',
+          data: () => ({
+            productCode: '04310500',
+            productName: 'F1 Andrex Skin Protect 155sc',
+            description: 'F1 Andrex Skin Protect 155sc',
+            unitsPerCase: 16,
+            casesPerPallet: 54,
+            unitOfMeasureId: 'Qt7lJJw9bHQrBBe9iDLG',
+            configurations: [
+              { unitOfMeasureId: 'Qt7lJJw9bHQrBBe9iDLG', casesPerPallet: 54, unitsPerCase: 16 }
+            ],
+            status: 'active'
+          })
+        },
+        {
           id: 'l1',
           data: () => ({
             lineCode: 'LINE-01',
@@ -309,5 +324,21 @@ describe('MPPS7 Import Service Test Suite (12 Scenarios)', () => {
 
     const inspection = inspectMpps7Workbook(wb);
     expect(inspection.isValidMpps7).toBe(false);
+  });
+
+  // 16. Custom Unit of Measure ID & Math.ceil Pallet Rounding
+  it('Scenario 16: Custom UoM database ID is accepted and pallet calculation rounds up using Math.ceil', async () => {
+    const rows = [
+      ['Resource', 'Product Number', 'Product Short Description', 'Base Unit of Measure', '22.07.2026', 'Total'],
+      ['LINE-01', '04310500', 'F1 Andrex Skin Protect 155sc', 'QT7LJJW9BHQRBBE9IDLG', 1500, 1500]
+    ];
+    const wb = createWorkbook('MPPS7_CustomUoM', rows);
+    const preview = await createImportPreview(wb, 'CustomUoM.xlsx', 1024, 'hash-custom-uom', 'tenant-1', 'site-1', 'Planner');
+
+    expect(preview.diagnostics.unitValidation.hasUnsupportedUnits).toBe(false);
+    expect(preview.rows[0].rowStatus).toBe('VALID');
+    expect(preview.rows[0].casesPerPallet).toBe(54);
+    // 1500 / 54 = 27.777... -> rounds up to 28
+    expect(preview.rows[0].calculatedPallets).toBe(28);
   });
 });

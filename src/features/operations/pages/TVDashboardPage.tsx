@@ -4,7 +4,11 @@ import { db } from '../../../config/firebase';
 import { Priority, PriorityStatus } from '../../../types/priority';
 import { Announcement } from '../../../types/announcement';
 import { OperationalException } from '../../../types/exception';
-import { useSiteContext } from '../../../../features/configuration/context/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection } from '../../../services/firestoreBase';
+import { collections } from '../../configuration/services/configurationService';
+import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play, 
   Package, LayoutGrid, AlertCircle, TrendingDown,
@@ -50,6 +54,42 @@ export const TVDashboardPage: React.FC = () => {
   const [isConnected, setIsConnected] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
 
+  // Dynamic config collections
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const unsubDest = subscribeToCollection<Destination>(
+      collections.DESTINATIONS,
+      [where('tenantId', '==', tenantId)],
+      setDestinations,
+      console.error
+    );
+
+    const unsubActions = subscribeToCollection<ActionType>(
+      collections.ACTION_TYPES,
+      [where('tenantId', '==', tenantId)],
+      setActionTypes,
+      console.error
+    );
+
+    const unsubPriorities = subscribeToCollection<PriorityLevel>(
+      collections.PRIORITY_LEVELS,
+      [where('tenantId', '==', tenantId)],
+      setPriorityLevels,
+      console.error
+    );
+
+    return () => {
+      unsubDest();
+      unsubActions();
+      unsubPriorities();
+    };
+  }, [tenantId]);
+
   // Clock tick
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -91,7 +131,7 @@ export const TVDashboardPage: React.FC = () => {
         }
         
         // Ensure not expired
-        if (p.expireAt) {
+        if (p.expireAt && !p.untilSwitchedOff) {
           const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as any);
           if (exp < now) return false;
         }
@@ -295,12 +335,21 @@ export const TVDashboardPage: React.FC = () => {
                   <div className="flex-1 grid grid-cols-2 gap-4 my-2 items-center">
                     <div>
                       <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold">Action</div>
-                      <div className="text-lg font-medium text-brand-300 truncate">{p.actionTypeId}</div>
+                      <div className="text-lg font-medium text-brand-300 truncate">{getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel)}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold">Quantity & Dest</div>
                       <div className="text-lg font-mono text-slate-200">
-                        {p.requestedQuantity || 'N/A'} {p.destinationId && <span className="text-slate-400 text-sm ml-1">→ {p.destinationId}</span>}
+                        {p.requestedQuantity || 'N/A'} {p.destinationId && (
+                          <span className="text-slate-400 text-sm ml-1">
+                            → {getDestinationLabel(p.destinationId, destinations, p.destinationLabel)}
+                            {p.overflowDestinationId && (
+                              <span className="text-amber-400/80 text-xs ml-1" title="Overflow Destination">
+                                (OF: {getDestinationLabel(p.overflowDestinationId, destinations, p.overflowDestinationLabel)})
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

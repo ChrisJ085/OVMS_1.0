@@ -15,7 +15,7 @@ import { where } from 'firebase/firestore';
 import { PromotionRuleModal } from './components/PromotionRuleModal';
 import { PromotionModal } from './components/PromotionModal';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const PromotionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -49,8 +49,17 @@ export const PromotionDetailPage: React.FC = () => {
 
     const unsubDest = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
-      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)],
-      setDestinations,
+      [where('tenantId', '==', tenantId)],
+      (items) => {
+        const filtered = items
+          .filter(d => !d.siteId || d.siteId === '' || d.siteId === siteId)
+          .sort((a, b) => {
+            if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
+            if (a.sortOrder !== undefined && b.sortOrder !== undefined) return a.sortOrder - b.sortOrder;
+            return (a.destinationName || '').localeCompare(b.destinationName || '');
+          });
+        setDestinations(filtered);
+      },
       console.error
     );
 

@@ -23,7 +23,7 @@ export const ProductionPlanPage: React.FC = () => {
   const userFullName = userProfile?.fullName || 'Production Planner';
 
   // Master Data hook
-  const { productionLines, products, loading: masterLoading, revalidate: revalidateMasterData } = useProductionMasterData(
+  const { productionLines, products, units, loading: masterLoading, revalidate: revalidateMasterData } = useProductionMasterData(
     tenantId,
     siteId
   );
@@ -111,6 +111,7 @@ export const ProductionPlanPage: React.FC = () => {
           error={importHook.error}
           fileInputRef={importHook.fileInputRef}
           products={products}
+          units={units}
           productionLines={productionLines}
           tenantId={tenantId}
           siteId={siteId}
@@ -129,7 +130,10 @@ export const ProductionPlanPage: React.FC = () => {
           onStartValidation={importHook.startValidation}
           onConfirmYear={importHook.setConfirmedYear}
           onAcknowledgeDuplicate={importHook.setDuplicateCheckAcknowledged}
-          onRevalidateMasterData={revalidateMasterData}
+          onRevalidateMasterData={() => {
+            revalidateMasterData();
+            importHook.startValidation();
+          }}
           onFilterChange={importHook.setReviewFilter}
           onSearchChange={importHook.setReviewSearch}
           onLineFilterChange={importHook.setReviewLineFilter}

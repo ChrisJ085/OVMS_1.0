@@ -208,10 +208,10 @@ export const RecommendationDetailPage: React.FC = () => {
                 </div>
               </div>
               
-              {snap.inventoryByLocation.length > 0 && (
+              {(snap.inventoryByLocation || []).length > 0 && (
                 <div className="space-y-2 mt-4 pt-4 border-t border-slate-800">
                   <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">By Location</div>
-                  {snap.inventoryByLocation.map((loc, idx) => (
+                  {(snap.inventoryByLocation || []).map((loc, idx) => (
                     <div key={idx} className="flex justify-between text-sm">
                       <span className="text-slate-400 font-mono">{loc.locationId}</span>
                       <span className="font-medium text-slate-200">
@@ -292,11 +292,11 @@ export const RecommendationDetailPage: React.FC = () => {
               <div className="flex items-center gap-4">
                 <div className="flex-1 p-4 bg-slate-800 rounded-lg border border-slate-700">
                   <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Band Status</div>
-                  <div className="text-lg font-bold text-slate-100">{out.planningBand.status.replace(/_/g, ' ')}</div>
-                  <div className="text-xs text-slate-400 mt-1">Deficit: <span className="font-mono text-slate-300">{out.planningBand.deficitQuantity}</span>, Excess: <span className="font-mono text-slate-300">{out.planningBand.excessQuantity}</span></div>
+                  <div className="text-lg font-bold text-slate-100">{out?.planningBand?.status ? out.planningBand.status.replace(/_/g, ' ') : 'N/A'}</div>
+                  <div className="text-xs text-slate-400 mt-1">Deficit: <span className="font-mono text-slate-300">{out?.planningBand?.deficitQuantity ?? 0}</span>, Excess: <span className="font-mono text-slate-300">{out?.planningBand?.excessQuantity ?? 0}</span></div>
                 </div>
                 
-                {out.recommendedActionTypeId && (
+                {out?.recommendedActionTypeId && (
                   <div className="flex-1 p-4 bg-brand-500/10 rounded-lg border border-brand-500/20">
                     <div className="text-xs text-brand-400/70 uppercase tracking-wider mb-1">Recommended Action</div>
                     <div className="text-lg font-bold text-brand-300">{out.recommendedActionTypeId}</div>
@@ -311,7 +311,7 @@ export const RecommendationDetailPage: React.FC = () => {
                   Explanation Log
                 </h4>
                 <div className="bg-black/40 text-slate-300 rounded-lg p-4 font-mono text-xs space-y-2 overflow-x-auto border border-slate-800">
-                  {out.explanationLines.map((line, idx) => (
+                  {(out?.explanationLines || []).map((line, idx) => (
                     <div key={idx} className="flex">
                       <span className="text-slate-600 mr-4">{(idx+1).toString().padStart(2, '0')}</span>
                       <span>{line}</span>
@@ -324,14 +324,14 @@ export const RecommendationDetailPage: React.FC = () => {
                 </div>
               </div>
 
-              {out.dataQualityWarnings.length > 0 && (
+              {(out?.dataQualityWarnings || []).length > 0 && (
                 <div className="bg-amber-900/20 border border-amber-900/50 rounded-lg p-4">
                   <h4 className="text-sm font-semibold text-amber-500 mb-2 flex items-center">
                     <AlertTriangle className="w-4 h-4 mr-2" />
                     Data Quality Warnings
                   </h4>
                   <ul className="list-disc list-inside text-sm text-amber-400/80 space-y-1">
-                    {out.dataQualityWarnings.map((warning, idx) => (
+                    {(out?.dataQualityWarnings || []).map((warning, idx) => (
                       <li key={idx}>{warning}</li>
                     ))}
                   </ul>
@@ -346,7 +346,7 @@ export const RecommendationDetailPage: React.FC = () => {
             <SectionCard title="Planner Decision">
               <div className="space-y-4">
                 {(() => {
-                  const configIssues = out.dataQualityIssues.filter(i => i.code === 'CONFIGURATION_MISSING');
+                  const configIssues = (out?.dataQualityIssues || []).filter(i => i.code === 'CONFIGURATION_MISSING');
                   const hasConfigIssues = configIssues.length > 0;
                   const isAuthorizedToEditSettings = userProfile && (userProfile.role === 'PLATFORM_SUPERUSER' || userProfile.role === 'TENANT_ADMIN');
 

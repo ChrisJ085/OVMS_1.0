@@ -14,7 +14,7 @@ import { ProductionLine, UnitOfMeasure } from '../../../types/configuration';
 import { where, Timestamp } from 'firebase/firestore';
 import { ProductionEventModal } from './components/ProductionEventModal';
 import { ProductionActionModal } from './components/ProductionActionModal';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const ProductionPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

@@ -3,13 +3,14 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { DataTable } from '../../../components/ui/DataTable';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
-import { Plus, Search, Archive, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Archive, AlertTriangle, ClipboardPaste } from 'lucide-react';
 import { subscribeToBalances, COLLECTIONS } from '../services/inventoryService';
 import { subscribeToProducts } from '../services/productService';
 import { InventoryBalance } from '../../../types/inventory';
 import { Product } from '../../../types/product';
 import { AdjustmentModal, AdjustmentType } from './components/AdjustmentModal';
 import { InventoryDetailModal } from './components/InventoryDetailModal';
+import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { UnitOfMeasure } from '../../../types/configuration';
@@ -41,6 +42,8 @@ export const InventoryBalancesPage: React.FC = () => {
     productCode?: string, 
     productDesc?: string
   }>({ isOpen: false });
+
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -116,9 +119,13 @@ export const InventoryBalancesPage: React.FC = () => {
            agg.product.description.toLowerCase().includes(searchLower);
   });
 
+  const getUnitName = (id: string) => units.find(u => u.id === id)?.name || id;
+
   const columns = [
     { header: 'Product Code', accessor: (row: any) => row.product.productCode },
     { header: 'Description', accessor: (row: any) => row.product.description },
+    { header: 'Unit', accessor: (row: any) => getUnitName(row.product.unitOfMeasureId) },
+    { header: 'CPP', accessor: (row: any) => row.product.casesPerPallet ?? '-' },
     { 
       header: 'Total QOH', 
       accessor: (row: any) => (
@@ -181,13 +188,22 @@ export const InventoryBalancesPage: React.FC = () => {
       <SectionCard 
         title="Product Inventory"
         actions={
-          <button 
-            onClick={() => setAdjModalState({ isOpen: true, type: 'INCREASE' })}
-            className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Stock Adjustment
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setIsPasteModalOpen(true)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors"
+            >
+              <ClipboardPaste className="w-4 h-4 text-brand-400" />
+              Paste Stock Update
+            </button>
+            <button 
+              onClick={() => setAdjModalState({ isOpen: true, type: 'INCREASE' })}
+              className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Stock Adjustment
+            </button>
+          </div>
         }
       >
         <div className="flex flex-col md:flex-row gap-4 mb-6">
@@ -235,6 +251,11 @@ export const InventoryBalancesPage: React.FC = () => {
         productId={detailModalState.productId}
         productCode={detailModalState.productCode}
         productDesc={detailModalState.productDesc}
+      />
+
+      <PasteInventoryModal
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
       />
     </div>
   );

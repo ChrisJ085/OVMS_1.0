@@ -6,9 +6,13 @@ import { Priority } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { CheckCircle, Clock, AlertTriangle, Plus, Activity, Archive, CalendarDays, Ban } from 'lucide-react';
+import { CheckCircle, Clock, AlertTriangle, Plus, Activity, Archive, CalendarDays, Ban, Edit2 } from 'lucide-react';
 import { updatePriorityStatus } from '../services/priorityService';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection } from '../../../services/firestoreBase';
+import { collections } from '../../configuration/services/configurationService';
+import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
 
 const SUMMARY_TILES = [
   { id: 'active', label: 'Active', icon: <Activity className="w-5 h-5 mb-2 text-blue-400"/>, color: 'bg-blue-900/30 text-blue-200 border-blue-800' },
@@ -25,9 +29,45 @@ export const OperationalPrioritiesPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Dynamic config collections
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
   
   const initialFilter = searchParams.get('filter') || 'active';
   const [activeFilter, setActiveFilter] = useState(initialFilter);
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const unsubDest = subscribeToCollection<Destination>(
+      collections.DESTINATIONS,
+      [where('tenantId', '==', tenantId)],
+      setDestinations,
+      console.error
+    );
+
+    const unsubActions = subscribeToCollection<ActionType>(
+      collections.ACTION_TYPES,
+      [where('tenantId', '==', tenantId)],
+      setActionTypes,
+      console.error
+    );
+
+    const unsubPriorities = subscribeToCollection<PriorityLevel>(
+      collections.PRIORITY_LEVELS,
+      [where('tenantId', '==', tenantId)],
+      setPriorityLevels,
+      console.error
+    );
+
+    return () => {
+      unsubDest();
+      unsubActions();
+      unsubPriorities();
+    };
+  }, [tenantId]);
 
   useEffect(() => {
     if (!tenantId || !siteId) return;
@@ -53,7 +93,7 @@ export const OperationalPrioritiesPage: React.FC = () => {
         // Compute EXPIRED state for active/scheduled items whose expireAt has passed
         const now = new Date();
         const updated = fetched.map(p => {
-          if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt) {
+          if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt && !p.untilSwitchedOff) {
             const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as unknown as string);
             if (exp < now) {
                return { ...p, priorityStatus: 'EXPIRED' as any };
@@ -145,64 +185,91 @@ export const OperationalPrioritiesPage: React.FC = () => {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Progress</th>
                 <th className="px-4 py-3">Timing</th>
-                <th className="px-4 py-3 text-right">Source</th>
+                <th className="px-4 py-3">Source</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">Loading priorities...</td>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">Loading priorities...</td>
                 </tr>
               ) : filteredPriorities.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">No priorities found for this filter.</td>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">No priorities found for this filter.</td>
                 </tr>
               ) : (
-                filteredPriorities.map(p => (
-                  <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-slate-100">{p.productCodeSnapshot}</div>
-                      <div className="text-xs text-slate-400">{p.descriptionSnapshot}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-brand-300">{p.actionTypeId}</div>
-                      <div className="text-xs text-slate-400">Qty: <span className="font-mono text-slate-300">{p.requestedQuantity || 'N/A'}</span></div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-300">{p.destinationId || '-'}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge 
-                        variant={
-                          p.priorityStatus === 'COMPLETED' ? 'completed' : 
-                          p.priorityStatus === 'EXPIRED' || p.priorityStatus === 'CANCELLED' ? 'blocked' :
-                          p.priorityStatus === 'DRAFT' ? 'draft' : 'in-progress'
-                        } 
-                        label={p.priorityStatus.replace(/_/g, ' ')} 
-                      />
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1">{p.priorityLevelId}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="w-24 bg-slate-800 rounded-full h-2 mb-1">
-                        <div className="bg-brand-500 h-2 rounded-full" style={{ width: `${p.progressPercent}%` }}></div>
-                      </div>
-                      <div className="text-xs text-slate-400">{p.progressPercent}% ({p.progressQuantity}/{p.requestedQuantity || '-'})</div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">
-                      <div>Start: {p.startAt ? new Date((p.startAt as any)?.toDate?.() || p.startAt).toLocaleString() : '-'}</div>
-                      <div className={p.priorityStatus === 'EXPIRED' ? 'text-red-400 font-medium' : ''}>Exp: {p.expireAt ? new Date((p.expireAt as any)?.toDate?.() || p.expireAt).toLocaleString() : '-'}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {p.sourceType === 'RECOMMENDATION' ? (
-                        <div className="inline-flex items-center text-xs px-2 py-1 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-800">
-                          System Rec
+                filteredPriorities.map(p => {
+                  const actionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel);
+                  const destLabel = getDestinationLabel(p.destinationId, destinations, p.destinationLabel);
+                  const overflowLabel = p.overflowDestinationId ? getDestinationLabel(p.overflowDestinationId, destinations, p.overflowDestinationLabel) : null;
+                  const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+
+                  return (
+                    <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-100">{p.productCodeSnapshot}</div>
+                        <div className="text-xs text-slate-400">{p.descriptionSnapshot}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-brand-300">{actionLabel}</div>
+                        <div className="text-xs text-slate-400">Qty: <span className="font-mono text-slate-300">{p.requestedQuantity || 'N/A'}</span></div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">
+                        <div>{destLabel}</div>
+                        {overflowLabel && (
+                          <div className="text-xs text-amber-400 mt-0.5" title="Overflow Destination">
+                            Overflow: {overflowLabel}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge 
+                          variant={
+                            p.priorityStatus === 'COMPLETED' ? 'completed' : 
+                            p.priorityStatus === 'EXPIRED' || p.priorityStatus === 'CANCELLED' ? 'blocked' :
+                            p.priorityStatus === 'DRAFT' ? 'draft' : 'in-progress'
+                          } 
+                          label={p.priorityStatus.replace(/_/g, ' ')} 
+                        />
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1">{levelLabel}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="w-24 bg-slate-800 rounded-full h-2 mb-1">
+                          <div className="bg-brand-500 h-2 rounded-full" style={{ width: `${p.progressPercent}%` }}></div>
                         </div>
-                      ) : (
-                        <div className="inline-flex items-center text-xs px-2 py-1 bg-slate-800 text-slate-300 rounded border border-slate-700">
-                          Manual
+                        <div className="text-xs text-slate-400">{p.progressPercent}% ({p.progressQuantity}/{p.requestedQuantity || '-'})</div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-400">
+                        <div>Start: {p.startAt ? new Date((p.startAt as any)?.toDate?.() || p.startAt).toLocaleString() : '-'}</div>
+                        <div className={p.priorityStatus === 'EXPIRED' ? 'text-red-400 font-medium' : ''}>
+                          Exp: {p.untilSwitchedOff || !p.expireAt ? 'Until Switched Off' : new Date((p.expireAt as any)?.toDate?.() || p.expireAt).toLocaleString()}
                         </div>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="px-4 py-3">
+                        {p.sourceType === 'RECOMMENDATION' ? (
+                          <div className="inline-flex items-center text-xs px-2 py-1 bg-indigo-900/30 text-indigo-300 rounded border border-indigo-800">
+                            System Rec
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center text-xs px-2 py-1 bg-slate-800 text-slate-300 rounded border border-slate-700">
+                            Manual
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => navigate(`/operations/priorities/edit/${p.id}`)}
+                          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-slate-800 text-slate-200 hover:text-white hover:bg-slate-700 rounded border border-slate-700 transition-colors"
+                          title="Edit Priority"
+                        >
+                          <Edit2 className="w-3.5 h-3.5 text-brand-400" />
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

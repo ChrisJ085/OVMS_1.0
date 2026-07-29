@@ -1,6 +1,6 @@
-import { Product } from '../../../types/product';
+import { Product, ProductConfiguration } from '../../../types/product';
 import { ServiceResult } from '../../../types/common';
-import { createProduct, updateProduct, setProductStatus } from '../../inventory/services/productService';
+import { createProduct, updateProduct, setProductStatus, getProduct } from '../../inventory/services/productService';
 import { findDuplicateProduct } from '../../../utils/productCodeNormalizer';
 import { logAuditEvent } from '../../../services/auditService';
 
@@ -8,6 +8,8 @@ export interface CreateProductMasterInput {
   productCode: string;
   description: string;
   categoryId: string;
+  configurations: ProductConfiguration[];
+  // Legacy fields for backward compatibility
   unitOfMeasureId: string;
   casesPerPallet: number;
   unitsPerCase?: number | null;
@@ -21,7 +23,7 @@ export const checkDuplicateProductCode = (
   code: string,
   existingProducts: Product[]
 ): Product | null => {
-  return findDuplicateProduct(code, existingProducts);
+  return existingProducts.find(p => p.productCode === code) || null;
 };
 
 export const createProductFromImport = async (
@@ -31,20 +33,20 @@ export const createProductFromImport = async (
   userProfileName: string,
   existingProducts: Product[] = []
 ): Promise<ServiceResult<string>> => {
-  // 1. Confirm duplicate check
-  const duplicate = findDuplicateProduct(input.productCode, existingProducts);
+  // 1. Confirm duplicate check (by code)
+  const duplicate = existingProducts.find(p => p.productCode === input.productCode);
   if (duplicate) {
     return {
       success: false,
-      error: `Product creation blocked: Code "${input.productCode}" conflicts with existing Product Master record "${duplicate.productCode}" (${duplicate.description}).`
+      error: `Product Master already exists for code "${input.productCode}".`
     };
   }
 
-  // 2. Validate cases per pallet
-  if (!input.casesPerPallet || input.casesPerPallet <= 0) {
+  // 2. Validate configurations
+  if (!input.configurations || input.configurations.length === 0) {
     return {
       success: false,
-      error: 'Cases per pallet is required and must be greater than 0.'
+      error: 'At least one configuration is required.'
     };
   }
 
@@ -54,9 +56,11 @@ export const createProductFromImport = async (
     productCode: input.productCode,
     description: input.description,
     categoryId: input.categoryId || 'default',
-    unitOfMeasureId: input.unitOfMeasureId || 'CS',
-    casesPerPallet: input.casesPerPallet,
-    unitsPerCase: input.unitsPerCase || null,
+    configurations: input.configurations,
+    // Legacy fields for backward compatibility, synchronized with configurations[0]
+    unitOfMeasureId: input.configurations[0].unitOfMeasureId,
+    casesPerPallet: input.configurations[0].casesPerPallet,
+    unitsPerCase: input.configurations[0].unitsPerCase,
     defaultDestinationId: input.defaultDestinationId || null,
     operationallyRelevant: input.operationallyRelevant ?? true,
     notes: input.notes || 'Created via Master Data Controls during import review',
@@ -146,6 +150,47 @@ export const activateProductInMaster = async (
       entityType: 'Product',
       entityId: productId,
       summary: `Activated Product Master ${productId} from import issue workflow`,
+      performedBy: userProfileName
+    });
+  }
+  return result;
+};
+
+export const selectProductImportUomInMaster = async (
+  productId: string,
+  uomId: string,
+  tenantId: string,
+  siteId: string,
+  userProfileName: string
+): Promise<ServiceResult<void>> => {
+  const currentProduct = await getProduct(productId);
+  if (!currentProduct) {
+    return { success: false, error: 'Product not found.' };
+  }
+
+  const configs = currentProduct.configurations || [];
+  const chosenIdx = configs.findIndex(c => c.unitOfMeasureId.trim().toUpperCase() === uomId.trim().toUpperCase());
+  
+  let newConfigs = [...configs];
+  if (chosenIdx > 0) {
+    const [chosenConfig] = newConfigs.splice(chosenIdx, 1);
+    newConfigs.unshift(chosenConfig);
+  }
+
+  const result = await updateProduct(productId, {
+    defaultImportUomId: uomId,
+    configurations: newConfigs.length > 0 ? newConfigs : undefined
+  }, tenantId);
+
+  if (result.success) {
+    await logAuditEvent({
+      tenantId,
+      siteId,
+      eventType: 'PRODUCT_UPDATE_CASES_PER_PALLET',
+      entityType: 'Product',
+      entityId: productId,
+      summary: `Selected effective Unit of Measure "${uomId}" for Product Master ${productId}`,
+      newValue: { defaultImportUomId: uomId },
       performedBy: userProfileName
     });
   }

@@ -155,10 +155,11 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
               <label className="text-sm font-medium text-slate-300">Product *</label>
               <ProductLookup 
                 value={productId}
-                onChange={(id, code, desc) => {
-                  setProductId(id);
-                  setProductCode(code);
-                  setProductDesc(desc);
+                onChange={(product) => {
+                  setProductId(product.id as string);
+                  setProductCode(product.productCode);
+                  setProductDesc(product.description);
+                  setUnitId(product.unitOfMeasureId);
                 }}
                 disabled={!!defaultProductId}
               />

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, ChangeEvent } from 'react';
 import * as XLSX from 'xlsx';
 import { ParsedPlanPreview, calculateFileHash, createImportPreview } from '../services/mpps7ImportService';
 import { productionImportRepository } from '../repositories/productionImportRepository';
@@ -50,8 +50,16 @@ export function useProductionImport(
     importState === 'VALIDATING' ? 2 :
     importState === 'REVIEW' || importState === 'READY_TO_COMMIT' || importState === 'COMMITTING' ? 3 : 4;
 
-  const handleSelectFile = (file: File) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
+  const handleSelectFile = (fileOrEvent: File | ChangeEvent<HTMLInputElement>) => {
+    let file: File | null = null;
+    if (fileOrEvent instanceof File) {
+      file = fileOrEvent;
+    } else if (fileOrEvent && (fileOrEvent as any).target && (fileOrEvent as any).target.files) {
+      file = (fileOrEvent as any).target.files[0] || null;
+    }
+    if (!file) return;
+
+    const ext = file.name ? file.name.split('.').pop()?.toLowerCase() : '';
     if (ext !== 'xlsx' && ext !== 'xls') {
       setError('Supported format is strictly Microsoft Excel (.xlsx, .xls) workbook files.');
       return;

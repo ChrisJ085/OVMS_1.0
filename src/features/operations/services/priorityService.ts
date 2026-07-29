@@ -138,6 +138,69 @@ export const createPriority = async (
   }
 };
 
+export const updatePriority = async (
+  priorityId: string,
+  priorityData: Partial<Priority>,
+  userId: string,
+  note: string = 'Priority details updated'
+): Promise<ServiceResult<void>> => {
+  try {
+    const ref = doc(db, PRIORITIES_COLLECTION, priorityId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return { success: false, error: 'Priority not found' };
+
+    const existing = snap.data() as Priority;
+    const batch = writeBatch(db);
+
+    const updateData: any = {
+      ...priorityData,
+      modifiedDate: Timestamp.now(),
+      modifiedBy: userId || 'System'
+    };
+
+    // Remove any undefined properties to prevent Firestore write errors
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] === undefined) {
+        delete updateData[key];
+      }
+    });
+
+    if (priorityData.requestedQuantity !== undefined) {
+      const reqQty = priorityData.requestedQuantity;
+      const progQty = existing.progressQuantity || 0;
+      if (reqQty !== null && reqQty !== undefined) {
+        updateData.remainingQuantity = Math.max(0, reqQty - progQty);
+        updateData.progressPercent = reqQty > 0 ? Math.round((progQty / reqQty) * 100) : 0;
+      } else {
+        updateData.remainingQuantity = null;
+        updateData.progressPercent = 0;
+      }
+    }
+
+    batch.update(ref, updateData);
+
+    await logPriorityEvent(
+      batch,
+      existing.tenantId,
+      existing.siteId,
+      priorityId,
+      'MATERIAL_AMENDMENT',
+      existing.priorityStatus,
+      priorityData.priorityStatus || existing.priorityStatus,
+      null,
+      null,
+      note,
+      userId
+    );
+
+    await batch.commit();
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+};
+
 const VALID_TRANSITIONS: Record<PriorityStatus, PriorityStatus[]> = {
   'DRAFT': ['SCHEDULED', 'ACTIVE', 'CANCELLED'],
   'SCHEDULED': ['ACTIVE', 'CANCELLED'],

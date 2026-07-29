@@ -24,7 +24,9 @@ export const PlanningRuleDetailModal: React.FC<PlanningRuleDetailModalProps> = (
 
   const getDestName = (id?: string | null) => {
     if (!id) return '-';
-    return destinations.find(d => d.id === id)?.destinationName || id;
+    const dest = destinations.find(d => d.id === id || d.destinationCode === id);
+    if (!dest) return id;
+    return dest.destinationName ? `${dest.destinationName}${dest.destinationCode ? ` (${dest.destinationCode})` : ''}` : dest.destinationCode;
   };
 
   const renderDate = (dateVal: any) => {
@@ -162,7 +164,16 @@ export const PlanningRuleDetailModal: React.FC<PlanningRuleDetailModalProps> = (
 
           <div className="mt-8 pt-6 border-t border-slate-800 flex justify-between text-xs text-slate-500">
             <div>
-              <p>Effective: {renderDate(rule.effectiveFrom)} - {renderDate(rule.effectiveTo)}</p>
+              <p>
+                Effective: {renderDate(rule.effectiveFrom)}{' '}
+                {rule.untilSwitchedOff || !rule.effectiveTo ? (
+                  <span className="text-emerald-400 font-medium ml-1">
+                    - Until Switched Off
+                  </span>
+                ) : (
+                  `- ${renderDate(rule.effectiveTo)}`
+                )}
+              </p>
               {rule.notes && <p className="mt-2 text-slate-400 italic">"{rule.notes}"</p>}
             </div>
             <div className="text-right">

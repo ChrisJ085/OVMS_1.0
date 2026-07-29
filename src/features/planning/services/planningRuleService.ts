@@ -9,7 +9,7 @@ import { collection, query, where, getDocs, Timestamp, serverTimestamp } from 'f
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
 
-const COLLECTION_NAME = 'productPlanningRules';
+const COLLECTION_NAME = 'planningRules';
 
 export const validateRule = (data: Partial<ProductPlanningRule>): string | null => {
   if (!data.productId) return 'Product is required';
@@ -35,7 +35,7 @@ export const validateRule = (data: Partial<ProductPlanningRule>): string | null 
     return 'Preferred destination is required';
   }
 
-  if (data.effectiveFrom && data.effectiveTo) {
+  if (!data.untilSwitchedOff && data.effectiveFrom && data.effectiveTo) {
     const fromDate = (data.effectiveFrom as any).toDate ? (data.effectiveFrom as any).toDate() : new Date(data.effectiveFrom as any);
     const toDate = (data.effectiveTo as any).toDate ? (data.effectiveTo as any).toDate() : new Date(data.effectiveTo as any);
     if (toDate <= fromDate) {

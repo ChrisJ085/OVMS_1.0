@@ -13,18 +13,42 @@ interface ProductionPlanGridProps {
   activeEntries: ProductionPlanEntry[];
   gridNotes: ProductionLinePlanNote[];
   gridDates: Date[];
+  isFiltered?: boolean;
 }
 
 export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
   productionLines,
   activeEntries,
   gridNotes,
-  gridDates
+  gridDates,
+  isFiltered = false
 }) => {
+  const today = new Date();
+  const isTodayColumn = (date: Date) => {
+    return date.getUTCFullYear() === today.getUTCFullYear() &&
+           date.getUTCMonth() === today.getUTCMonth() &&
+           date.getUTCDate() === today.getUTCDate();
+  };
+
   if (productionLines.length === 0) {
     return (
       <div className="p-12 text-center text-slate-500">
         No active production lines configured. Go to site master database to seed.
+      </div>
+    );
+  }
+
+  // Check if any matching entries exist overall across all lines when filtering
+  const totalMatchingSKUs = productionLines.reduce((acc, line) => {
+    const lineEntries = activeEntries.filter(e => e.productionLineId.toUpperCase() === line.lineCode.toUpperCase());
+    return acc + new Set(lineEntries.map(e => e.productCodeSnapshot)).size;
+  }, 0);
+
+  if (isFiltered && totalMatchingSKUs === 0) {
+    return (
+      <div className="p-12 text-center text-slate-400 space-y-2 bg-slate-900/40 rounded-lg border border-slate-800">
+        <div className="text-base font-semibold text-slate-200">No Production Entries Match Your Filter</div>
+        <p className="text-xs text-slate-400">Try adjusting or clearing your Production Line, SKU search, or Today's SKUs filter.</p>
       </div>
     );
   }
@@ -35,12 +59,27 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
         <thead>
           <tr className="border-b border-slate-800 bg-slate-900/50">
             <th className="p-4 text-xs font-semibold text-slate-400 uppercase tracking-wider w-64">Production Line / SKU</th>
-            {gridDates.map((date, idx) => (
-              <th key={idx} className="p-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-center border-l border-slate-850">
-                <div>{['SUN','MON','TUE','WED','THU','FRI','SAT'][date.getUTCDay()]}</div>
-                <div className="text-slate-500 font-normal">{String(date.getUTCDate()).padStart(2, '0')}/{String(date.getUTCMonth() + 1).padStart(2, '0')}</div>
-              </th>
-            ))}
+            {gridDates.map((date, idx) => {
+              const isToday = isTodayColumn(date);
+              return (
+                <th 
+                  key={idx} 
+                  className={`p-4 text-xs font-semibold uppercase tracking-wider text-center border-l border-slate-850 transition-colors ${
+                    isToday ? 'bg-brand-500/10 text-brand-300 border-b-2 border-b-brand-500' : 'text-slate-400'
+                  }`}
+                >
+                  {isToday && (
+                    <div className="inline-block px-1.5 py-0.5 mb-1 rounded text-[9px] font-bold bg-brand-500 text-slate-950 uppercase tracking-wider">
+                      Today
+                    </div>
+                  )}
+                  <div>{['SUN','MON','TUE','WED','THU','FRI','SAT'][date.getUTCDay()]}</div>
+                  <div className={isToday ? 'text-brand-300 font-semibold' : 'text-slate-500 font-normal'}>
+                    {String(date.getUTCDate()).padStart(2, '0')}/{String(date.getUTCMonth() + 1).padStart(2, '0')}
+                  </div>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -49,6 +88,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
             const scheduledSKUs = Array.from(new Set(lineEntries.map(e => e.productCodeSnapshot)));
 
             if (scheduledSKUs.length === 0) {
+              if (isFiltered) return null; // Hide non-matching lines when filtering
               return (
                 <React.Fragment key={line.id}>
                   <tr className="border-b border-slate-850/80 bg-slate-900/10">
@@ -86,6 +126,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                         </div>
                       </td>
                       {gridDates.map((date, idx) => {
+                        const isToday = isTodayColumn(date);
                         const entry = lineEntries.find(e => {
                           const entryDate = e.productionDate.toDate();
                           return entryDate.getUTCFullYear() === date.getUTCFullYear() &&
@@ -95,7 +136,12 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                         });
 
                         return (
-                          <td key={idx} className="p-3 text-center border-l border-slate-900 bg-slate-900/5 min-w-[120px]">
+                          <td 
+                            key={idx} 
+                            className={`p-3 text-center border-l border-slate-900 min-w-[120px] ${
+                              isToday ? 'bg-brand-500/5' : 'bg-slate-900/5'
+                            }`}
+                          >
                             {entry ? (
                               <div className="flex flex-col gap-1 items-center">
                                 <div className="text-xs font-semibold text-brand-400">
@@ -130,6 +176,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                     {line.lineName} Totals
                   </td>
                   {gridDates.map((date, idx) => {
+                    const isToday = isTodayColumn(date);
                     const dayEntries = lineEntries.filter(e => {
                       const entryDate = e.productionDate.toDate();
                       return entryDate.getUTCFullYear() === date.getUTCFullYear() &&
@@ -143,7 +190,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                     ) / 100;
 
                     return (
-                      <td key={idx} className="p-3 text-center border-l border-slate-850 text-xs">
+                      <td key={idx} className={`p-3 text-center border-l border-slate-850 text-xs ${isToday ? 'bg-brand-500/5' : ''}`}>
                         {sumCases > 0 ? (
                           <div className="font-semibold text-slate-200">
                             <div>{sumCases.toLocaleString()} cs</div>

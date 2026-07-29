@@ -9,7 +9,7 @@ import { subscribeToPromotions } from '../services/promotionService';
 import { PromotionWithPhase } from '../../../types/promotion';
 import { PromotionModal } from './components/PromotionModal';
 import { useNavigate } from 'react-router-dom';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const PromotionsPage: React.FC = () => {
   const { tenantId } = useSiteContext();

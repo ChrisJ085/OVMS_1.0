@@ -5,7 +5,7 @@ import { ValidationStep } from './ValidationStep';
 import { ImportReviewStep } from './ImportReviewStep';
 import { ImportCommitStep } from './ImportCommitStep';
 import { Product } from '../../../../types/product';
-import { ProductionLine } from '../../../../types/configuration';
+import { ProductionLine, UnitOfMeasure } from '../../../../types/configuration';
 import { ParsedPlanPreview } from '../../services/mpps7ImportService';
 
 interface ImportSapPlanViewProps {
@@ -16,6 +16,7 @@ interface ImportSapPlanViewProps {
   error: string | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   products: Product[];
+  units: UnitOfMeasure[];
   productionLines: ProductionLine[];
   tenantId: string;
   siteId: string;
@@ -54,6 +55,7 @@ export const ImportSapPlanView: React.FC<ImportSapPlanViewProps> = ({
   error,
   fileInputRef,
   products,
+  units,
   productionLines,
   tenantId,
   siteId,
@@ -98,7 +100,7 @@ export const ImportSapPlanView: React.FC<ImportSapPlanViewProps> = ({
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      const ext = file.name.split('.').pop()?.toLowerCase();
+      const ext = file && file.name ? file.name.split('.').pop()?.toLowerCase() : '';
       if (ext !== 'xlsx' && ext !== 'xls') {
         alert('Supported format is strictly Microsoft Excel (.xlsx, .xls) workbook files.');
         return;
@@ -194,6 +196,7 @@ export const ImportSapPlanView: React.FC<ImportSapPlanViewProps> = ({
         <ImportReviewStep
           previewData={previewData}
           products={products}
+          units={units}
           productionLines={productionLines}
           tenantId={tenantId}
           siteId={siteId}

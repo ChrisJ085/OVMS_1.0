@@ -8,7 +8,7 @@ import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductionLine } from '../../../types/configuration';
 import { where } from 'firebase/firestore';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 interface ProductProductionContextPanelProps {
   productId: string;

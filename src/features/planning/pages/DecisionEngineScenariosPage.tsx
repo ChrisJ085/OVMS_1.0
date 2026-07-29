@@ -9,7 +9,7 @@ import { PromotionProductRule, PromotionWithPhase } from '../../../types/promoti
 import { Timestamp } from 'firebase/firestore';
 import { AlertCircle, Target, CheckCircle2, Factory, TrendingUp, HelpCircle } from 'lucide-react';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const DecisionEngineScenariosPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

@@ -8,6 +8,8 @@ import { validateImportData, commitImportData } from '../services/importExportSe
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../../config/firebase';
 
 type ImportType = 'PRODUCTS' | 'LOCATIONS' | 'INVENTORY' | 'PLANNING_RULES' | 'PRODUCTION_EVENTS' | 'PROMOTIONS';
 
@@ -37,8 +39,6 @@ export const DataUtilitiesPage: React.FC = () => {
     try {
       // In a real app we'd fetch all docs for this exportType.
       // Here we will use some dummy fetching for demo or real if configured.
-      const { collection, getDocs, query, where } = await import('firebase/firestore');
-      const { db } = await import('../../../config/firebase');
       
       const collMap: any = {
         'PRODUCTS': 'products',

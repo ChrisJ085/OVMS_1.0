@@ -63,37 +63,53 @@ export const RecommendationsWorkspacePage: React.FC = () => {
       const snap = await getDocs(q);
       
       let count = 0;
+      let errors: string[] = [];
       for (const doc of snap.docs) {
         const res = await generateRecommendationForProduct(tenantId, siteId, doc.id);
-        if (res.success && res.data) count++;
+        if (res.success && res.data) {
+          count++;
+        } else if (res.error) {
+          errors.push(typeof res.error === 'string' ? res.error : res.error.message);
+        }
       }
-      alert(`Generated/Updated ${count} recommendations`);
+
+      if (errors.length > 0 && count === 0) {
+        alert(`Failed to generate recommendation: ${errors[0]}`);
+      } else if (errors.length > 0) {
+        alert(`Generated/Updated ${count} recommendations (${errors.length} failed: ${errors[0]})`);
+      } else {
+        alert(`Generated/Updated ${count} recommendations`);
+      }
       await fetchRecs();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Error generating recommendations');
+      alert(`Failed to generate recommendation: ${e?.message || 'Error generating recommendations'}`);
     } finally {
       setGenerating(false);
     }
   };
 
   const filteredRecs = recommendations.filter(r => {
+    const warnings = r.decisionOutput?.dataQualityWarnings || [];
+    const impacts = r.sourceSnapshot?.activePromotionImpacts || [];
+    const bandStatus = r.decisionOutput?.planningBand?.status;
+
     if (activeFilter === 'requires-review') return r.recommendationStatus === 'AWAITING_REVIEW';
-    if (activeFilter === 'critical-exceptions') return r.recommendationStatus === 'AWAITING_REVIEW' && r.decisionOutput.dataQualityWarnings.length > 0;
-    if (activeFilter === 'promotion-affected') return r.sourceSnapshot.activePromotionImpacts.length > 0;
-    if (activeFilter === 'below-retention') return r.decisionOutput.planningBand.status === 'BELOW_CONTROL';
-    if (activeFilter === 'above-maximum') return r.decisionOutput.planningBand.status === 'ABOVE_MAXIMUM';
-    if (activeFilter === 'stale-missing-data') return r.decisionOutput.dataQualityWarnings.length > 0;
+    if (activeFilter === 'critical-exceptions') return r.recommendationStatus === 'AWAITING_REVIEW' && warnings.length > 0;
+    if (activeFilter === 'promotion-affected') return impacts.length > 0;
+    if (activeFilter === 'below-retention') return bandStatus === 'BELOW_CONTROL';
+    if (activeFilter === 'above-maximum') return bandStatus === 'ABOVE_MAXIMUM';
+    if (activeFilter === 'stale-missing-data') return warnings.length > 0;
     return true;
   });
 
   const getTileCount = (id: string) => {
     if (id === 'requires-review') return recommendations.filter(r => r.recommendationStatus === 'AWAITING_REVIEW').length;
-    if (id === 'critical-exceptions') return recommendations.filter(r => r.recommendationStatus === 'AWAITING_REVIEW' && r.decisionOutput.dataQualityWarnings.length > 0).length;
-    if (id === 'promotion-affected') return recommendations.filter(r => r.sourceSnapshot.activePromotionImpacts.length > 0).length;
-    if (id === 'below-retention') return recommendations.filter(r => r.decisionOutput.planningBand.status === 'BELOW_CONTROL').length;
-    if (id === 'above-maximum') return recommendations.filter(r => r.decisionOutput.planningBand.status === 'ABOVE_MAXIMUM').length;
-    if (id === 'stale-missing-data') return recommendations.filter(r => r.decisionOutput.dataQualityWarnings.length > 0).length;
+    if (id === 'critical-exceptions') return recommendations.filter(r => r.recommendationStatus === 'AWAITING_REVIEW' && (r.decisionOutput?.dataQualityWarnings || []).length > 0).length;
+    if (id === 'promotion-affected') return recommendations.filter(r => (r.sourceSnapshot?.activePromotionImpacts || []).length > 0).length;
+    if (id === 'below-retention') return recommendations.filter(r => r.decisionOutput?.planningBand?.status === 'BELOW_CONTROL').length;
+    if (id === 'above-maximum') return recommendations.filter(r => r.decisionOutput?.planningBand?.status === 'ABOVE_MAXIMUM').length;
+    if (id === 'stale-missing-data') return recommendations.filter(r => (r.decisionOutput?.dataQualityWarnings || []).length > 0).length;
     return 0;
   };
 
@@ -162,14 +178,14 @@ export const RecommendationsWorkspacePage: React.FC = () => {
                       <div className="font-medium text-slate-100">{rec.productCodeSnapshot}</div>
                       <div className="text-xs text-slate-400">{rec.descriptionSnapshot}</div>
                     </td>
-                    <td className="px-4 py-3 font-mono">{rec.sourceSnapshot.inventoryTotal}</td>
+                    <td className="px-4 py-3 font-mono">{rec.sourceSnapshot?.inventoryTotal ?? 0}</td>
                     <td className="px-4 py-3">
                       <span className="text-xs font-medium px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-300">
-                        {rec.decisionOutput.planningBand.status.replace(/_/g, ' ')}
+                        {rec.decisionOutput?.planningBand?.status ? rec.decisionOutput.planningBand.status.replace(/_/g, ' ') : 'NORMAL'}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {rec.decisionOutput.recommendedAction ? (
+                      {rec.decisionOutput?.recommendedAction ? (
                         <div>
                           <div className="font-medium text-brand-400">{rec.decisionOutput.recommendedAction.actionType}</div>
                           <div className="text-xs text-slate-400">Qty: {rec.decisionOutput.recommendedAction.quantity}</div>
@@ -179,10 +195,10 @@ export const RecommendationsWorkspacePage: React.FC = () => {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {rec.decisionOutput.dataQualityWarnings.length > 0 ? (
+                      {(rec.decisionOutput?.dataQualityWarnings || []).length > 0 ? (
                         <div className="flex items-center text-amber-400">
                           <AlertTriangle className="w-4 h-4 mr-1" />
-                          <span>{rec.decisionOutput.dataQualityWarnings.length} Warnings</span>
+                          <span>{(rec.decisionOutput?.dataQualityWarnings || []).length} Warnings</span>
                         </div>
                       ) : (
                         <div className="flex items-center text-green-400">

@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { Priority, PriorityStatus } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { CheckCircle, Clock, AlertTriangle, Activity, Package, ArrowRight, Play, Check, Pause, Ban } from 'lucide-react';
+import { CheckCircle, Clock, AlertTriangle, Activity, Package, ArrowRight, Play, Check, Pause, Ban, Edit2 } from 'lucide-react';
 import { executePriorityUpdate } from '../services/priorityService';
-import { useSiteContext } from '../../../../features/configuration/context/SiteContext';
+import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection } from '../../../services/firestoreBase';
+import { collections } from '../../configuration/services/configurationService';
+import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -20,11 +25,17 @@ const TABS = [
 ];
 
 export const WarehouseExecutionPage: React.FC = () => {
+  const navigate = useNavigate();
   const { tenantId, siteId } = useSiteContext();
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('new');
   const [operatorName, setOperatorName] = useState(() => localStorage.getItem(DEV_OPERATOR_KEY) || 'Dev Operator');
+
+  // Dynamic config collections
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
 
   // Modal State
   const [selectedPriority, setSelectedPriority] = useState<Priority | null>(null);
@@ -37,6 +48,37 @@ export const WarehouseExecutionPage: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(DEV_OPERATOR_KEY, operatorName);
   }, [operatorName]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const unsubDest = subscribeToCollection<Destination>(
+      collections.DESTINATIONS,
+      [where('tenantId', '==', tenantId)],
+      setDestinations,
+      console.error
+    );
+
+    const unsubActions = subscribeToCollection<ActionType>(
+      collections.ACTION_TYPES,
+      [where('tenantId', '==', tenantId)],
+      setActionTypes,
+      console.error
+    );
+
+    const unsubPriorities = subscribeToCollection<PriorityLevel>(
+      collections.PRIORITY_LEVELS,
+      [where('tenantId', '==', tenantId)],
+      setPriorityLevels,
+      console.error
+    );
+
+    return () => {
+      unsubDest();
+      unsubActions();
+      unsubPriorities();
+    };
+  }, [tenantId]);
 
   useEffect(() => {
     if (!tenantId || !siteId) return;
@@ -53,7 +95,7 @@ export const WarehouseExecutionPage: React.FC = () => {
       // Update expired status
       const now = new Date();
       const updated = fetched.map(p => {
-        if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt) {
+        if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt && !p.untilSwitchedOff) {
           const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as unknown as string);
           if (exp < now) {
              return { ...p, priorityStatus: 'EXPIRED' as any };
@@ -178,34 +220,55 @@ export const WarehouseExecutionPage: React.FC = () => {
         ) : filteredPriorities.length === 0 ? (
            <div className="col-span-full text-center text-slate-500 py-12">No tasks in this view.</div>
         ) : (
-          filteredPriorities.map(p => (
-            <div key={p.id} className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden flex flex-col shadow-sm">
-              <div className="p-4 border-b border-slate-700/50 flex justify-between items-start">
-                <div>
-                  <div className="text-sm font-bold text-slate-100 font-mono mb-1">{p.productCodeSnapshot}</div>
-                  <div className="text-xs text-slate-400 line-clamp-1">{p.descriptionSnapshot}</div>
-                </div>
-                <StatusBadge 
-                  variant={p.priorityStatus === 'COMPLETED' ? 'completed' : p.priorityStatus === 'BLOCKED' ? 'blocked' : 'in-progress'} 
-                  label={p.priorityStatus.replace(/_/g, ' ')} 
-                />
-              </div>
-              
-              <div className="p-4 flex-1 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+          filteredPriorities.map(p => {
+            const actionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel);
+            const destLabel = getDestinationLabel(p.destinationId, destinations, p.destinationLabel);
+            const overflowLabel = p.overflowDestinationId ? getDestinationLabel(p.overflowDestinationId, destinations, p.overflowDestinationLabel) : null;
+
+            return (
+              <div key={p.id} className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden flex flex-col shadow-sm">
+                <div className="p-4 border-b border-slate-700/50 flex justify-between items-start">
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Action</div>
-                    <div className="text-sm font-medium text-brand-300">{p.actionTypeId}</div>
+                    <div className="text-sm font-bold text-slate-100 font-mono mb-1">{p.productCodeSnapshot}</div>
+                    <div className="text-xs text-slate-400 line-clamp-1">{p.descriptionSnapshot}</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Requested Qty</div>
-                    <div className="text-sm font-medium text-slate-200 font-mono">{p.requestedQuantity || 'N/A'}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Destination</div>
-                    <div className="text-sm font-medium text-slate-300">{p.destinationId || '-'}</div>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge 
+                      variant={p.priorityStatus === 'COMPLETED' ? 'completed' : p.priorityStatus === 'BLOCKED' ? 'blocked' : 'in-progress'} 
+                      label={p.priorityStatus.replace(/_/g, ' ')} 
+                    />
+                    <button
+                      onClick={() => navigate(`/operations/priorities/edit/${p.id}`)}
+                      className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                      title="Edit Priority"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-brand-400" />
+                    </button>
                   </div>
                 </div>
+                
+                <div className="p-4 flex-1 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Action</div>
+                      <div className="text-sm font-medium text-brand-300">{actionLabel}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Requested Qty</div>
+                      <div className="text-sm font-medium text-slate-200 font-mono">{p.requestedQuantity || 'N/A'}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Destination</div>
+                      <div className="text-sm font-medium text-slate-300">
+                        {destLabel}
+                        {overflowLabel && (
+                          <span className="text-xs text-amber-400 ml-2 font-normal" title="Overflow Destination">
+                            (Overflow: {overflowLabel})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
                 <div className="bg-slate-800/50 p-3 rounded border border-slate-700/50">
                   <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Planner Instruction</div>
@@ -270,8 +333,9 @@ export const WarehouseExecutionPage: React.FC = () => {
                 )}
               </div>
             </div>
-          ))
-        )}
+          );
+        })
+      )}
       </div>
 
       {/* Action Modal */}
@@ -287,7 +351,7 @@ export const WarehouseExecutionPage: React.FC = () => {
             <form onSubmit={submitAction} className="p-6 space-y-4">
               <div className="bg-slate-800/50 p-3 rounded border border-slate-700/50">
                 <div className="text-xs text-slate-400">{selectedPriority.productCodeSnapshot}</div>
-                <div className="font-medium text-slate-200">{selectedPriority.actionTypeId}</div>
+                <div className="font-medium text-slate-200">{getActionTypeLabel(selectedPriority.actionTypeId, actionTypes, selectedPriority.actionTypeLabel)}</div>
                 <div className="text-xs text-slate-500 mt-1">Requested: {selectedPriority.requestedQuantity || 'N/A'}</div>
               </div>
 
