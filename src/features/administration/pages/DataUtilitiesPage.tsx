@@ -47,7 +47,7 @@ export const DataUtilitiesPage: React.FC = () => {
         'PLANNING_RULES': 'planningRules',
         'PRODUCTION_EVENTS': 'productionEvents',
         'PROMOTIONS': 'promotions',
-        'PRIORITIES': 'operationalPriorities',
+        'PRIORITIES': 'priorities',
         'RECOMMENDATIONS': 'recommendations',
         'AUDIT_LOGS': 'auditLogs'
       };

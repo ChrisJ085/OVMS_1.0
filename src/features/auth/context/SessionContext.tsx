@@ -19,17 +19,17 @@ const SessionContext = createContext<SessionContextType | undefined>(undefined);
 
 export const SessionProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { userProfile, user } = useAuth();
-  const { siteId } = useSiteContext();
+  const { siteId, siteReady } = useSiteContext();
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const prevSiteIdRef = useRef<string | null>(siteId);
 
-  // Start session when userProfile is loaded
+  // Start session when userProfile is loaded and site is ready
   useEffect(() => {
     let isMounted = true;
 
     async function initSession() {
-      if (userProfile && user) {
+      if (userProfile && user && siteReady && siteId) {
         const id = await createSessionRecord(userProfile, siteId);
         if (isMounted) setSessionId(id);
       } else {
@@ -42,15 +42,15 @@ export const SessionProvider: React.FC<{ children: ReactNode }> = ({ children })
     return () => {
       isMounted = false;
     };
-  }, [userProfile?.uid]);
+  }, [userProfile?.uid, siteReady, siteId]);
 
   // Update session site context when site changes
   useEffect(() => {
-    if (sessionId && siteId && prevSiteIdRef.current !== siteId) {
+    if (sessionId && siteReady && siteId && prevSiteIdRef.current !== siteId) {
       prevSiteIdRef.current = siteId;
       updateSessionSiteContext(sessionId, siteId);
     }
-  }, [sessionId, siteId]);
+  }, [sessionId, siteId, siteReady]);
 
   // Throttled activity updates (every 2 minutes)
   useEffect(() => {

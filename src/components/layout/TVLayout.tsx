@@ -7,7 +7,7 @@ import { useSiteContext } from '../../contexts/SiteContext';
 
 export const TVLayout: React.FC = () => {
   const { userProfile, logout } = useAuth();
-  const { siteName, availableSites, siteId, setSite } = useSiteContext();
+  const { siteName, availableSites, siteId, setSite, siteReady, siteError } = useSiteContext();
   const [showControlModal, setShowControlModal] = useState(false);
   
   const matches = useMatches();
@@ -40,7 +40,20 @@ export const TVLayout: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col text-slate-300 font-sans relative">
       <main className="flex-1 overflow-hidden relative">
-        <Outlet />
+        {siteReady ? (
+          <Outlet />
+        ) : siteError ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-950 p-6 text-center space-y-4">
+            <div className="text-amber-500 text-5xl">⚠️</div>
+            <h1 className="text-2xl font-bold text-slate-200">Access Restricted</h1>
+            <p className="max-w-md text-slate-400 text-sm">{siteError}</p>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-950">
+            <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p className="text-sm font-medium tracking-wide text-slate-400">Loading your assigned site...</p>
+          </div>
+        )}
       </main>
 
       {/* Unobtrusive Trigger Button in Bottom Corner */}

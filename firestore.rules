@@ -86,11 +86,16 @@ service cloud.firestore {
     // 4. Warehouse & Exception Allow-Lists
     // ------------------------------------------------------------------------
     function isOnlyUpdatingWarehouseFields() {
-      let allowedFields = ['quantity', 'status', 'completedAt', 'blockedReason', 'modifiedBy', 'modifiedDate', 'progressPercent', 'warehouseProgress', 'progressQuantity', 'remainingQuantity', 'startedAt', 'blockedAt', 'executionNotes'];
+      let allowedFields = ['quantity', 'status', 'completedAt', 'blockedReason', 'modifiedBy', 'modifiedDate', 'progressPercent', 'warehouseProgress', 'progressQuantity', 'remainingQuantity', 'startedAt', 'blockedAt', 'executionNotes', 'priorityStatus', 'latestProgressNote', 'cancelledAt'];
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields) &&
              (!('modifiedBy' in request.resource.data) || request.resource.data.modifiedBy == request.auth.uid) &&
              (!('progressPercent' in request.resource.data) || (request.resource.data.progressPercent >= 0 && request.resource.data.progressPercent <= 100)) &&
              (!('quantity' in request.resource.data) || request.resource.data.quantity >= 0);
+    }
+    
+    function isPlannerNotUpdatingWarehouseFields() {
+      let forbiddenFields = ['completedAt', 'progressPercent', 'warehouseProgress', 'progressQuantity', 'remainingQuantity', 'startedAt', 'blockedAt', 'executionNotes', 'priorityStatus', 'latestProgressNote', 'cancelledAt'];
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(forbiddenFields) == false;
     }
     
     function isOnlyUpdatingWarehouseInventoryFields() {
@@ -298,7 +303,7 @@ service cloud.firestore {
       allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
-                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isPlannerNotUpdatingWarehouseFields()) ||
                        (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseFields());
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }

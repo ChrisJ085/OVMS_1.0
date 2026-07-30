@@ -53,7 +53,7 @@ const ALL_NAVIGATION: NavGroup[] = [
     title: 'Operations',
     items: [
       { label: 'Operational Priorities', path: '/operations/priorities', icon: Box, permission: 'VIEW_PRIORITIES' },
-      { label: 'Warehouse Execution', path: '/operations/warehouse', icon: Workflow, permission: 'UPDATE_WAREHOUSE_EXECUTION' },
+      { label: 'Warehouse Execution', path: '/operations/warehouse', icon: Workflow, permission: 'VIEW_WAREHOUSE_EXECUTION' },
       { label: 'Announcements', path: '/operations/announcements', icon: Megaphone, permission: 'VIEW_PRIORITIES' },
     ],
   },

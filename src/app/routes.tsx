@@ -67,7 +67,7 @@ export const router = createBrowserRouter([
       { path: 'operations/priorities', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><OperationalPrioritiesPage /></PermissionRoute>, handle: { title: 'Operational Priorities' } },
       { path: 'operations/priorities/new', element: <PermissionRoute requiredPermissions="MANAGE_PRIORITIES"><CreatePriorityPage /></PermissionRoute>, handle: { title: 'Create Priority' } },
       { path: 'operations/priorities/edit/:id', element: <PermissionRoute requiredPermissions="MANAGE_PRIORITIES"><CreatePriorityPage /></PermissionRoute>, handle: { title: 'Edit Priority' } },
-      { path: 'operations/warehouse', element: <PermissionRoute requiredPermissions="UPDATE_WAREHOUSE_EXECUTION"><WarehouseExecutionPage /></PermissionRoute>, handle: { title: 'Warehouse Execution' } },
+      { path: 'operations/warehouse', element: <PermissionRoute requiredPermissions="VIEW_WAREHOUSE_EXECUTION"><WarehouseExecutionPage /></PermissionRoute>, handle: { title: 'Warehouse Execution' } },
       { path: 'operations/announcements', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><AnnouncementsPage /></PermissionRoute>, handle: { title: 'Announcements' } },
       { path: 'operations/exceptions', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><ExceptionCentrePage /></PermissionRoute>, handle: { title: 'Exceptions' } },
       

@@ -24,7 +24,7 @@ export const FileSelectionStep: React.FC<FileSelectionStepProps> = ({
   return (
     <div className="max-w-4xl mx-auto">
       <SectionCard 
-        title="Upload SAP MPPS7 Planning Workbook" 
+        title="Upload SAP MPPS Planning Workbook" 
         description="Only supported planning templates (.xlsx, .xls) containing the SAP factual source schema are accepted. Structural validations run instantly in-browser."
       >
         <div 
@@ -45,7 +45,7 @@ export const FileSelectionStep: React.FC<FileSelectionStepProps> = ({
             accept=".xlsx,.xls"
           />
           <Upload className="w-12 h-12 text-slate-500 group-hover:text-brand-400 mx-auto mb-4 transition-colors" />
-          <p className="font-semibold text-slate-200 text-sm">Drag and drop your MPPS7 file here, or click to browse</p>
+          <p className="font-semibold text-slate-200 text-sm">Drag and drop your MPPS file here, or click to browse</p>
           <p className="text-xs text-slate-500 mt-2">Microsoft Excel 97-2003 / Office XML Formats supported</p>
         </div>
 

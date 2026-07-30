@@ -39,12 +39,19 @@ export const productionNotesRepository = {
       const q = query(
         notesRef,
         where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        orderBy('noteDate', 'desc'),
-        limit(limitCount)
+        where('siteId', '==', siteId)
       );
       const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote));
+      const notes = snap.docs.map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote));
+      
+      // Sort client-side by noteDate desc to avoid composite index requirement in Firestore
+      notes.sort((a, b) => {
+        const timeA = a.noteDate ? (typeof a.noteDate.toMillis === 'function' ? a.noteDate.toMillis() : new Date(a.noteDate as any).getTime()) : 0;
+        const timeB = b.noteDate ? (typeof b.noteDate.toMillis === 'function' ? b.noteDate.toMillis() : new Date(b.noteDate as any).getTime()) : 0;
+        return timeB - timeA;
+      });
+
+      return notes.slice(0, limitCount);
     } catch (err) {
       throw toAppError(err, 'FETCH_NOTES_LIST_FAILED');
     }

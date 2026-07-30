@@ -3,53 +3,163 @@ import { Site } from '../types/site';
 import { DEFAULT_SITES, fetchUserPermittedSites } from '../features/administration/services/siteService';
 import { useAuth } from '../features/auth/context/AuthContext';
 
-export interface SiteContextType extends Site {
-  site: Site;
+export interface SiteContextType {
+  tenantId: string;
+  tenantName: string;
+  siteId: string;
+  siteName: string;
+  timezone: string;
+  site: Site | null;
   setSite: (site: Site) => void;
   availableSites: Site[];
+  siteLoading: boolean;
+  siteReady: boolean;
+  siteError: string | null;
 }
 
 const SiteContext = createContext<SiteContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_KEY = 'ovms_dev_context';
+const NEW_LOCAL_STORAGE_KEY = 'ovms_active_site';
+const OLD_LOCAL_STORAGE_KEY = 'ovms_dev_context';
+
+function isValidSite(data: any): data is Site {
+  return (
+    data !== null &&
+    typeof data === 'object' &&
+    typeof data.tenantId === 'string' && data.tenantId.trim() !== '' &&
+    typeof data.tenantName === 'string' && data.tenantName.trim() !== '' &&
+    typeof data.siteId === 'string' && data.siteId.trim() !== '' &&
+    typeof data.siteName === 'string' && data.siteName.trim() !== '' &&
+    typeof data.timezone === 'string' && data.timezone.trim() !== ''
+  );
+}
+
+function getStoredSite(): Site | null {
+  const newSaved = localStorage.getItem(NEW_LOCAL_STORAGE_KEY);
+  if (newSaved) {
+    try {
+      const parsed = JSON.parse(newSaved);
+      if (isValidSite(parsed)) {
+        return parsed;
+      } else {
+        console.warn('Malformed site data found in ovms_active_site, removing.');
+        localStorage.removeItem(NEW_LOCAL_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.error('Failed to parse site context from ovms_active_site', e);
+      localStorage.removeItem(NEW_LOCAL_STORAGE_KEY);
+    }
+  }
+
+  // Attempt migration from old key
+  const oldSaved = localStorage.getItem(OLD_LOCAL_STORAGE_KEY);
+  if (oldSaved) {
+    try {
+      const parsed = JSON.parse(oldSaved);
+      if (isValidSite(parsed)) {
+        // Save to new key
+        localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(parsed));
+        // Remove old key
+        localStorage.removeItem(OLD_LOCAL_STORAGE_KEY);
+        return parsed;
+      } else {
+        console.warn('Malformed site data found in ovms_dev_context, removing.');
+        localStorage.removeItem(OLD_LOCAL_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.error('Failed to parse site context from ovms_dev_context', e);
+      localStorage.removeItem(OLD_LOCAL_STORAGE_KEY);
+    }
+  }
+
+  return null;
+}
 
 export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { userProfile } = useAuth();
+  const { userProfile, loading: authLoading } = useAuth();
 
-  const [site, setSiteState] = useState<Site>(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (saved) {
-      try {
-        return JSON.parse(saved) as Site;
-      } catch (e) {
-        console.error('Failed to parse saved site context', e);
-      }
-    }
-    return DEFAULT_SITES[0];
-  });
+  const [site, setSiteState] = useState<Site | null>(null);
+  const [availableSites, setAvailableSites] = useState<Site[]>([]);
+  const [siteLoading, setSiteLoading] = useState(true);
+  const [siteReady, setSiteReady] = useState(false);
+  const [siteError, setSiteError] = useState<string | null>(null);
 
-  const [availableSites, setAvailableSites] = useState<Site[]>(DEFAULT_SITES);
-
-  // Sync available sites whenever userProfile changes
+  // Sync available sites and validate active site whenever userProfile or authLoading changes
   useEffect(() => {
     let isMounted = true;
 
     async function syncSites() {
-      if (!userProfile) {
-        if (isMounted) setAvailableSites(DEFAULT_SITES);
+      if (authLoading) {
+        if (isMounted) {
+          setSiteLoading(true);
+          setSiteReady(false);
+        }
         return;
       }
 
-      const sites = await fetchUserPermittedSites(userProfile);
-      if (!isMounted) return;
+      if (!userProfile) {
+        if (isMounted) {
+          setSiteState(null);
+          setAvailableSites([]);
+          setSiteLoading(false);
+          setSiteReady(false);
+          setSiteError(null);
+        }
+        return;
+      }
 
-      setAvailableSites(sites);
+      try {
+        if (isMounted) {
+          setSiteLoading(true);
+          setSiteReady(false);
+          setSiteError(null);
+        }
 
-      // Validate if current active site is permitted for user
-      const isCurrentSiteValid = sites.some(s => s.tenantId === site.tenantId && s.siteId === site.siteId);
-      if (!isCurrentSiteValid && sites.length > 0) {
-        setSiteState(sites[0]);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sites[0]));
+        const sites = await fetchUserPermittedSites(userProfile);
+        if (!isMounted) return;
+
+        setAvailableSites(sites);
+
+        if (!sites || sites.length === 0) {
+          if (isMounted) {
+            setSiteState(null);
+            setSiteLoading(false);
+            setSiteReady(false);
+            setSiteError('You have no assigned operational sites.');
+          }
+          return;
+        }
+
+        // Validate current active site or local storage site
+        let selectedSite: Site | null = null;
+        const savedSite = getStoredSite();
+        if (savedSite) {
+          // Check if saved site is in permitted list
+          const isPermitted = sites.some(s => s.tenantId === savedSite.tenantId && s.siteId === savedSite.siteId);
+          if (isPermitted) {
+            selectedSite = savedSite;
+          }
+        }
+
+        if (!selectedSite) {
+          selectedSite = sites[0];
+          localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(selectedSite));
+        }
+
+        if (isMounted) {
+          setSiteState(selectedSite);
+          setSiteError(null);
+          setSiteReady(true);
+        }
+      } catch (err: any) {
+        console.error('Error loading permitted sites:', err);
+        if (isMounted) {
+          setSiteError('Failed to load permitted sites.');
+        }
+      } finally {
+        if (isMounted) {
+          setSiteLoading(false);
+        }
       }
     }
 
@@ -58,22 +168,37 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => {
       isMounted = false;
     };
-  }, [userProfile]);
+  }, [userProfile, authLoading]);
 
   const setSite = (newSite: Site) => {
+    setSiteReady(false);
+    setSiteLoading(true);
     setSiteState(newSite);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newSite));
+    localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(newSite));
+
+    // Simulate short transition for unsubscription / state clearing
+    setTimeout(() => {
+      setSiteLoading(false);
+      setSiteReady(true);
+    }, 100);
+  };
+
+  const contextValue: SiteContextType = {
+    tenantId: site?.tenantId || '',
+    tenantName: site?.tenantName || '',
+    siteId: site?.siteId || '',
+    siteName: site?.siteName || '',
+    timezone: site?.timezone || 'Europe/London',
+    site,
+    setSite,
+    availableSites,
+    siteLoading,
+    siteReady,
+    siteError,
   };
 
   return (
-    <SiteContext.Provider
-      value={{
-        ...site,
-        site,
-        setSite,
-        availableSites
-      }}
-    >
+    <SiteContext.Provider value={contextValue}>
       {children}
     </SiteContext.Provider>
   );

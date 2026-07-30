@@ -12,6 +12,8 @@ import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
+import { useAuth } from '../../auth/context/AuthContext';
+import { hasPermission } from '../../../config/rolePermissions';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -27,6 +29,10 @@ const TABS = [
 export const WarehouseExecutionPage: React.FC = () => {
   const navigate = useNavigate();
   const { tenantId, siteId } = useSiteContext();
+  const { userProfile } = useAuth();
+  const canUpdate = hasPermission(userProfile?.role, 'UPDATE_WAREHOUSE_EXECUTION');
+  const canManagePriorities = hasPermission(userProfile?.role, 'MANAGE_PRIORITIES');
+
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('new');
@@ -187,14 +193,23 @@ export const WarehouseExecutionPage: React.FC = () => {
           title="Warehouse Execution" 
           description="Execute and update operational priorities."
         />
-        <div className="flex items-center gap-2 text-sm bg-slate-900 p-2 rounded-lg border border-slate-700">
-          <span className="text-slate-400">Dev Operator:</span>
-          <input 
-            type="text" 
-            value={operatorName}
-            onChange={(e) => setOperatorName(e.target.value)}
-            className="bg-transparent border-none text-brand-300 focus:ring-0 w-32 px-1"
-          />
+        <div className="flex items-center gap-4">
+          {!canUpdate && (
+            <div id="readonly-indicator" className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-sm font-medium">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              Read-only View
+            </div>
+          )}
+          <div className="flex items-center gap-2 text-sm bg-slate-900 p-2 rounded-lg border border-slate-700">
+            <span className="text-slate-400">Dev Operator:</span>
+            <input 
+              type="text" 
+              value={operatorName}
+              onChange={(e) => setOperatorName(e.target.value)}
+              disabled={!canUpdate}
+              className="bg-transparent border-none text-brand-300 focus:ring-0 w-32 px-1 disabled:opacity-50"
+            />
+          </div>
         </div>
       </div>
 
@@ -237,13 +252,15 @@ export const WarehouseExecutionPage: React.FC = () => {
                       variant={p.priorityStatus === 'COMPLETED' ? 'completed' : p.priorityStatus === 'BLOCKED' ? 'blocked' : 'in-progress'} 
                       label={p.priorityStatus.replace(/_/g, ' ')} 
                     />
-                    <button
-                      onClick={() => navigate(`/operations/priorities/edit/${p.id}`)}
-                      className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                      title="Edit Priority"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-brand-400" />
-                    </button>
+                    {canManagePriorities && (
+                      <button
+                        onClick={() => navigate(`/operations/priorities/edit/${p.id}`)}
+                        className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                        title="Edit Priority"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 text-brand-400" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 
@@ -295,43 +312,49 @@ export const WarehouseExecutionPage: React.FC = () => {
                 ) : null}
               </div>
 
-              <div className="p-3 bg-slate-800/80 border-t border-slate-700 flex flex-wrap gap-2">
-                {p.priorityStatus === 'ACTIVE' && (
-                  <button onClick={() => handleActionClick(p, 'ACKNOWLEDGED')} className="flex-1 px-3 py-2 bg-brand-500/10 text-brand-400 border border-brand-500/30 rounded text-xs font-medium hover:bg-brand-500/20 transition-colors flex items-center justify-center">
-                    <Check className="w-3 h-3 mr-1" /> Acknowledge
-                  </button>
-                )}
-                {['ACTIVE', 'ACKNOWLEDGED', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(p.priorityStatus) && (
-                  <button onClick={() => handleActionClick(p, 'IN_PROGRESS')} className="flex-1 px-3 py-2 bg-brand-500 text-slate-900 rounded text-xs font-medium hover:bg-brand-400 transition-colors flex items-center justify-center">
-                    <Play className="w-3 h-3 mr-1" /> Start Work
-                  </button>
-                )}
-                {p.priorityStatus === 'IN_PROGRESS' && (
-                  <>
-                    <button onClick={() => handleActionClick(p, 'UPDATE_PROGRESS')} className="flex-1 px-3 py-2 bg-slate-700 text-slate-200 border border-slate-600 rounded text-xs font-medium hover:bg-slate-600 transition-colors">
-                      Update Progress
+              {canUpdate ? (
+                <div className="p-3 bg-slate-800/80 border-t border-slate-700 flex flex-wrap gap-2">
+                  {p.priorityStatus === 'ACTIVE' && (
+                    <button onClick={() => handleActionClick(p, 'ACKNOWLEDGED')} className="flex-1 px-3 py-2 bg-brand-500/10 text-brand-400 border border-brand-500/30 rounded text-xs font-medium hover:bg-brand-500/20 transition-colors flex items-center justify-center">
+                      <Check className="w-3 h-3 mr-1" /> Acknowledge
                     </button>
-                    <button onClick={() => handleActionClick(p, 'PARTIALLY_COMPLETE')} className="px-3 py-2 bg-indigo-900/30 text-indigo-400 border border-indigo-800/50 rounded text-xs font-medium hover:bg-indigo-900/50 transition-colors">
-                      Partial Complete
+                  )}
+                  {['ACTIVE', 'ACKNOWLEDGED', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(p.priorityStatus) && (
+                    <button onClick={() => handleActionClick(p, 'IN_PROGRESS')} className="flex-1 px-3 py-2 bg-brand-500 text-slate-900 rounded text-xs font-medium hover:bg-brand-400 transition-colors flex items-center justify-center">
+                      <Play className="w-3 h-3 mr-1" /> Start Work
                     </button>
-                  </>
-                )}
-                {['IN_PROGRESS', 'WAITING'].includes(p.priorityStatus) && (
-                  <button onClick={() => handleActionClick(p, 'COMPLETED')} className="px-3 py-2 bg-green-900/30 text-green-400 border border-green-800/50 rounded text-xs font-medium hover:bg-green-900/50 transition-colors flex items-center justify-center">
-                    <CheckCircle className="w-3 h-3 mr-1" /> Complete
-                  </button>
-                )}
-                {['ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(p.priorityStatus) && (
-                  <div className="w-full flex gap-2">
-                    <button onClick={() => handleActionClick(p, 'WAITING')} className="flex-1 px-3 py-2 bg-amber-900/20 text-amber-400 border border-amber-900/50 rounded text-xs font-medium hover:bg-amber-900/40 transition-colors flex items-center justify-center">
-                      <Pause className="w-3 h-3 mr-1" /> Wait
+                  )}
+                  {p.priorityStatus === 'IN_PROGRESS' && (
+                    <>
+                      <button onClick={() => handleActionClick(p, 'UPDATE_PROGRESS')} className="flex-1 px-3 py-2 bg-slate-700 text-slate-200 border border-slate-600 rounded text-xs font-medium hover:bg-slate-600 transition-colors">
+                        Update Progress
+                      </button>
+                      <button onClick={() => handleActionClick(p, 'PARTIALLY_COMPLETE')} className="px-3 py-2 bg-indigo-900/30 text-indigo-400 border border-indigo-800/50 rounded text-xs font-medium hover:bg-indigo-900/50 transition-colors">
+                        Partial Complete
+                      </button>
+                    </>
+                  )}
+                  {['IN_PROGRESS', 'WAITING'].includes(p.priorityStatus) && (
+                    <button onClick={() => handleActionClick(p, 'COMPLETED')} className="px-3 py-2 bg-green-900/30 text-green-400 border border-green-800/50 rounded text-xs font-medium hover:bg-green-900/50 transition-colors flex items-center justify-center">
+                      <CheckCircle className="w-3 h-3 mr-1" /> Complete
                     </button>
-                    <button onClick={() => handleActionClick(p, 'BLOCKED')} className="flex-1 px-3 py-2 bg-red-900/20 text-red-400 border border-red-900/50 rounded text-xs font-medium hover:bg-red-900/40 transition-colors flex items-center justify-center">
-                      <Ban className="w-3 h-3 mr-1" /> Block
-                    </button>
-                  </div>
-                )}
-              </div>
+                  )}
+                  {['ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS'].includes(p.priorityStatus) && (
+                    <div className="w-full flex gap-2">
+                      <button onClick={() => handleActionClick(p, 'WAITING')} className="flex-1 px-3 py-2 bg-amber-900/20 text-amber-400 border border-amber-900/50 rounded text-xs font-medium hover:bg-amber-900/40 transition-colors flex items-center justify-center">
+                        <Pause className="w-3 h-3 mr-1" /> Wait
+                      </button>
+                      <button onClick={() => handleActionClick(p, 'BLOCKED')} className="flex-1 px-3 py-2 bg-red-900/20 text-red-400 border border-red-900/50 rounded text-xs font-medium hover:bg-red-900/40 transition-colors flex items-center justify-center">
+                        <Ban className="w-3 h-3 mr-1" /> Block
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-900/50 border-t border-slate-800 text-center text-xs text-slate-500">
+                  Execution controls disabled in read-only mode
+                </div>
+              )}
             </div>
           );
         })

@@ -19,6 +19,7 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'MANAGE_PLANNING_RULES')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PROMOTIONS')).toBe(false);
 
+    expect(hasPermission(role, 'VIEW_WAREHOUSE_EXECUTION')).toBe(true);
     expect(hasPermission(role, 'UPDATE_WAREHOUSE_EXECUTION')).toBe(true);
     expect(hasPermission(role, 'VIEW_PRIORITIES')).toBe(true);
     expect(hasPermission(role, 'VIEW_INVENTORY')).toBe(true);
@@ -34,6 +35,7 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'UPDATE_WAREHOUSE_EXECUTION')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PRIORITIES')).toBe(false);
 
+    expect(hasPermission(role, 'VIEW_WAREHOUSE_EXECUTION')).toBe(true);
     expect(hasPermission(role, 'VIEW_RECOMMENDATIONS')).toBe(true);
     expect(hasPermission(role, 'VIEW_PRODUCTION_PLAN')).toBe(true);
     expect(hasPermission(role, 'VIEW_PRIORITIES')).toBe(true);
@@ -46,7 +48,9 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'MANAGE_USERS')).toBe(false);
     expect(hasPermission(role, 'MANAGE_CONFIGURATION')).toBe(false);
     expect(hasPermission(role, 'VIEW_AUDIT_LOG')).toBe(false);
+    expect(hasPermission(role, 'UPDATE_WAREHOUSE_EXECUTION')).toBe(false);
 
+    expect(hasPermission(role, 'VIEW_WAREHOUSE_EXECUTION')).toBe(true);
     expect(hasPermission(role, 'VIEW_RECOMMENDATIONS')).toBe(true);
     expect(hasPermission(role, 'MANAGE_PLANNING_RULES')).toBe(true);
     expect(hasPermission(role, 'IMPORT_PRODUCTION_PLAN')).toBe(true);
@@ -61,6 +65,7 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'VIEW_RECOMMENDATIONS')).toBe(false);
     expect(hasPermission(role, 'VIEW_PRODUCTION_PLAN')).toBe(false);
     expect(hasPermission(role, 'VIEW_PRIORITIES')).toBe(false);
+    expect(hasPermission(role, 'VIEW_WAREHOUSE_EXECUTION')).toBe(false);
     expect(hasPermission(role, 'UPDATE_WAREHOUSE_EXECUTION')).toBe(false);
     expect(hasPermission(role, 'VIEW_INVENTORY')).toBe(false);
     expect(hasPermission(role, 'VIEW_REPORTS')).toBe(false);
