@@ -825,14 +825,16 @@ describe('Firestore Security Rules', () => {
     });
 
     // --- DISPLAY TESTS ---
-    it('31. Display reads assigned-site priorities', async () => {
+    it('31. Display reading full priorities is denied, reading displayPriorities succeeds', async () => {
       await setupUser('display1', 'DISPLAY', 'tenant1', ['site1']);
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();
         await setDoc(doc(db, 'priorities', 'prio1'), { tenantId: 'tenant1', siteId: 'site1' });
+        await setDoc(doc(db, 'displayPriorities', 'prio_disp'), { tenantId: 'tenant1', siteId: 'site1', priorityCode: 'SKU1' });
       });
       const db = getDb({ uid: 'display1' });
-      await assertSucceeds(getDoc(doc(db, 'priorities', 'prio1')));
+      await assertFails(getDoc(doc(db, 'priorities', 'prio1')));
+      await assertSucceeds(getDoc(doc(db, 'displayPriorities', 'prio_disp')));
     });
 
     it('32. Display reads another site’s priorities', async () => {
@@ -1099,6 +1101,29 @@ describe('Firestore Security Rules', () => {
       for (const field of forbidden) {
         await assertFails(updateDoc(doc(db, 'users', 'planner1'), field));
       }
+    });
+
+    // --- EXPLICIT SITE ASSIGNMENT & SUPERUSER ACCOUNT STATUS TESTS ---
+    it('58. User with missing, null, or empty siteIds is denied site access by default', async () => {
+      await setupUser('planner_nosite', 'PLANNER', 'tenant1', []);
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'productionPlanEntries', 'e1'), { tenantId: 'tenant1', siteId: 'site1' });
+      });
+      const db = getDb({ uid: 'planner_nosite' });
+      await assertFails(getDoc(doc(db, 'productionPlanEntries', 'e1')));
+      await assertFails(setDoc(doc(db, 'productionPlanEntries', 'e2'), { tenantId: 'tenant1', siteId: 'site1' }));
+    });
+
+    it('59. Inactive platform superuser fails superuser permissions instantly', async () => {
+      await setupUser('super_inactive', 'PLATFORM_SUPERUSER', null, [], 'DISABLED');
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'tenants', 't1'), { tenantName: 'Tenant 1' });
+      });
+      const db = getDb({ uid: 'super_inactive' });
+      await assertFails(getDoc(doc(db, 'tenants', 't1')));
+      await assertFails(setDoc(doc(db, 'tenants', 't2'), { tenantName: 'Tenant 2' }));
     });
   });
 });

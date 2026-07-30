@@ -3,92 +3,71 @@ import { db } from '../../../config/firebase';
 import { UserProfile } from '../../../types/auth';
 import { Site } from '../../../types/site';
 
-export const DEFAULT_SITES: Site[] = [
-  {
-    tenantId: 'tenant_dev',
-    tenantName: 'GXO Development',
-    siteId: 'site_barrow',
-    siteName: 'Barrow RDC',
-    timezone: 'Europe/London',
-  },
-  {
-    tenantId: 'tenant_dev',
-    tenantName: 'GXO Development',
-    siteId: 'site_test',
-    siteName: 'Test Facility',
-    timezone: 'Europe/London',
-  },
-];
-
 export async function fetchUserPermittedSites(profile: UserProfile): Promise<Site[]> {
-  if (!db) return DEFAULT_SITES;
+  if (!db || !profile) return [];
+
+  // Platform superuser must have active status
+  if (profile.role === 'PLATFORM_SUPERUSER') {
+    if (profile.accountStatus !== 'ACTIVE' && (profile.accountStatus as string) !== 'active') {
+      return [];
+    }
+  }
 
   try {
     if (profile.role === 'PLATFORM_SUPERUSER') {
-      const locationsSnap = await getDocs(collection(db, 'locations'));
+      const sitesSnap = await getDocs(collection(db, 'sites'));
       const sitesMap = new Map<string, Site>();
 
-      DEFAULT_SITES.forEach(s => sitesMap.set(`${s.tenantId}_${s.siteId}`, s));
-
-      locationsSnap.forEach(docSnap => {
+      sitesSnap.forEach((docSnap) => {
         const data = docSnap.data();
-        if (data.tenantId && data.siteId) {
-          const key = `${data.tenantId}_${data.siteId}`;
+        const siteId = data.siteId || docSnap.id;
+        if (data.tenantId && siteId) {
+          const key = `${data.tenantId}_${siteId}`;
           sitesMap.set(key, {
             tenantId: data.tenantId,
             tenantName: data.tenantName || 'Tenant',
-            siteId: data.siteId,
-            siteName: data.siteName || data.siteId,
-            timezone: data.timezone || 'Europe/London'
+            siteId: siteId,
+            siteName: data.siteName || siteId,
+            timezone: data.timezone || 'Europe/London',
           });
         }
       });
 
       return Array.from(sitesMap.values());
     } else {
-      const tenantId = profile.tenantId || 'tenant_dev';
-      const q = query(collection(db, 'locations'), where('tenantId', '==', tenantId));
-      const locationsSnap = await getDocs(q);
+      const tenantId = profile.tenantId;
+      if (!tenantId) return [];
+
+      const q = query(collection(db, 'sites'), where('tenantId', '==', tenantId));
+      const sitesSnap = await getDocs(q);
 
       const sitesMap = new Map<string, Site>();
 
-      locationsSnap.forEach(docSnap => {
+      sitesSnap.forEach((docSnap) => {
         const data = docSnap.data();
+        const siteId = data.siteId || docSnap.id;
+
         const isAssigned =
           profile.role === 'TENANT_ADMIN' ||
-          !profile.siteIds ||
-          profile.siteIds.length === 0 ||
-          profile.siteIds.includes(data.siteId);
+          (Array.isArray(profile.siteIds) && profile.siteIds.length > 0 && profile.siteIds.includes(siteId));
 
-        if (data.siteId && isAssigned) {
-          const key = `${tenantId}_${data.siteId}`;
+        if (siteId && isAssigned) {
+          const key = `${tenantId}_${siteId}`;
           sitesMap.set(key, {
             tenantId,
             tenantName: data.tenantName || 'Tenant',
-            siteId: data.siteId,
-            siteName: data.siteName || data.siteId,
-            timezone: data.timezone || 'Europe/London'
+            siteId: siteId,
+            siteName: data.siteName || siteId,
+            timezone: data.timezone || 'Europe/London',
           });
         }
       });
 
-      if (sitesMap.size === 0) {
-        const assignedIds = profile.siteIds && profile.siteIds.length > 0 ? profile.siteIds : ['site_barrow'];
-        assignedIds.forEach(id => {
-          sitesMap.set(`${tenantId}_${id}`, {
-            tenantId,
-            tenantName: 'GXO Tenant',
-            siteId: id,
-            siteName: id === 'site_barrow' ? 'Barrow RDC' : id,
-            timezone: 'Europe/London'
-          });
-        });
-      }
-
       return Array.from(sitesMap.values());
     }
   } catch (e) {
-    console.error('Error fetching sites:', e);
-    return DEFAULT_SITES;
+    console.error('Error fetching sites from sites collection:', e);
+    return [];
   }
 }
+

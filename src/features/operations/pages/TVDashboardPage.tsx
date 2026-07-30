@@ -100,9 +100,9 @@ export const TVDashboardPage: React.FC = () => {
   useEffect(() => {
     if (!tenantId || !siteId) return;
 
-    // Listen to priorities
+    // Listen to sanitized displayPriorities
     const prioritiesQuery = query(
-      collection(db, 'priorities'),
+      collection(db, 'displayPriorities'),
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId)
     );

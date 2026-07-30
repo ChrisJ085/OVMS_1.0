@@ -5,22 +5,33 @@ import { ServiceResult } from '../../../types/common';
 
 const COLLECTION = 'announcements';
 
+export interface AuthorIdentity {
+  uid: string;
+  displayName?: string | null;
+  email?: string | null;
+}
+
 export const createAnnouncement = async (
   announcement: Omit<Announcement, 'id' | 'createdDate' | 'modifiedDate' | 'createdBy' | 'modifiedBy' | 'status'>,
-  userId: string
+  author: string | AuthorIdentity
 ): Promise<ServiceResult<string>> => {
   try {
     if (announcement.displayOnTv && announcement.message.length > 200) {
       return { success: false, error: 'TV Announcements must be 200 characters or less' };
     }
 
+    const uid = typeof author === 'string' ? author : author.uid;
+    const displayName = typeof author === 'string' ? author : (author.displayName || author.email || author.uid);
+
     const docRef = await addDoc(collection(db, COLLECTION), {
       ...announcement,
       status: 'active',
       createdDate: Timestamp.now(),
       modifiedDate: Timestamp.now(),
-      createdBy: userId,
-      modifiedBy: userId
+      createdBy: uid,
+      createdByName: displayName,
+      modifiedBy: uid,
+      modifiedByName: displayName
     });
     return { success: true, data: docRef.id };
   } catch (error: any) {
@@ -32,18 +43,22 @@ export const createAnnouncement = async (
 export const updateAnnouncement = async (
   id: string,
   updates: Partial<Omit<Announcement, 'id' | 'createdDate' | 'createdBy'>>,
-  userId: string
+  author: string | AuthorIdentity
 ): Promise<ServiceResult<void>> => {
   try {
     if (updates.displayOnTv && updates.message && updates.message.length > 200) {
       return { success: false, error: 'TV Announcements must be 200 characters or less' };
     }
 
+    const uid = typeof author === 'string' ? author : author.uid;
+    const displayName = typeof author === 'string' ? author : (author.displayName || author.email || author.uid);
+
     const docRef = doc(db, COLLECTION, id);
     await updateDoc(docRef, {
       ...updates,
       modifiedDate: Timestamp.now(),
-      modifiedBy: userId
+      modifiedBy: uid,
+      modifiedByName: displayName
     });
     return { success: true };
   } catch (error: any) {

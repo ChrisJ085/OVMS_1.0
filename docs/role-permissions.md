@@ -113,3 +113,21 @@ This document defines the Operations Visual Management System (OVMS) role hierar
 - Strictly forbidden from accessing the main application, users, audit logs, imports, administration, or sensitive configuration.
 - Cannot create, update, or delete any records.
 - Strictly blocked from accessing the Warehouse Execution module.
+
+---
+
+## 7. Security & Multi-Tenancy Rules
+
+### Site Discovery & Source of Truth
+- **Sites Collection**: Operational sites are discovered strictly from the `sites` Firestore collection. Development fallbacks (`tenant_dev`, `site_barrow`, `site_test`) are completely eliminated in production.
+- **Explicit Site Assignment**: For non-superuser and non-tenant-admin roles (Planner, Warehouse Operator, Viewer, Display), access to site-scoped resources requires explicit assignment via a non-empty `siteIds` array in the user profile. Missing, null, or empty `siteIds` results in deny-by-default (no site access).
+- **Secure Site Switching**: Active site changes in `SiteContext` perform deterministic validation against the user's `availableSites` prior to updating application state or persistence.
+
+### Account Status & Superuser Enforcement
+- **Active Account Requirement**: Security rules enforce that `PLATFORM_SUPERUSER` actions require `accountStatus == 'ACTIVE'`. Inactive or disabled superusers fail security rules instantly across all endpoints.
+
+### Announcement Authorship Validation
+- **Authenticated Authorship**: Announcement creation and updates require `createdBy` and `modifiedBy` fields to match `request.auth.uid` (or rely on authenticated user context), preventing unauthenticated author spoofing.
+
+### Display Role Data Sanitization
+- **Display-Safe Priorities**: The `DISPLAY` role reads TV dashboard data exclusively from the `displayPriorities` collection containing only sanitized fields needed for display. The `DISPLAY` role is strictly denied access to full `priorities` documents.

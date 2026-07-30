@@ -10,15 +10,12 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
 
-const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
-
 export const AnnouncementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
   const canManage = hasPermission(userProfile?.role, 'MANAGE_ANNOUNCEMENTS');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [operatorName, setOperatorName] = useState(() => localStorage.getItem(DEV_OPERATOR_KEY) || 'Dev Operator');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -33,72 +30,6 @@ export const AnnouncementsPage: React.FC = () => {
   const [startAt, setStartAt] = useState<string>(''); // YYYY-MM-DDTHH:mm
   const [expireAt, setExpireAt] = useState<string>('');
 
-  useEffect(() => {
-    localStorage.setItem(DEV_OPERATOR_KEY, operatorName);
-  }, [operatorName]);
-
-  useEffect(() => {
-    if (!tenantId || !siteId) return;
-
-    const q = query(
-      collection(db, 'announcements'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
-
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement));
-      fetched.sort((a, b) => {
-        const tA = a.createdDate ? (typeof a.createdDate === 'string' ? new Date(a.createdDate).getTime() : ((a.createdDate as any).toMillis ? (a.createdDate as any).toMillis() : new Date(a.createdDate as any).getTime())) : 0;
-        const tB = b.createdDate ? (typeof b.createdDate === 'string' ? new Date(b.createdDate).getTime() : ((b.createdDate as any).toMillis ? (b.createdDate as any).toMillis() : new Date(b.createdDate as any).getTime())) : 0;
-        return tB - tA;
-      });
-      setAnnouncements(fetched);
-      setLoading(false);
-    }, (err) => {
-      console.error(err);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [tenantId, siteId]);
-
-  const handleOpenModal = (ann?: Announcement) => {
-    if (ann) {
-      setEditingId(ann.id);
-      setType(ann.type);
-      setSeverity(ann.severity);
-      setTitle(ann.title);
-      setMessage(ann.message);
-      setDisplayOnTv(ann.displayOnTv);
-      setActive(ann.active);
-      
-      const toLocalString = (ts: Timestamp | null | undefined) => {
-        if (!ts) return '';
-        const d = (ts as any).toDate?.() || new Date(ts as any);
-        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-        return d.toISOString().slice(0, 16);
-      };
-      
-      setStartAt(toLocalString(ann.startAt));
-      setExpireAt(toLocalString(ann.expireAt));
-    } else {
-      setEditingId(null);
-      setType('GENERAL');
-      setSeverity('INFO');
-      setTitle('');
-      setMessage('');
-      setDisplayOnTv(true);
-      setActive(true);
-      
-      const now = new Date();
-      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-      setStartAt(now.toISOString().slice(0, 16));
-      setExpireAt('');
-    }
-    setIsModalOpen(true);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId || !siteId) return;
@@ -108,6 +39,12 @@ export const AnnouncementsPage: React.FC = () => {
       return;
     }
 
+    const authorIdentity = {
+      uid: user?.uid || userProfile?.uid || 'anonymous',
+      displayName: userProfile?.displayName || user?.email || 'User',
+      email: user?.email || userProfile?.email || null
+    };
+
     try {
       const startAtDate = startAt ? Timestamp.fromDate(new Date(startAt)) : Timestamp.now();
       const expireAtDate = expireAt ? Timestamp.fromDate(new Date(expireAt)) : null;
@@ -115,7 +52,7 @@ export const AnnouncementsPage: React.FC = () => {
       if (editingId) {
         await updateAnnouncement(editingId, {
           type, severity, title, message, displayOnTv, active, startAt: startAtDate, expireAt: expireAtDate
-        }, operatorName);
+        }, authorIdentity);
       } else {
         await createAnnouncement({
           tenantId,
@@ -128,12 +65,39 @@ export const AnnouncementsPage: React.FC = () => {
           active,
           startAt: startAtDate,
           expireAt: expireAtDate
-        }, operatorName);
+        }, authorIdentity);
       }
       setIsModalOpen(false);
     } catch (err: any) {
       alert(err.message);
     }
+  };
+
+  const handleOpenModal = (ann?: Announcement) => {
+    if (ann) {
+      setEditingId(ann.id);
+      setType(ann.type);
+      setSeverity(ann.severity);
+      setTitle(ann.title);
+      setMessage(ann.message);
+      setDisplayOnTv(ann.displayOnTv);
+      setActive(ann.active);
+      const start = ann.startAt ? ((ann.startAt as any)?.toDate?.() || new Date(ann.startAt as any)) : null;
+      const end = ann.expireAt ? ((ann.expireAt as any)?.toDate?.() || new Date(ann.expireAt as any)) : null;
+      setStartAt(start ? start.toISOString().slice(0, 16) : '');
+      setExpireAt(end ? end.toISOString().slice(0, 16) : '');
+    } else {
+      setEditingId(null);
+      setType('GENERAL');
+      setSeverity('INFO');
+      setTitle('');
+      setMessage('');
+      setDisplayOnTv(true);
+      setActive(true);
+      setStartAt('');
+      setExpireAt('');
+    }
+    setIsModalOpen(true);
   };
 
   return (
@@ -144,14 +108,9 @@ export const AnnouncementsPage: React.FC = () => {
           description="Manage operational messaging and TV dashboard ticker."
         />
         <div className="flex gap-4">
-          <div className="flex items-center gap-2 text-sm bg-slate-900 p-2 rounded-lg border border-slate-700">
-            <span className="text-slate-400">Dev User:</span>
-            <input 
-              type="text" 
-              value={operatorName}
-              onChange={(e) => setOperatorName(e.target.value)}
-              className="bg-transparent border-none text-brand-300 focus:ring-0 w-32 px-1"
-            />
+          <div className="flex items-center gap-2 text-sm bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 text-slate-400">
+            <span>Author:</span>
+            <span className="text-slate-200 font-medium">{userProfile?.displayName || user?.email || userProfile?.role || 'Authenticated User'}</span>
           </div>
           {canManage && (
             <button 

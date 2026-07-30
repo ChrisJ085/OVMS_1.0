@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Site } from '../types/site';
-import { DEFAULT_SITES, fetchUserPermittedSites } from '../features/administration/services/siteService';
+import { fetchUserPermittedSites } from '../features/administration/services/siteService';
 import { useAuth } from '../features/auth/context/AuthContext';
 
 export interface SiteContextType {
@@ -171,16 +171,28 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [userProfile, authLoading]);
 
   const setSite = (newSite: Site) => {
-    setSiteReady(false);
-    setSiteLoading(true);
-    setSiteState(newSite);
-    localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(newSite));
+    if (!isValidSite(newSite)) {
+      console.error('setSite rejected: Malformed site object', newSite);
+      setSiteError('Invalid site data provided.');
+      return;
+    }
 
-    // Simulate short transition for unsubscription / state clearing
-    setTimeout(() => {
-      setSiteLoading(false);
-      setSiteReady(true);
-    }, 100);
+    const matchedSite = availableSites.find(
+      (s) => s.tenantId === newSite.tenantId && s.siteId === newSite.siteId
+    );
+
+    if (!matchedSite) {
+      console.error('setSite rejected: Site not permitted in availableSites', newSite);
+      setSiteError('Selected site is not permitted or does not belong to your account.');
+      return;
+    }
+
+    setSiteReady(false);
+    setSiteLoading(false);
+    localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(matchedSite));
+    setSiteState(matchedSite);
+    setSiteError(null);
+    setSiteReady(true);
   };
 
   const contextValue: SiteContextType = {

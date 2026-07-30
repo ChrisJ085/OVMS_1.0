@@ -14,32 +14,24 @@ export const DisplayRoute: React.FC<DisplayRouteProps> = ({ children }) => {
   const { siteId, setSite, availableSites } = useSiteContext();
 
   useEffect(() => {
-    if (userProfile && userProfile.role === 'DISPLAY') {
+    if (userProfile && userProfile.role === 'DISPLAY' && userProfile.tenantId) {
       const assignedSiteIds = userProfile.siteIds || [];
       if (assignedSiteIds.length === 1) {
-        // Auto-select single assigned site
+        // Auto-select single assigned site from availableSites
         const targetSiteId = assignedSiteIds[0];
         if (siteId !== targetSiteId) {
-          const matchedSite = availableSites.find((s) => s.siteId === targetSiteId) || {
-            tenantId: userProfile.tenantId || 'tenant_dev',
-            tenantName: 'Tenant',
-            siteId: targetSiteId,
-            siteName: targetSiteId,
-            timezone: 'Europe/London',
-          };
-          setSite(matchedSite);
+          const matchedSite = availableSites.find((s) => s.siteId === targetSiteId);
+          if (matchedSite) {
+            setSite(matchedSite);
+          }
         }
       } else if (assignedSiteIds.length > 1) {
         // Ensure current selected site is within assigned siteIds
         if (!assignedSiteIds.includes(siteId)) {
-          const matchedSite = availableSites.find((s) => assignedSiteIds.includes(s.siteId)) || {
-            tenantId: userProfile.tenantId || 'tenant_dev',
-            tenantName: 'Tenant',
-            siteId: assignedSiteIds[0],
-            siteName: assignedSiteIds[0],
-            timezone: 'Europe/London',
-          };
-          setSite(matchedSite);
+          const matchedSite = availableSites.find((s) => assignedSiteIds.includes(s.siteId));
+          if (matchedSite) {
+            setSite(matchedSite);
+          }
         }
       }
     }

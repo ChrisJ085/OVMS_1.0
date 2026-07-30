@@ -252,21 +252,13 @@ describe('SiteContext Test Suite', () => {
     // Initial site
     expect(screen.getByTestId('site-id').textContent).toBe('site_barrow');
 
-    // Switch site
+    // Switch site deterministically
     const switchBtn = screen.getByTestId('switch-site-btn');
     act(() => {
       switchBtn.click();
     });
 
-    // Instant transition to not ready & loading
-    expect(screen.getByTestId('site-ready').textContent).toBe('NOT_READY');
-    expect(screen.getByTestId('site-loading').textContent).toBe('LOADING');
-
-    // Wait 150ms for simulated transition
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 150));
-    });
-
+    // Site switching is deterministic and immediate
     expect(screen.getByTestId('site-ready').textContent).toBe('READY');
     expect(screen.getByTestId('site-id').textContent).toBe('site_test');
   });

@@ -5,7 +5,41 @@ import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
 
 const PRIORITIES_COLLECTION = 'priorities';
+const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';
 const EVENTS_COLLECTION = 'priorityEvents';
+
+export const buildDisplayPriorityDoc = (p: Partial<Priority>) => {
+  return {
+    tenantId: p.tenantId || '',
+    siteId: p.siteId || '',
+    priorityCode: p.productCodeSnapshot || p.productId || '',
+    productCodeSnapshot: p.productCodeSnapshot || '',
+    title: p.descriptionSnapshot || p.instruction || '',
+    descriptionSnapshot: p.descriptionSnapshot || '',
+    status: p.status || 'active',
+    priorityStatus: p.priorityStatus || 'ACTIVE',
+    startAt: p.startAt || null,
+    createdDate: p.createdDate || null,
+    completedAt: p.completedAt || null,
+    expireAt: p.expireAt || null,
+    untilSwitchedOff: p.untilSwitchedOff || false,
+    priorityLevelId: p.priorityLevelId || 'NORMAL',
+    severity: p.priorityLevelId || 'NORMAL',
+    actionTypeId: p.actionTypeId || '',
+    actionTypeLabel: p.actionTypeLabel || '',
+    requestedQuantity: p.requestedQuantity || 0,
+    progressQuantity: p.progressQuantity || 0,
+    progressPercent: p.progressPercent || 0,
+    destinationId: p.destinationId || null,
+    destinationLabel: p.destinationLabel || '',
+    overflowDestinationId: p.overflowDestinationId || null,
+    overflowDestinationLabel: p.overflowDestinationLabel || '',
+    instruction: p.instruction || '',
+    latestProgressNote: p.latestProgressNote || null,
+    planningContextSnapshot: p.planningContextSnapshot || null,
+    modifiedDate: p.modifiedDate || Timestamp.now()
+  };
+};
 
 export const logPriorityEvent = async (
   batchOrTransaction: any, // Supports both writeBatch and runTransaction
@@ -108,6 +142,8 @@ export const createPriority = async (
     };
 
     batch.set(newRef, priority);
+    const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, newRef.id);
+    batch.set(displayRef, buildDisplayPriorityDoc(priority));
 
     // Link recommendation if applicable
     if (priorityData.sourceRecommendationId) {
@@ -178,6 +214,8 @@ export const updatePriority = async (
     }
 
     batch.update(ref, updateData);
+    const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
+    batch.set(displayRef, buildDisplayPriorityDoc({ ...existing, ...updateData }), { merge: true });
 
     await logPriorityEvent(
       batch,
@@ -248,6 +286,8 @@ export const updatePriorityStatus = async (
     }
 
     batch.update(ref, updateData);
+    const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
+    batch.set(displayRef, buildDisplayPriorityDoc({ ...priority, ...updateData }), { merge: true });
 
     await logPriorityEvent(
       batch,
@@ -341,6 +381,8 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
       }
 
       transaction.update(ref, updateData);
+      const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, params.priorityId);
+      transaction.set(displayRef, buildDisplayPriorityDoc({ ...priority, ...updateData }), { merge: true });
 
       // Log the event
       if (params.newStatus && params.newStatus !== priority.priorityStatus) {
