@@ -234,9 +234,11 @@ service cloud.firestore {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
       allow create: if isSuperuser() || 
                        isTenantAdmin(request.resource.data.tenantId) || 
+                       (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))) ||
                        (isWarehouseOperator(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser() || 
                        (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged()) ||
                        (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseInventoryFields());
       allow delete: if isSuperuser();
     }
@@ -244,6 +246,7 @@ service cloud.firestore {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
       allow create: if isSuperuser() || 
                        isTenantAdmin(request.resource.data.tenantId) ||
+                       (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))) ||
                        (isWarehouseOperator(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser();
       allow delete: if isSuperuser();
