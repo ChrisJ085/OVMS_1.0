@@ -18,6 +18,7 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'VIEW_RECOMMENDATIONS')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PLANNING_RULES')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PROMOTIONS')).toBe(false);
+    expect(hasPermission(role, 'MANAGE_ANNOUNCEMENTS')).toBe(false);
 
     expect(hasPermission(role, 'VIEW_WAREHOUSE_EXECUTION')).toBe(true);
     expect(hasPermission(role, 'UPDATE_WAREHOUSE_EXECUTION')).toBe(true);
@@ -31,6 +32,7 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'MANAGE_RECOMMENDATIONS')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PLANNING_RULES')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PROMOTIONS')).toBe(false);
+    expect(hasPermission(role, 'MANAGE_ANNOUNCEMENTS')).toBe(false);
     expect(hasPermission(role, 'IMPORT_PRODUCTION_PLAN')).toBe(false);
     expect(hasPermission(role, 'UPDATE_WAREHOUSE_EXECUTION')).toBe(false);
     expect(hasPermission(role, 'MANAGE_PRIORITIES')).toBe(false);
@@ -53,6 +55,8 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'VIEW_WAREHOUSE_EXECUTION')).toBe(true);
     expect(hasPermission(role, 'VIEW_RECOMMENDATIONS')).toBe(true);
     expect(hasPermission(role, 'MANAGE_PLANNING_RULES')).toBe(true);
+    expect(hasPermission(role, 'MANAGE_PROMOTIONS')).toBe(true);
+    expect(hasPermission(role, 'MANAGE_ANNOUNCEMENTS')).toBe(true);
     expect(hasPermission(role, 'IMPORT_PRODUCTION_PLAN')).toBe(true);
   });
 
@@ -86,5 +90,6 @@ describe('Role & Permission Security Tests', () => {
     expect(hasPermission(role, 'MANAGE_USERS')).toBe(true);
     expect(hasPermission(role, 'MANAGE_CONFIGURATION')).toBe(true);
     expect(hasPermission(role, 'VIEW_AUDIT_LOG')).toBe(true);
+    expect(hasPermission(role, 'MANAGE_ANNOUNCEMENTS')).toBe(true);
   });
 });

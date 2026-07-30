@@ -7,11 +7,15 @@ import { createAnnouncement, updateAnnouncement } from '../services/announcement
 import { Megaphone, AlertTriangle, Clock, Activity, CheckCircle, Ban, Edit, Plus } from 'lucide-react';
 import { Timestamp } from 'firebase/firestore';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { useAuth } from '../../auth/context/AuthContext';
+import { hasPermission } from '../../../config/rolePermissions';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
 export const AnnouncementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
+  const { userProfile } = useAuth();
+  const canManage = hasPermission(userProfile?.role, 'MANAGE_ANNOUNCEMENTS');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [operatorName, setOperatorName] = useState(() => localStorage.getItem(DEV_OPERATOR_KEY) || 'Dev Operator');
@@ -149,13 +153,15 @@ export const AnnouncementsPage: React.FC = () => {
               className="bg-transparent border-none text-brand-300 focus:ring-0 w-32 px-1"
             />
           </div>
-          <button 
-            onClick={() => handleOpenModal()}
-            className="flex items-center gap-2 px-4 py-2 bg-brand-500 text-slate-900 rounded-md font-medium hover:bg-brand-400 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Announcement
-          </button>
+          {canManage && (
+            <button 
+              onClick={() => handleOpenModal()}
+              className="flex items-center gap-2 px-4 py-2 bg-brand-500 text-slate-900 rounded-md font-medium hover:bg-brand-400 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Announcement
+            </button>
+          )}
         </div>
       </div>
 
@@ -173,7 +179,7 @@ export const AnnouncementsPage: React.FC = () => {
                 <th className="px-4 py-3 font-medium">Title & Message</th>
                 <th className="px-4 py-3 font-medium">TV</th>
                 <th className="px-4 py-3 font-medium">Schedule</th>
-                <th className="px-4 py-3 font-medium">Actions</th>
+                {canManage && <th className="px-4 py-3 font-medium text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
@@ -228,14 +234,16 @@ export const AnnouncementsPage: React.FC = () => {
                       <div><span className="text-slate-500">S:</span> {start ? start.toLocaleDateString() : 'Now'}</div>
                       <div><span className="text-slate-500">E:</span> {end ? end.toLocaleDateString() : 'Never'}</div>
                     </td>
-                    <td className="px-4 py-3 align-top pt-4 text-right">
-                      <button 
-                        onClick={() => handleOpenModal(ann)}
-                        className="p-1.5 text-slate-400 hover:text-brand-400 hover:bg-slate-800 rounded transition-colors"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                    </td>
+                    {canManage && (
+                      <td className="px-4 py-3 align-top pt-4 text-right">
+                        <button 
+                          onClick={() => handleOpenModal(ann)}
+                          className="p-1.5 text-slate-400 hover:text-brand-400 hover:bg-slate-800 rounded transition-colors"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
