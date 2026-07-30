@@ -1,6 +1,119 @@
-import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { DecisionConfiguration } from '../../../types/decision';
+
+export const saveDecisionConfiguration = async (
+  tenantId: string,
+  siteId: string,
+  configData: Partial<DecisionConfiguration>
+): Promise<{ success: boolean; error?: string }> => {
+  if (!tenantId || !siteId) return { success: false, error: 'Tenant ID and Site ID required' };
+  try {
+    const configDocRef = doc(db, 'decisionConfigurations', `${tenantId}_${siteId}`);
+    await setDoc(configDocRef, {
+      ...configData,
+      tenantId,
+      siteId,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error saving decision configuration:', err);
+    return { success: false, error: err?.message || 'Failed to save configuration' };
+  }
+};
+
+export const ensureDefaultDecisionConfiguration = async (
+  tenantId: string,
+  siteId: string
+): Promise<DecisionConfiguration | null> => {
+  if (!tenantId || !siteId) return null;
+
+  try {
+    // 1. Fetch actionTypes for tenant
+    const actionTypesSnap = await getDocs(
+      query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId))
+    );
+    let actionDocs = actionTypesSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+
+    const getOrAddAction = async (code: string, label: string, colourToken: string, iconKey: string) => {
+      let found = actionDocs.find(a => a.code === code || a.id === code || a.label?.toUpperCase() === code);
+      if (!found) {
+        const newRef = await addDoc(collection(db, 'actionTypes'), {
+          tenantId,
+          siteId: '',
+          code,
+          label,
+          meaning: `${label} action`,
+          colourToken,
+          iconKey,
+          status: 'active',
+          createdDate: serverTimestamp()
+        });
+        found = { id: newRef.id, code, label, status: 'active' };
+        actionDocs.push(found);
+      }
+      return found.id;
+    };
+
+    const holdActionId = await getOrAddAction('HOLD', 'Hold', 'hold', 'Clock');
+    const reviewActionId = await getOrAddAction('REVIEW', 'Review', 'review', 'Eye');
+    const releaseActionId = await getOrAddAction('RELEASE', 'Release', 'release', 'Send');
+
+    // 2. Fetch priorityLevels for tenant
+    const priorityLevelsSnap = await getDocs(
+      query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId))
+    );
+    let priorityDocs = priorityLevelsSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+
+    const getOrAddPriority = async (code: string, label: string, level: number) => {
+      let found = priorityDocs.find(p => p.code === code || p.id === code || p.label?.toUpperCase() === code);
+      if (!found) {
+        const newRef = await addDoc(collection(db, 'priorityLevels'), {
+          tenantId,
+          siteId: '',
+          code,
+          label,
+          level,
+          status: 'active',
+          createdDate: serverTimestamp()
+        });
+        found = { id: newRef.id, code, label, status: 'active' };
+        priorityDocs.push(found);
+      }
+      return found.id;
+    };
+
+    const urgentPriorityId = await getOrAddPriority('URGENT', 'Urgent', 1);
+    const normalPriorityId = await getOrAddPriority('NORMAL', 'Normal', 2);
+    const lowPriorityId = await getOrAddPriority('LOW', 'Low', 3);
+
+    // 3. Save default configuration
+    const defaultConfig: Partial<DecisionConfiguration> = {
+      configurationVersion: 'v1.0.0',
+      holdActionId,
+      reviewActionId,
+      releaseActionId,
+      urgentPriorityId,
+      normalPriorityId,
+      lowPriorityId,
+      defaultDestinationRules: {
+        defaultDestinationId: null,
+        allowFallbackDestination: true
+      },
+      inventoryStalenessHoursThreshold: 24,
+      productionStalenessHoursThreshold: 24,
+      nearProductionDaysWindow: 7,
+      capacityWarningThresholdPercentage: 100
+    };
+
+    await saveDecisionConfiguration(tenantId, siteId, defaultConfig);
+    return getDecisionConfiguration(tenantId, siteId, false);
+  } catch (err) {
+    console.error('Error ensuring default decision configuration:', err);
+    return null;
+  }
+};
 
 /**
  * Loads the site-specific DecisionConfiguration from Firestore and validates
@@ -8,11 +121,12 @@ import { DecisionConfiguration } from '../../../types/decision';
  * the active tenant/site, are active, and are the expected type.
  * 
  * If the configuration is missing, incomplete, or contains invalid references,
- * returns null (which will trigger CONFIGURATION_MISSING in the engine).
+ * attempts auto-initialization once if allowAutoInit is true.
  */
 export const getDecisionConfiguration = async (
   tenantId: string,
-  siteId: string
+  siteId: string,
+  allowAutoInit = true
 ): Promise<DecisionConfiguration | null> => {
   if (!tenantId || !siteId) return null;
 
@@ -20,6 +134,9 @@ export const getDecisionConfiguration = async (
     const configDocRef = doc(db, 'decisionConfigurations', `${tenantId}_${siteId}`);
     const configSnap = await getDoc(configDocRef);
     if (!configSnap.exists()) {
+      if (allowAutoInit) {
+        return await ensureDefaultDecisionConfiguration(tenantId, siteId);
+      }
       return null;
     }
 
@@ -38,17 +155,17 @@ export const getDecisionConfiguration = async (
 
     const activeActionTypes = actionTypesSnap.docs
       .filter(d => d.data().status === 'active')
-      .map(d => d.id);
+      .flatMap(d => [d.id, d.data().code].filter(Boolean));
     const inactiveActionTypes = actionTypesSnap.docs
       .filter(d => d.data().status === 'inactive')
-      .map(d => d.id);
+      .flatMap(d => [d.id, d.data().code].filter(Boolean));
 
     const activePriorityLevels = priorityLevelsSnap.docs
       .filter(d => d.data().status === 'active')
-      .map(d => d.id);
+      .flatMap(d => [d.id, d.data().code].filter(Boolean));
     const inactivePriorityLevels = priorityLevelsSnap.docs
       .filter(d => d.data().status === 'inactive')
-      .map(d => d.id);
+      .flatMap(d => [d.id, d.data().code].filter(Boolean));
 
     const activeDestinations = destinationsSnap.docs
       .filter(d => {
@@ -57,7 +174,7 @@ export const getDecisionConfiguration = async (
         const matchesSite = !data.siteId || data.siteId === siteId;
         return matchesStatus && matchesSite;
       })
-      .map(d => d.id);
+      .flatMap(d => [d.id, d.data().destinationCode, d.data().code].filter(Boolean));
     const inactiveDestinations = destinationsSnap.docs
       .filter(d => {
         const data = d.data();
@@ -65,18 +182,19 @@ export const getDecisionConfiguration = async (
         const matchesSite = !data.siteId || data.siteId === siteId;
         return matchesStatus || !matchesSite;
       })
-      .map(d => d.id);
+      .flatMap(d => [d.id, d.data().destinationCode, d.data().code].filter(Boolean));
 
-    // Validate that required referenced records exist and are active
+    // Validate required referenced records exist and are active
     const requiredActionIds = [
       configData.holdActionId,
       configData.reviewActionId,
       configData.releaseActionId
     ];
+    let hasMissingAction = false;
     for (const actionId of requiredActionIds) {
       if (!actionId || !activeActionTypes.includes(actionId)) {
-        console.warn(`Decision configuration invalid: action reference "${actionId}" is missing or inactive.`);
-        return null;
+        hasMissingAction = true;
+        break;
       }
     }
 
@@ -85,11 +203,19 @@ export const getDecisionConfiguration = async (
       configData.normalPriorityId,
       configData.lowPriorityId
     ];
+    let hasMissingPriority = false;
     for (const priorityId of requiredPriorityIds) {
       if (!priorityId || !activePriorityLevels.includes(priorityId)) {
-        console.warn(`Decision configuration invalid: priority reference "${priorityId}" is missing or inactive.`);
-        return null;
+        hasMissingPriority = true;
+        break;
       }
+    }
+
+    if ((hasMissingAction || hasMissingPriority) && allowAutoInit) {
+      // Attempt auto-repair/initialization
+      return await ensureDefaultDecisionConfiguration(tenantId, siteId);
+    } else if (hasMissingAction || hasMissingPriority) {
+      return null;
     }
 
     // Default destination is optional, but if specified, must be active
@@ -117,7 +243,6 @@ export const getDecisionConfiguration = async (
       nearProductionDaysWindow: configData.nearProductionDaysWindow ?? 7,
       capacityWarningThresholdPercentage: configData.capacityWarningThresholdPercentage ?? 100,
       
-      // Inject lists of valid/inactive IDs for downstream validation
       validActionIds: activeActionTypes,
       validPriorityIds: activePriorityLevels,
       validDestinationIds: activeDestinations,

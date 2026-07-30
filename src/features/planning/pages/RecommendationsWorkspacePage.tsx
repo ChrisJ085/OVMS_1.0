@@ -5,9 +5,10 @@ import { Recommendation } from '../../../types/recommendation';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw, Wand2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { generateRecommendationForProduct } from '../services/recommendationService';
+import { seedTestDataForTesting } from '../services/testDataSeeder';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 const SUMMARY_TILES = [
@@ -26,6 +27,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('requires-review');
   const [generating, setGenerating] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const fetchRecs = async () => {
     if (!tenantId || !siteId) return;
@@ -89,6 +91,21 @@ export const RecommendationsWorkspacePage: React.FC = () => {
     }
   };
 
+  const handleSeedTestData = async () => {
+    if (!tenantId || !siteId) return;
+    setSeeding(true);
+    try {
+      const result = await seedTestDataForTesting(tenantId, siteId);
+      alert(result.message);
+      await fetchRecs();
+    } catch (e: any) {
+      console.error('Seeding failed:', e);
+      alert(`Seeding failed: ${e?.message || 'Unknown error'}`);
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const filteredRecs = recommendations.filter(r => {
     const warnings = r.decisionOutput?.dataQualityWarnings || [];
     const impacts = r.sourceSnapshot?.activePromotionImpacts || [];
@@ -120,7 +137,16 @@ export const RecommendationsWorkspacePage: React.FC = () => {
           title="Recommendation Workspace" 
           description="Review, approve, or override system recommendations."
         />
-        <div>
+        <div className="flex gap-2">
+          <button 
+            onClick={handleSeedTestData} 
+            disabled={seeding || loading}
+            className="flex items-center gap-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors disabled:opacity-50"
+          >
+            <Wand2 className={`w-4 h-4 text-brand-400 ${seeding ? 'animate-pulse' : ''}`} />
+            {seeding ? 'Seeding...' : 'Seed Test Data'}
+          </button>
+
           <button 
             onClick={handleGenerateAll} 
             disabled={generating}
