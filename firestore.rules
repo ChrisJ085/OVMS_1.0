@@ -164,7 +164,7 @@ service cloud.firestore {
       allow create, update, delete: if isSuperuser();
     }
     match /sites/{siteId} {
-      allow read: if hasTenantAccess(resource.data.tenantId);
+      allow read: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (hasTenantAccess(resource.data.tenantId) && isAssignedToSite(siteId));
       allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser();
     }
@@ -323,9 +323,27 @@ service cloud.firestore {
                        (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseFields());
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
+    function isDisplaySafeProjection() {
+      let allowedDisplayFields = [
+        'tenantId', 'siteId', 'sourcePriorityId', 'priorityCode', 'productCodeSnapshot',
+        'descriptionSnapshot', 'title', 'instruction', 'priorityStatus', 'priorityLevelId',
+        'priorityLevelLabel', 'actionTypeId', 'actionTypeLabel', 'requestedQuantity',
+        'progressQuantity', 'progressPercent', 'destinationId', 'destinationLabel',
+        'overflowDestinationId', 'overflowDestinationLabel', 'startAt', 'createdDate',
+        'completedAt', 'expireAt', 'untilSwitchedOff', 'modifiedDate'
+      ];
+      return request.resource.data.keys().hasOnly(allowedDisplayFields) &&
+             !('planningContextSnapshot' in request.resource.data) &&
+             !('latestProgressNote' in request.resource.data) &&
+             !('supportingReasons' in request.resource.data) &&
+             !('plannerReason' in request.resource.data) &&
+             !('sourceRecommendationId' in request.resource.data) &&
+             !('createdBy' in request.resource.data);
+    }
+
     match /displayPriorities/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
-      allow create, update: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))) || (isWarehouseOperator(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
+      allow create, update: if (isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)))) && isDisplaySafeProjection();
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     match /priorityEvents/{id} {
@@ -339,11 +357,18 @@ service cloud.firestore {
     match /announcements/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
       allow create: if (isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)))) &&
-                       (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&
-                       (!('modifiedBy' in request.resource.data) || request.resource.data.modifiedBy == request.auth.uid);
+                       request.resource.data.createdBy == request.auth.uid &&
+                       request.resource.data.modifiedBy == request.auth.uid &&
+                       ('createdDate' in request.resource.data) &&
+                       ('modifiedDate' in request.resource.data);
       allow update: if (isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)))) &&
                        ownershipFieldsUnchanged() &&
-                       (!('modifiedBy' in request.resource.data) || request.resource.data.modifiedBy == request.auth.uid);
+                       request.resource.data.modifiedBy == request.auth.uid &&
+                       request.resource.data.createdBy == resource.data.createdBy &&
+                       request.resource.data.createdByName == resource.data.createdByName &&
+                       request.resource.data.createdDate == resource.data.createdDate &&
+                       request.resource.data.tenantId == resource.data.tenantId &&
+                       request.resource.data.siteId == resource.data.siteId;
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     match /exceptions/{id} {

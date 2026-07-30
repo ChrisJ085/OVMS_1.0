@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { Priority, PriorityStatus } from '../../../types/priority';
+import { DisplayPriority } from '../../../types/priority';
 import { Announcement } from '../../../types/announcement';
 import { OperationalException } from '../../../types/exception';
 import { useSiteContext } from '../../../contexts/SiteContext';
@@ -46,7 +46,7 @@ const STATUS_ICONS: Record<string, any> = {
 
 export const TVDashboardPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
-  const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [priorities, setPriorities] = useState<DisplayPriority[]>([]);
   const [exceptions, setExceptions] = useState<OperationalException[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -109,7 +109,7 @@ export const TVDashboardPage: React.FC = () => {
 
     const unsubPriorities = onSnapshot(prioritiesQuery, (snap) => {
       const now = new Date();
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Priority));
+      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as DisplayPriority));
       
       const activePriorities = fetched.filter(p => {
         // Exclude completely inactive statuses
@@ -367,34 +367,12 @@ export const TVDashboardPage: React.FC = () => {
                       {isBlocked ? (
                         <span className="text-red-400 flex items-center gap-2">
                           <Ban className="w-5 h-5 shrink-0" />
-                          {p.latestProgressNote || 'Blocked without reason'}
+                          Blocked
                         </span>
                       ) : (
                         p.instruction
                       )}
                     </div>
-                    
-                    {/* Compact Planning Indicators */}
-                    {(p.planningContextSnapshot?.qoh !== undefined || p.planningContextSnapshot?.activePromotions?.length > 0) && (
-                      <div className="flex items-center gap-3 mt-3 pt-3 border-t border-slate-800/50 flex-wrap">
-                        {p.planningContextSnapshot?.qoh !== undefined && (
-                          <div className="text-xs flex items-center gap-1.5 text-slate-400 bg-slate-900 px-2 py-1 rounded">
-                            <Package className="w-3.5 h-3.5" />
-                            <span className="font-mono">{p.planningContextSnapshot.qoh} QOH</span>
-                          </div>
-                        )}
-                        {p.planningContextSnapshot?.activePromotions?.length > 0 && (
-                          <div className="text-xs font-bold text-fuchsia-400 bg-fuchsia-900/20 px-2 py-1 rounded">
-                            PROMOTION ACTIVE
-                          </div>
-                        )}
-                        {p.planningContextSnapshot?.planningBand && (
-                          <div className="text-xs text-slate-400 bg-slate-900 px-2 py-1 rounded">
-                            BAND: {p.planningContextSnapshot.planningBand}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
               );

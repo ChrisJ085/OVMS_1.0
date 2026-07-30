@@ -52,3 +52,33 @@ export interface PriorityEvent extends BaseDocument {
   performedBy: string;
   timestamp: Timestamp;
 }
+
+export interface DisplayPriority {
+  id: string;
+  tenantId: string;
+  siteId: string;
+  sourcePriorityId: string;
+  priorityCode: string;
+  productCodeSnapshot: string;
+  descriptionSnapshot: string;
+  title: string;
+  instruction?: string;
+  priorityStatus: PriorityStatus;
+  priorityLevelId: string;
+  priorityLevelLabel?: string;
+  actionTypeId?: string;
+  actionTypeLabel?: string;
+  requestedQuantity: number | null;
+  progressQuantity: number;
+  progressPercent: number;
+  destinationId?: string | null;
+  destinationLabel?: string;
+  overflowDestinationId?: string | null;
+  overflowDestinationLabel?: string;
+  startAt: Timestamp | null;
+  createdDate: Timestamp | null;
+  completedAt?: Timestamp | null;
+  expireAt?: Timestamp | null;
+  untilSwitchedOff?: boolean;
+  modifiedDate?: Timestamp;
+}

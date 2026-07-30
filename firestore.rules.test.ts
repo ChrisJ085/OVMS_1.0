@@ -15,11 +15,15 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await testEnv.clearFirestore();
+  if (testEnv) {
+    await testEnv.clearFirestore();
+  }
 });
 
 afterAll(async () => {
-  await testEnv.cleanup();
+  if (testEnv) {
+    await testEnv.cleanup();
+  }
 });
 
 const getDb = (auth?: { uid: string, email?: string }) => {
@@ -1037,16 +1041,12 @@ describe('Firestore Security Rules', () => {
       });
       const db = getDb({ uid: 'operator1' });
       const fields = [
-        { warehouseProgress: 'Progress update' },
-        { status: 'IN_PROGRESS' },
+        { priorityStatus: 'IN_PROGRESS' },
         { progressQuantity: 10 },
         { remainingQuantity: 90 },
         { progressPercent: 10 },
-        { startedAt: serverTimestamp() },
         { completedAt: serverTimestamp() },
-        { blockedAt: serverTimestamp() },
-        { blockedReason: 'Blocked temporarily' },
-        { executionNotes: 'Picking notes' },
+        { latestProgressNote: 'Picking notes' },
         { modifiedBy: 'operator1' },
         { modifiedDate: serverTimestamp() }
       ];
@@ -1124,6 +1124,107 @@ describe('Firestore Security Rules', () => {
       const db = getDb({ uid: 'super_inactive' });
       await assertFails(getDoc(doc(db, 'tenants', 't1')));
       await assertFails(setDoc(doc(db, 'tenants', 't2'), { tenantName: 'Tenant 2' }));
+    });
+
+    // --- REMEDIATION SECURITY TESTS ---
+    it('60. Warehouse operator writing displayPriorities directly is denied', async () => {
+      await setupUser('wh_op1', 'WAREHOUSE_OPERATOR', 'tenant1', ['site1']);
+      const db = getDb({ uid: 'wh_op1' });
+      await assertFails(setDoc(doc(db, 'displayPriorities', 'disp1'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        sourcePriorityId: 'disp1',
+        priorityCode: 'SKU1',
+        title: 'Title',
+        priorityStatus: 'ACTIVE'
+      }));
+    });
+
+    it('61. Planner writing displayPriorities with display-safe fields succeeds', async () => {
+      await setupUser('planner1', 'PLANNER', 'tenant1', ['site1']);
+      const db = getDb({ uid: 'planner1' });
+      await assertSucceeds(setDoc(doc(db, 'displayPriorities', 'disp1'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        sourcePriorityId: 'disp1',
+        priorityCode: 'SKU1',
+        title: 'Title',
+        priorityStatus: 'ACTIVE'
+      }));
+    });
+
+    it('62. Planner writing displayPriorities with sensitive fields is denied', async () => {
+      await setupUser('planner1', 'PLANNER', 'tenant1', ['site1']);
+      const db = getDb({ uid: 'planner1' });
+      await assertFails(setDoc(doc(db, 'displayPriorities', 'disp1'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        sourcePriorityId: 'disp1',
+        priorityCode: 'SKU1',
+        title: 'Title',
+        priorityStatus: 'ACTIVE',
+        planningContextSnapshot: { qoh: 50 }
+      }));
+    });
+
+    it('63. Direct site read restricted to assigned sites for non-Admin users', async () => {
+      await setupUser('planner1', 'PLANNER', 'tenant1', ['site1']);
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'sites', 'site1'), { tenantId: 'tenant1', siteName: 'Site 1' });
+        await setDoc(doc(db, 'sites', 'site2'), { tenantId: 'tenant1', siteName: 'Site 2' });
+      });
+      const db = getDb({ uid: 'planner1' });
+      await assertSucceeds(getDoc(doc(db, 'sites', 'site1')));
+      await assertFails(getDoc(doc(db, 'sites', 'site2')));
+    });
+
+    it('64. Announcement creation requires createdBy == request.auth.uid', async () => {
+      await setupUser('planner1', 'PLANNER', 'tenant1', ['site1']);
+      const db = getDb({ uid: 'planner1', email: 'planner1@example.com' });
+      // Spoofed createdBy
+      await assertFails(setDoc(doc(db, 'announcements', 'ann1'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        message: 'Hello',
+        createdBy: 'impersonated_user',
+        modifiedBy: 'planner1',
+        createdDate: serverTimestamp(),
+        modifiedDate: serverTimestamp()
+      }));
+
+      // Valid createdBy
+      await assertSucceeds(setDoc(doc(db, 'announcements', 'ann2'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        message: 'Hello',
+        createdBy: 'planner1',
+        modifiedBy: 'planner1',
+        createdDate: serverTimestamp(),
+        modifiedDate: serverTimestamp()
+      }));
+    });
+
+    it('65. Announcement update altering createdBy is denied', async () => {
+      await setupUser('planner1', 'PLANNER', 'tenant1', ['site1']);
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'announcements', 'ann1'), {
+          tenantId: 'tenant1',
+          siteId: 'site1',
+          message: 'Original',
+          createdBy: 'planner1',
+          createdByName: 'Planner One',
+          modifiedBy: 'planner1',
+          createdDate: new Date(),
+          modifiedDate: new Date()
+        });
+      });
+      const db = getDb({ uid: 'planner1' });
+      await assertFails(updateDoc(doc(db, 'announcements', 'ann1'), {
+        createdBy: 'other_user',
+        modifiedBy: 'planner1'
+      }));
     });
   });
 });

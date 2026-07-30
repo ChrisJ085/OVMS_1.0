@@ -4,39 +4,42 @@ import { Priority, PriorityEvent, PriorityStatus, PriorityEventType } from '../.
 import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
 
+import { logAuditEvent } from '../../../services/auditService';
+
 const PRIORITIES_COLLECTION = 'priorities';
 const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';
 const EVENTS_COLLECTION = 'priorityEvents';
 
-export const buildDisplayPriorityDoc = (p: Partial<Priority>) => {
+const TERMINAL_PRIORITY_STATUSES: PriorityStatus[] = ['DRAFT', 'CANCELLED', 'EXPIRED', 'ARCHIVED'];
+
+export const buildDisplayPriorityDoc = (p: Partial<Priority>, priorityId?: string) => {
+  const docId = priorityId || p.id || '';
   return {
     tenantId: p.tenantId || '',
     siteId: p.siteId || '',
+    sourcePriorityId: docId,
     priorityCode: p.productCodeSnapshot || p.productId || '',
     productCodeSnapshot: p.productCodeSnapshot || '',
-    title: p.descriptionSnapshot || p.instruction || '',
     descriptionSnapshot: p.descriptionSnapshot || '',
-    status: p.status || 'active',
+    title: p.descriptionSnapshot || p.instruction || '',
+    instruction: p.instruction || '',
     priorityStatus: p.priorityStatus || 'ACTIVE',
+    priorityLevelId: p.priorityLevelId || 'NORMAL',
+    priorityLevelLabel: p.priorityLevelLabel || p.priorityLevelId || 'NORMAL',
+    actionTypeId: p.actionTypeId || '',
+    actionTypeLabel: p.actionTypeLabel || '',
+    requestedQuantity: p.requestedQuantity ?? null,
+    progressQuantity: p.progressQuantity ?? 0,
+    progressPercent: p.progressPercent ?? 0,
+    destinationId: p.destinationId ?? null,
+    destinationLabel: p.destinationLabel || '',
+    overflowDestinationId: p.overflowDestinationId ?? null,
+    overflowDestinationLabel: p.overflowDestinationLabel || '',
     startAt: p.startAt || null,
     createdDate: p.createdDate || null,
     completedAt: p.completedAt || null,
     expireAt: p.expireAt || null,
     untilSwitchedOff: p.untilSwitchedOff || false,
-    priorityLevelId: p.priorityLevelId || 'NORMAL',
-    severity: p.priorityLevelId || 'NORMAL',
-    actionTypeId: p.actionTypeId || '',
-    actionTypeLabel: p.actionTypeLabel || '',
-    requestedQuantity: p.requestedQuantity || 0,
-    progressQuantity: p.progressQuantity || 0,
-    progressPercent: p.progressPercent || 0,
-    destinationId: p.destinationId || null,
-    destinationLabel: p.destinationLabel || '',
-    overflowDestinationId: p.overflowDestinationId || null,
-    overflowDestinationLabel: p.overflowDestinationLabel || '',
-    instruction: p.instruction || '',
-    latestProgressNote: p.latestProgressNote || null,
-    planningContextSnapshot: p.planningContextSnapshot || null,
     modifiedDate: p.modifiedDate || Timestamp.now()
   };
 };
@@ -143,7 +146,11 @@ export const createPriority = async (
 
     batch.set(newRef, priority);
     const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, newRef.id);
-    batch.set(displayRef, buildDisplayPriorityDoc(priority));
+    if (TERMINAL_PRIORITY_STATUSES.includes(priority.priorityStatus)) {
+      batch.delete(displayRef);
+    } else {
+      batch.set(displayRef, buildDisplayPriorityDoc(priority, newRef.id));
+    }
 
     // Link recommendation if applicable
     if (priorityData.sourceRecommendationId) {
@@ -215,7 +222,12 @@ export const updatePriority = async (
 
     batch.update(ref, updateData);
     const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
-    batch.set(displayRef, buildDisplayPriorityDoc({ ...existing, ...updateData }), { merge: true });
+    const mergedPriority = { ...existing, ...updateData };
+    if (TERMINAL_PRIORITY_STATUSES.includes(mergedPriority.priorityStatus)) {
+      batch.delete(displayRef);
+    } else {
+      batch.set(displayRef, buildDisplayPriorityDoc(mergedPriority, priorityId));
+    }
 
     await logPriorityEvent(
       batch,
@@ -287,7 +299,11 @@ export const updatePriorityStatus = async (
 
     batch.update(ref, updateData);
     const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
-    batch.set(displayRef, buildDisplayPriorityDoc({ ...priority, ...updateData }), { merge: true });
+    if (TERMINAL_PRIORITY_STATUSES.includes(newStatus)) {
+      batch.delete(displayRef);
+    } else {
+      batch.set(displayRef, buildDisplayPriorityDoc({ ...priority, ...updateData }, priorityId));
+    }
 
     await logPriorityEvent(
       batch,
@@ -314,6 +330,7 @@ export const updatePriorityStatus = async (
 export interface PriorityUpdateParams {
   priorityId: string;
   userId: string;
+  userRole?: string;
   newStatus?: PriorityStatus;
   progressQuantity?: number;
   note?: string;
@@ -381,8 +398,14 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
       }
 
       transaction.update(ref, updateData);
-      const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, params.priorityId);
-      transaction.set(displayRef, buildDisplayPriorityDoc({ ...priority, ...updateData }), { merge: true });
+      if (params.userRole !== 'WAREHOUSE_OPERATOR') {
+        const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, params.priorityId);
+        if (TERMINAL_PRIORITY_STATUSES.includes(newStatus)) {
+          transaction.delete(displayRef);
+        } else {
+          transaction.set(displayRef, buildDisplayPriorityDoc({ ...priority, ...updateData }, params.priorityId));
+        }
+      }
 
       // Log the event
       if (params.newStatus && params.newStatus !== priority.priorityStatus) {
@@ -433,6 +456,144 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
     return { success: true };
   } catch (e: any) {
     console.error(e);
+    return { success: false, error: e.message };
+  }
+};
+
+export const deletePriority = async (
+  priorityId: string,
+  userId: string
+): Promise<ServiceResult<void>> => {
+  try {
+    const batch = writeBatch(db);
+    const ref = doc(db, PRIORITIES_COLLECTION, priorityId);
+    const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
+    batch.delete(ref);
+    batch.delete(displayRef);
+    await batch.commit();
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+};
+
+export interface ProjectionRepairResult {
+  created: number;
+  updated: number;
+  removed: number;
+  failed: number;
+  auditLogId: string | null;
+}
+
+export const repairDisplayPriorities = async (
+  userProfile: { role: string; tenantId?: string; uid?: string },
+  options: { tenantId?: string; siteId?: string; dryRun?: boolean } = {}
+): Promise<ServiceResult<ProjectionRepairResult>> => {
+  if (userProfile.role !== 'PLATFORM_SUPERUSER' && userProfile.role !== 'TENANT_ADMIN') {
+    return { success: false, error: 'Unauthorized: Only Platform Superusers and Tenant Admins can run projection repair.' };
+  }
+
+  const targetTenantId = userProfile.role === 'TENANT_ADMIN' ? userProfile.tenantId : options.tenantId;
+  const isDryRun = !!options.dryRun;
+
+  try {
+    let q = query(collection(db, PRIORITIES_COLLECTION));
+    if (targetTenantId) {
+      q = query(q, where('tenantId', '==', targetTenantId));
+    }
+    if (options.siteId) {
+      q = query(q, where('siteId', '==', options.siteId));
+    }
+
+    const prioritiesSnap = await getDocs(q);
+
+    let dispQ = query(collection(db, DISPLAY_PRIORITIES_COLLECTION));
+    if (targetTenantId) {
+      dispQ = query(dispQ, where('tenantId', '==', targetTenantId));
+    }
+    if (options.siteId) {
+      dispQ = query(dispQ, where('siteId', '==', options.siteId));
+    }
+    const displaySnap = await getDocs(dispQ);
+    const existingDisplayMap = new Map<string, any>();
+    displaySnap.forEach(d => existingDisplayMap.set(d.id, d.data()));
+
+    let created = 0;
+    let updated = 0;
+    let removed = 0;
+    let failed = 0;
+
+    const sourceDocIds = new Set<string>();
+    let batch = writeBatch(db);
+    let operationCount = 0;
+
+    for (const priorityDoc of prioritiesSnap.docs) {
+      const p = { id: priorityDoc.id, ...priorityDoc.data() } as Priority;
+      sourceDocIds.add(p.id);
+
+      const isTerminal = TERMINAL_PRIORITY_STATUSES.includes(p.priorityStatus);
+      const hasDisplayDoc = existingDisplayMap.has(p.id);
+
+      if (isTerminal) {
+        if (hasDisplayDoc) {
+          removed++;
+          if (!isDryRun) {
+            batch.delete(doc(db, DISPLAY_PRIORITIES_COLLECTION, p.id));
+            operationCount++;
+          }
+        }
+      } else {
+        const sanitizedDoc = buildDisplayPriorityDoc(p, p.id);
+        if (!hasDisplayDoc) {
+          created++;
+        } else {
+          updated++;
+        }
+
+        if (!isDryRun) {
+          batch.set(doc(db, DISPLAY_PRIORITIES_COLLECTION, p.id), sanitizedDoc);
+          operationCount++;
+        }
+      }
+
+      if (operationCount >= 400 && !isDryRun) {
+        await batch.commit();
+        batch = writeBatch(db);
+        operationCount = 0;
+      }
+    }
+
+    displaySnap.forEach(dDoc => {
+      if (!sourceDocIds.has(dDoc.id)) {
+        removed++;
+        if (!isDryRun) {
+          batch.delete(doc(db, DISPLAY_PRIORITIES_COLLECTION, dDoc.id));
+          operationCount++;
+        }
+      }
+    });
+
+    if (operationCount > 0 && !isDryRun) {
+      await batch.commit();
+    }
+
+    const auditLogId = await logAuditEvent({
+      tenantId: targetTenantId || 'ALL',
+      siteId: options.siteId || 'ALL',
+      eventType: 'PROJECTION_REPAIR',
+      entityType: 'DisplayPriority',
+      entityId: 'ALL',
+      summary: `Display priorities projection repair completed (${isDryRun ? 'DRY-RUN' : 'LIVE'}). Created: ${created}, Updated: ${updated}, Removed: ${removed}, Failed: ${failed}`,
+      performedBy: userProfile.uid || 'UNKNOWN',
+      metadata: { created, updated, removed, failed, dryRun: isDryRun }
+    });
+
+    return {
+      success: true,
+      data: { created, updated, removed, failed, auditLogId }
+    };
+  } catch (e: any) {
+    console.error('Projection repair failed:', e);
     return { success: false, error: e.message };
   }
 };
