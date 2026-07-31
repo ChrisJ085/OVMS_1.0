@@ -15,7 +15,7 @@ export const PermissionRoute: React.FC<PermissionRouteProps> = ({
   children,
 }) => {
   const { user, userProfile, loading } = useAuth();
-  const { siteId } = useSiteContext();
+  const { siteId, availableSites } = useSiteContext();
 
   if (loading) {
     return (
@@ -53,6 +53,7 @@ export const PermissionRoute: React.FC<PermissionRouteProps> = ({
       isTenantAdmin ||
       !userProfile.siteIds ||
       userProfile.siteIds.length === 0 ||
+      availableSites.some(s => s.siteId === siteId) ||
       userProfile.siteIds.includes(siteId);
 
     if (!hasSiteAccess) {

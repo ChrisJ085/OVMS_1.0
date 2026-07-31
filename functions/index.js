@@ -1,7 +1,9 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 
-admin.initializeApp();
+admin.initializeApp({
+  projectId: process.env.FIREBASE_PROJECT_ID || 'ovms-ad209'
+});
 const db = admin.firestore();
 
 /**

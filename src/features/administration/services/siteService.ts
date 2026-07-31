@@ -20,14 +20,15 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
 
       sitesSnap.forEach((docSnap) => {
         const data = docSnap.data();
-        const siteId = data.siteId || docSnap.id;
-        if (data.tenantId && siteId) {
-          const key = `${data.tenantId}_${siteId}`;
+        const siteId = data.siteId || data.siteCode || docSnap.id;
+        const tenantId = data.tenantId || profile.tenantId || 'GLOBAL';
+        if (siteId) {
+          const key = `${tenantId}_${siteId}`;
           sitesMap.set(key, {
-            tenantId: data.tenantId,
+            tenantId,
             tenantName: data.tenantName || 'Tenant',
             siteId: siteId,
-            siteName: data.siteName || siteId,
+            siteName: data.siteName || data.siteCode || siteId,
             timezone: data.timezone || 'Europe/London',
           });
         }
@@ -38,18 +39,37 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
       const tenantId = profile.tenantId;
       if (!tenantId) return [];
 
-      const q = query(collection(db, 'sites'), where('tenantId', '==', tenantId));
-      const sitesSnap = await getDocs(q);
+      let docsToProcess: any[] = [];
+      const primarySnap = await getDocs(query(collection(db, 'sites'), where('tenantId', '==', tenantId)));
+      
+      if (!primarySnap.empty) {
+        docsToProcess = primarySnap.docs;
+      } else {
+        // Fallback: load all sites in case tenantId is missing or case mismatched in database
+        const fallbackSnap = await getDocs(collection(db, 'sites'));
+        fallbackSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (!data.tenantId || data.tenantId.toLowerCase() === tenantId.toLowerCase()) {
+            docsToProcess.push(docSnap);
+          }
+        });
+      }
 
       const sitesMap = new Map<string, Site>();
+      const userSiteIds = Array.isArray(profile.siteIds) ? profile.siteIds : [];
 
-      sitesSnap.forEach((docSnap) => {
+      docsToProcess.forEach((docSnap) => {
         const data = docSnap.data();
-        const siteId = data.siteId || docSnap.id;
+        const siteId = data.siteId || data.siteCode || docSnap.id;
 
         const isAssigned =
           profile.role === 'TENANT_ADMIN' ||
-          (Array.isArray(profile.siteIds) && profile.siteIds.length > 0 && profile.siteIds.includes(siteId));
+          (userSiteIds.length > 0 && (
+            userSiteIds.includes(docSnap.id) ||
+            userSiteIds.includes(siteId) ||
+            (data.siteId && userSiteIds.includes(data.siteId)) ||
+            (data.siteCode && userSiteIds.includes(data.siteCode))
+          ));
 
         if (siteId && isAssigned) {
           const key = `${tenantId}_${siteId}`;
@@ -57,7 +77,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
             tenantId,
             tenantName: data.tenantName || 'Tenant',
             siteId: siteId,
-            siteName: data.siteName || siteId,
+            siteName: data.siteName || data.siteCode || siteId,
             timezone: data.timezone || 'Europe/London',
           });
         }

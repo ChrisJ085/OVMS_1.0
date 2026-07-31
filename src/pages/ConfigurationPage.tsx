@@ -5,7 +5,7 @@ import { DataTable } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../components/ui/States';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
-import { Settings, Plus, RotateCcw } from 'lucide-react';
+import { Settings, Plus, RotateCcw, Building2, Filter } from 'lucide-react';
 import { 
   collections, 
   seedDevelopmentConfiguration,
@@ -15,9 +15,11 @@ import {
   updateConfigItem
 } from '../features/configuration/services/configurationService';
 import { subscribeToCollection } from '../services/firestoreBase';
-import { where } from 'firebase/firestore';
+import { where, collection, getDocs, QueryConstraint } from 'firebase/firestore';
 import { ConfigItemModal } from '../features/configuration/components/ConfigItemModal';
 import { useSiteContext } from '../contexts/SiteContext';
+import { useAuth } from '../features/auth/context/AuthContext';
+import { db } from '../config/firebase';
 
 const TABS = [
   { id: 'sites', label: 'Sites', collection: collections.SITES, codeField: 'siteCode' },
@@ -31,7 +33,10 @@ const TABS = [
 ];
 
 export const ConfigurationPage: React.FC = () => {
-  const { tenantId, siteId } = useSiteContext();
+  const { tenantId, siteId, availableSites } = useSiteContext();
+  const { userProfile } = useAuth();
+  const isSuperUser = userProfile?.role === 'PLATFORM_SUPERUSER';
+
   const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
   const [activeTab, setActiveTab] = useState(TABS[0]);
   const [data, setData] = useState<any[]>([]);
@@ -39,18 +44,70 @@ export const ConfigurationPage: React.FC = () => {
   const [error, setError] = useState<Error | null>(null);
   const [seeding, setSeeding] = useState(false);
   
+  // Super User tenant selection state
+  const [tenantsList, setTenantsList] = useState<{ id: string; name: string }[]>([]);
+  const [selectedTenantFilter, setSelectedTenantFilter] = useState<string>('ALL');
+
   const [actionItem, setActionItem] = useState<{item: any, action: 'deactivate' | 'reactivate'} | null>(null);
-  
   const [modalState, setModalState] = useState<{isOpen: boolean, item?: any}>({ isOpen: false });
+
+  // Fetch tenant list for Super Users
+  useEffect(() => {
+    if (!isSuperUser || !db) return;
+
+    async function loadTenants() {
+      try {
+        const snap = await getDocs(collection(db!, 'tenants'));
+        const map = new Map<string, string>();
+
+        snap.forEach((d) => {
+          const data = d.data();
+          map.set(d.id, data.tenantName || data.name || d.id);
+        });
+
+        // Add any tenants present in availableSites
+        availableSites.forEach((s) => {
+          if (s.tenantId && !map.has(s.tenantId)) {
+            map.set(s.tenantId, s.tenantName || s.tenantId);
+          }
+        });
+
+        if (tenantId && !map.has(tenantId)) {
+          map.set(tenantId, tenantId);
+        }
+
+        const list = Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        setTenantsList(list);
+      } catch (e) {
+        console.error('Failed to load tenants for configuration:', e);
+      }
+    }
+
+    loadTenants();
+  }, [isSuperUser, availableSites, tenantId]);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     setData([]);
 
-    const constraints = [where('tenantId', '==', tenantId)];
+    const constraints: QueryConstraint[] = [];
+
+    // Filter by tenantId
+    if (isSuperUser) {
+      if (selectedTenantFilter !== 'ALL') {
+        constraints.push(where('tenantId', '==', selectedTenantFilter));
+      }
+    } else {
+      constraints.push(where('tenantId', '==', tenantId));
+    }
+
+    // Filter by siteId for site-scoped tabs
     if (activeTab.siteScoped) {
-      constraints.push(where('siteId', '==', siteId));
+      if (siteId) {
+        constraints.push(where('siteId', '==', siteId));
+      }
     } else {
       constraints.push(where('siteId', '==', ''));
     }
@@ -59,7 +116,6 @@ export const ConfigurationPage: React.FC = () => {
       activeTab.collection,
       constraints,
       (items) => {
-        // Sort items conceptually, maybe by sortOrder or status then name
         const sorted = [...items].sort((a, b) => {
            if (a.status !== b.status) {
              return a.status === 'active' ? -1 : 1;
@@ -81,11 +137,12 @@ export const ConfigurationPage: React.FC = () => {
     );
 
     return () => unsubscribe();
-  }, [tenantId, siteId, activeTab]);
+  }, [tenantId, siteId, activeTab, isSuperUser, selectedTenantFilter]);
 
   const handleSeed = async () => {
     setSeeding(true);
-    const result = await seedDevelopmentConfiguration(tenantId, siteId);
+    const targetTenant = (isSuperUser && selectedTenantFilter !== 'ALL') ? selectedTenantFilter : tenantId;
+    const result = await seedDevelopmentConfiguration(targetTenant, siteId);
     setSeeding(false);
     if (!result.success) {
       alert(result.error);
@@ -108,9 +165,11 @@ export const ConfigurationPage: React.FC = () => {
   };
 
   const handleSaveModal = async (formData: any) => {
+    const effectiveTenantId = formData.tenantId || (isSuperUser && selectedTenantFilter !== 'ALL' ? selectedTenantFilter : tenantId);
+
     const payload = {
       ...formData,
-      tenantId,
+      tenantId: effectiveTenantId,
       siteId: activeTab.siteScoped ? siteId : '',
     };
     
@@ -122,7 +181,7 @@ export const ConfigurationPage: React.FC = () => {
         payload,
         activeTab.codeField,
         formData[activeTab.codeField],
-        tenantId,
+        effectiveTenantId,
         activeTab.siteScoped ? siteId : ''
       );
     } else {
@@ -144,6 +203,17 @@ export const ConfigurationPage: React.FC = () => {
   const getColumns = () => {
     const cols = [];
     
+    if (isSuperUser) {
+      cols.push({
+        header: 'Tenant ID',
+        accessor: (row: any) => (
+          <span className="font-mono text-xs text-brand-400 bg-brand-950/40 px-2 py-0.5 rounded border border-brand-800/40">
+            {row.tenantId || 'Global'}
+          </span>
+        )
+      });
+    }
+
     // Determine dynamic columns based on collection
     if (activeTab.id === 'sites') {
       cols.push({ header: 'Code', accessor: 'siteCode' as const });
@@ -235,6 +305,38 @@ export const ConfigurationPage: React.FC = () => {
         }
       />
 
+      {isSuperUser && (
+        <div className="mb-6 p-4 bg-slate-800/60 border border-slate-700/80 rounded-lg flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-brand-500/10 text-brand-400 rounded-md border border-brand-500/20">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200">Super User Tenant Scope</h3>
+              <p className="text-xs text-slate-400">Filter configuration data by tenant, or view all tenants globally.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5" />
+              Tenant Filter:
+            </label>
+            <select
+              value={selectedTenantFilter}
+              onChange={(e) => setSelectedTenantFilter(e.target.value)}
+              className="px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-md text-sm font-medium text-slate-200 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+            >
+              <option value="ALL">All Tenants (Global)</option>
+              {tenantsList.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.id})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       <div className="mb-6 border-b border-slate-700">
         <nav className="-mb-px flex space-x-6 overflow-x-auto">
           {TABS.map((tab) => (
@@ -295,6 +397,9 @@ export const ConfigurationPage: React.FC = () => {
         onSave={handleSaveModal}
         item={modalState.item}
         tabId={activeTab.id}
+        isSuperUser={isSuperUser}
+        tenantsList={tenantsList}
+        defaultTenantId={selectedTenantFilter !== 'ALL' ? selectedTenantFilter : tenantId}
       />
     </div>
   );

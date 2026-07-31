@@ -27,6 +27,7 @@ export async function markPasswordChangedInProfile(uid: string): Promise<void> {
     await updateDoc(userDocRef, {
       requiresPasswordChange: false,
       passwordChangedAt: serverTimestamp(),
+      modifiedBy: uid,
       modifiedDate: serverTimestamp()
     });
   } catch (err) {

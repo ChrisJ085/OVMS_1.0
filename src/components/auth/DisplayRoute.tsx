@@ -57,7 +57,7 @@ export const DisplayRoute: React.FC<DisplayRouteProps> = ({ children }) => {
 
   // Confirm site binding for DISPLAY role
   if (userProfile.role === 'DISPLAY' && userProfile.siteIds && userProfile.siteIds.length > 0) {
-    if (!userProfile.siteIds.includes(siteId)) {
+    if (!availableSites.some(s => s.siteId === siteId) && !userProfile.siteIds.includes(siteId)) {
       return <AccessDeniedPage />;
     }
   }

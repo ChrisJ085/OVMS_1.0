@@ -8,17 +8,33 @@ interface ConfigItemModalProps {
   onSave: (data: any) => Promise<void>;
   item?: any;
   tabId: string;
+  isSuperUser?: boolean;
+  tenantsList?: { id: string; name: string }[];
+  defaultTenantId?: string;
 }
 
-export const ConfigItemModal: React.FC<ConfigItemModalProps> = ({ isOpen, onClose, onSave, item, tabId }) => {
+export const ConfigItemModal: React.FC<ConfigItemModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
+  item, 
+  tabId,
+  isSuperUser = false,
+  tenantsList = [],
+  defaultTenantId = ''
+}) => {
   const [formData, setFormData] = useState<any>({});
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      setFormData(item || {});
+      if (item) {
+        setFormData({ ...item });
+      } else {
+        setFormData({ tenantId: defaultTenantId });
+      }
     }
-  }, [isOpen, item]);
+  }, [isOpen, item, defaultTenantId]);
 
   if (!isOpen) return null;
 
@@ -34,6 +50,34 @@ export const ConfigItemModal: React.FC<ConfigItemModalProps> = ({ isOpen, onClos
   };
 
   const renderFields = () => {
+    return (
+      <>
+        {isSuperUser && (
+          <div className="flex flex-col gap-1.5 mb-2 pb-3 border-b border-slate-800">
+            <label className="text-sm font-medium text-slate-300">Tenant ID</label>
+            <select
+              value={formData.tenantId || defaultTenantId || (tenantsList[0]?.id || '')}
+              onChange={(e) => handleChange('tenantId', e.target.value)}
+              disabled={!!item}
+              className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500 disabled:opacity-50"
+            >
+              {tenantsList.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.id})
+                </option>
+              ))}
+              {defaultTenantId && !tenantsList.some(t => t.id === defaultTenantId) && (
+                <option value={defaultTenantId}>{defaultTenantId}</option>
+              )}
+            </select>
+          </div>
+        )}
+        {renderTabFields()}
+      </>
+    );
+  };
+
+  const renderTabFields = () => {
     switch (tabId) {
       case 'sites':
         return (

@@ -12,7 +12,7 @@ interface TenantDeletionWorkflowProps {
 }
 
 export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ tenant, onClose, onRefresh }) => {
-  const { userProfile, currentUser } = useAuth();
+  const { userProfile, user } = useAuth();
   const [mode, setMode] = useState<'SELECT' | 'DEACTIVATE' | 'DELETE_PREVIEW' | 'DELETE_CONFIRM' | 'JOB_STATUS'>('SELECT');
   
   const [counts, setCounts] = useState<any>(null);
@@ -100,7 +100,7 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
     setErrorMsg('');
     
     try {
-      const token = await currentUser?.getIdToken();
+      const token = await user?.getIdToken();
       const response = await fetch('/api/tenant-deletion', {
         method: 'POST',
         headers: { 
@@ -131,7 +131,7 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
   const retryJob = async () => {
     if (!jobId) return;
     try {
-      const token = await currentUser?.getIdToken();
+      const token = await user?.getIdToken();
       const response = await fetch(`/api/tenant-deletion/${jobId}/retry`, {
         method: 'POST',
         headers: { 

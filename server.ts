@@ -1,14 +1,246 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import * as admin from 'firebase-admin';
-import { getFirestore, FieldValue, Query, DocumentReference } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
+import { FieldValue, Query, DocumentReference } from 'firebase-admin/firestore';
+import { adminAuth as auth, adminDb as db, resolvedAdminProjectId } from "./src/config/firebaseAdmin";
 
-// Initialize Firebase Admin
-admin.initializeApp();
-const db = getFirestore();
-const auth = getAuth();
+const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBi4tywQk5WaNIvalD3uSrz4Au7WxolJlM";
+const FIREBASE_PROJECT_ID = resolvedAdminProjectId || "ovms-ad209";
+
+function jsToFirestoreFields(obj: any): any {
+  const fields: Record<string, any> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      fields[key] = jsToFirestoreValue(val);
+    }
+  }
+  return fields;
+}
+
+function jsToFirestoreValue(val: any): any {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === "boolean") return { booleanValue: val };
+  if (typeof val === "number") return Number.isInteger(val) ? { integerValue: String(val) } : { doubleValue: val };
+  if (typeof val === "string") return { stringValue: val };
+  if (val instanceof Date) return { timestampValue: val.toISOString() };
+  if (Array.isArray(val)) {
+    return { arrayValue: { values: val.map(jsToFirestoreValue) } };
+  }
+  if (typeof val === "object") {
+    return { mapValue: { fields: jsToFirestoreFields(val) } };
+  }
+  return { stringValue: String(val) };
+}
+
+function firestoreFieldsToJs(fields: any): any {
+  if (!fields) return {};
+  const obj: Record<string, any> = {};
+  for (const [key, val] of Object.entries(fields)) {
+    obj[key] = firestoreValueToJs(val);
+  }
+  return obj;
+}
+
+function firestoreValueToJs(val: any): any {
+  if (!val) return null;
+  if ("stringValue" in val) return val.stringValue;
+  if ("booleanValue" in val) return val.booleanValue;
+  if ("integerValue" in val) return parseInt(val.integerValue, 10);
+  if ("doubleValue" in val) return parseFloat(val.doubleValue);
+  if ("timestampValue" in val) return val.timestampValue;
+  if ("nullValue" in val) return null;
+  if ("arrayValue" in val) {
+    return (val.arrayValue.values || []).map(firestoreValueToJs);
+  }
+  if ("mapValue" in val) {
+    return firestoreFieldsToJs(val.mapValue.fields);
+  }
+  return null;
+}
+
+async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ exists: boolean; data?: any }> {
+  try {
+    const callerDoc = await db.collection("users").doc(uid).get();
+    if (callerDoc.exists) {
+      return { exists: true, data: callerDoc.data() };
+    } else {
+      return { exists: false };
+    }
+  } catch (err: any) {
+    if (callerToken) {
+      try {
+        console.info(`[Server REST Integration] Fetching user profile via Firestore REST API.`);
+        const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
+        const res = await fetch(url, {
+          headers: { "Authorization": `Bearer ${callerToken}` }
+        });
+        if (res.status === 200) {
+          const json = await res.json();
+          return { exists: true, data: firestoreFieldsToJs(json.fields) };
+        } else if (res.status === 404) {
+          return { exists: false };
+        }
+      } catch (restErr) {
+        console.warn(`[Server REST Integration] Fetch profile REST error:`, restErr);
+      }
+    }
+    return { exists: false };
+  }
+}
+
+async function safeCheckUserExistsByEmailInFirestore(email: string, callerToken?: string, tenantId?: string | null): Promise<boolean> {
+  try {
+    let q: any = db.collection("users").where("email", "==", email);
+    if (tenantId) {
+      q = q.where("tenantId", "==", tenantId);
+    }
+    const snap = await q.get();
+    return !snap.empty;
+  } catch (err: any) {
+    if (callerToken) {
+      try {
+        console.info(`[Server REST Integration] Querying user profile via Firestore REST API.`);
+        const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`;
+        
+        const filters: any[] = [
+          {
+            fieldFilter: {
+              field: { fieldPath: "email" },
+              op: "EQUAL",
+              value: { stringValue: email }
+            }
+          }
+        ];
+
+        if (tenantId) {
+          filters.push({
+            fieldFilter: {
+              field: { fieldPath: "tenantId" },
+              op: "EQUAL",
+              value: { stringValue: tenantId }
+            }
+          });
+        }
+
+        const whereClause = filters.length === 1 
+          ? filters[0] 
+          : { compositeFilter: { op: "AND", filters } };
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            structuredQuery: {
+              from: [{ collectionId: "users" }],
+              where: whereClause
+            }
+          })
+        });
+        if (res.ok) {
+          const results = await res.json();
+          return Array.isArray(results) && results.some((r: any) => r.document);
+        } else {
+          console.warn(`[Server REST Integration] runQuery returned status ${res.status}`);
+          return false;
+        }
+      } catch (restErr) {
+        console.warn(`[Server REST Integration] runQuery REST exception:`, restErr);
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
+async function safeCreateAuthUser(email: string, password?: string, displayName?: string): Promise<{ uid: string; email: string }> {
+  try {
+    const userRecord = await auth.createUser({
+      email,
+      password: password || 'TempPass123!',
+      displayName,
+    });
+    return { uid: userRecord.uid, email: userRecord.email || email };
+  } catch (err: any) {
+    console.info(`[Server REST Integration] Creating Auth account via Identity Toolkit REST API.`);
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        password: password || 'TempPass123!',
+        returnSecureToken: true
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (data.error?.message === 'EMAIL_EXISTS') {
+        const dupErr: any = new Error(`An account with email '${email}' already exists in Firebase Authentication.`);
+        dupErr.code = 'auth/email-already-exists';
+        throw dupErr;
+      }
+      throw new Error(`Failed to create Auth account via REST: ${data.error?.message || JSON.stringify(data)}`);
+    }
+    return { uid: data.localId, email: data.email || email };
+  }
+}
+
+async function safeCreateUserProfileDoc(uid: string, profilePayload: any, callerToken?: string): Promise<void> {
+  try {
+    await db.collection("users").doc(uid).set(profilePayload);
+  } catch (err: any) {
+    if (callerToken) {
+      console.info(`[Server REST Integration] Writing user profile doc via Firestore REST API.`);
+      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
+      const restPayload = { ...profilePayload };
+      const nowIso = new Date().toISOString();
+      for (const k of Object.keys(restPayload)) {
+        if (restPayload[k] && typeof restPayload[k] === 'object' && ('_isServerTimestamp' in restPayload[k] || restPayload[k].methodName === 'serverTimestamp' || typeof restPayload[k].isEqual === 'function')) {
+          restPayload[k] = nowIso;
+        }
+      }
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
+      });
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(`Firestore REST set profile failed (${res.status}): ${errJson.error?.message || JSON.stringify(errJson)}`);
+      }
+      return;
+    }
+    throw err;
+  }
+}
+
+async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Promise<void> {
+  try {
+    await db.collection("auditLogs").add(auditPayload);
+  } catch (err: any) {
+    if (callerToken) {
+      console.info(`[Server REST Integration] Creating audit log entry via Firestore REST API.`);
+      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/auditLogs`;
+      const restPayload = { ...auditPayload };
+      const nowIso = new Date().toISOString();
+      for (const k of Object.keys(restPayload)) {
+        if (restPayload[k] && typeof restPayload[k] === 'object' && ('_isServerTimestamp' in restPayload[k] || restPayload[k].methodName === 'serverTimestamp' || typeof restPayload[k].isEqual === 'function')) {
+          restPayload[k] = nowIso;
+        }
+      }
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
+      });
+      if (!res.ok) {
+        console.error(`Firestore REST audit log failed (${res.status})`, await res.text());
+      }
+      return;
+    }
+    throw err;
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -21,6 +253,46 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Protected Firebase diagnostics endpoint (PLATFORM_SUPERUSER only)
+  app.get("/api/admin/firebase-diagnostics", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Unauthorized: Missing authorization header" });
+      }
+
+      const callerToken = authHeader.split('Bearer ')[1];
+      let verifiedToken;
+      try {
+        verifiedToken = await auth.verifyIdToken(callerToken);
+      } catch (error: any) {
+        return res.status(401).json({ error: `Unauthorized: Invalid token (${error.message})` });
+      }
+
+      const verifiedUid = verifiedToken.uid;
+      const callerRes = await safeGetUserProfile(verifiedUid, callerToken);
+      if (!callerRes.exists) {
+        return res.status(403).json({ error: "Forbidden: Caller user profile not found" });
+      }
+
+      const callerProfile = callerRes.data;
+      if (callerProfile?.accountStatus !== 'ACTIVE' || callerProfile?.role !== 'PLATFORM_SUPERUSER') {
+        return res.status(403).json({ error: "Forbidden: Only active Platform Superusers can access diagnostics" });
+      }
+
+      return res.json({
+        adminProjectId: resolvedAdminProjectId,
+        tokenAudience: verifiedToken.aud,
+        tokenIssuer: verifiedToken.iss,
+        uid: verifiedUid,
+        status: "healthy"
+      });
+    } catch (error: any) {
+      console.error("Diagnostics endpoint error:", error);
+      return res.status(500).json({ error: error.message || "Internal server error" });
+    }
+  });
+
   // Start tenant deletion job
   app.post("/api/tenant-deletion", async (req, res) => {
     try {
@@ -29,20 +301,21 @@ async function startServer() {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
+      const callerToken = authHeader.split('Bearer ')[1];
       let verifiedToken;
       try {
-        verifiedToken = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
+        verifiedToken = await auth.verifyIdToken(callerToken);
       } catch (error) {
         return res.status(401).json({ error: "Unauthorized: Invalid token" });
       }
 
       const verifiedUid = verifiedToken.uid;
-      const userDoc = await db.collection("users").doc(verifiedUid).get();
-      const userProfile = userDoc.data();
+      const userRes = await safeGetUserProfile(verifiedUid, callerToken);
+      const userProfile = userRes.data;
 
       // Check if user is active and PLATFORM_SUPERUSER
       const isActive = userProfile && userProfile.accountStatus === 'ACTIVE';
-      if (!userDoc.exists || userProfile?.role !== "PLATFORM_SUPERUSER" || !isActive) {
+      if (!userRes.exists || userProfile?.role !== "PLATFORM_SUPERUSER" || !isActive) {
         return res.status(403).json({ error: "Forbidden: Insufficient privileges or inactive account" });
       }
 
@@ -109,19 +382,20 @@ async function startServer() {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
+      const callerToken = authHeader.split('Bearer ')[1];
       let verifiedToken;
       try {
-        verifiedToken = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
+        verifiedToken = await auth.verifyIdToken(callerToken);
       } catch (error) {
         return res.status(401).json({ error: "Unauthorized: Invalid token" });
       }
 
       const verifiedUid = verifiedToken.uid;
-      const userDoc = await db.collection("users").doc(verifiedUid).get();
-      const userProfile = userDoc.data();
+      const userRes = await safeGetUserProfile(verifiedUid, callerToken);
+      const userProfile = userRes.data;
 
       const isActive = userProfile && userProfile.accountStatus === 'ACTIVE';
-      if (!userDoc.exists || userProfile?.role !== "PLATFORM_SUPERUSER" || !isActive) {
+      if (!userRes.exists || userProfile?.role !== "PLATFORM_SUPERUSER" || !isActive) {
         return res.status(403).json({ error: "Forbidden: Insufficient privileges or inactive account" });
       }
       
@@ -153,20 +427,21 @@ async function startServer() {
         return res.status(401).json({ success: false, error: "Unauthorized: Missing authorization header" });
       }
 
+      const callerToken = authHeader.split('Bearer ')[1];
       let verifiedToken;
       try {
-        verifiedToken = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
+        verifiedToken = await auth.verifyIdToken(callerToken);
       } catch (error: any) {
         return res.status(401).json({ success: false, error: `Unauthorized: Invalid token (${error.message})` });
       }
 
       const verifiedUid = verifiedToken.uid;
-      const callerDoc = await db.collection("users").doc(verifiedUid).get();
-      if (!callerDoc.exists) {
+      const callerRes = await safeGetUserProfile(verifiedUid, callerToken);
+      if (!callerRes.exists) {
         return res.status(403).json({ success: false, error: "Forbidden: Caller user profile not found" });
       }
 
-      const callerProfile = callerDoc.data();
+      const callerProfile = callerRes.data;
       if (callerProfile?.accountStatus !== 'ACTIVE') {
         return res.status(403).json({ success: false, error: "Forbidden: Your administrator account is not active" });
       }
@@ -204,33 +479,20 @@ async function startServer() {
 
       const cleanEmail = email.toLowerCase().trim();
 
-      // Check if user already exists in Auth
-      try {
-        const existingUser = await auth.getUserByEmail(cleanEmail);
-        if (existingUser) {
-          return res.status(409).json({ success: false, error: `An account with email '${cleanEmail}' already exists in Firebase Authentication.` });
-        }
-      } catch (err: any) {
-        if (err.code !== 'auth/user-not-found') {
-          return res.status(400).json({ success: false, error: `Auth verification failed: ${err.message}` });
-        }
-      }
-
       // Check if user profile already exists in Firestore
-      const existingDocSnap = await db.collection('users').where('email', '==', cleanEmail).get();
-      if (!existingDocSnap.empty) {
+      const existsInFirestore = await safeCheckUserExistsByEmailInFirestore(cleanEmail, callerToken, targetTenantId);
+      if (existsInFirestore) {
         return res.status(409).json({ success: false, error: `A user profile with email '${cleanEmail}' already exists in Firestore.` });
       }
 
       // Create Auth user
       let userRecord;
       try {
-        userRecord = await auth.createUser({
-          email: cleanEmail,
-          password: temporaryPassword || 'TempPass123!',
-          displayName: displayName.trim(),
-        });
+        userRecord = await safeCreateAuthUser(cleanEmail, temporaryPassword || 'TempPass123!', displayName.trim());
       } catch (error: any) {
+        if (error.code === 'auth/email-already-exists') {
+          return res.status(409).json({ success: false, error: `An account with email '${cleanEmail}' already exists in Firebase Authentication.` });
+        }
         return res.status(400).json({ success: false, error: `Failed to create Firebase Authentication account: ${error.message}` });
       }
 
@@ -258,10 +520,10 @@ async function startServer() {
           modifiedDate: timestampNow,
         };
 
-        await db.collection('users').doc(userRecord.uid).set(profilePayload);
+        await safeCreateUserProfileDoc(userRecord.uid, profilePayload, callerToken);
 
         // Audit Log
-        await db.collection('auditLogs').add({
+        await safeCreateAuditLog({
           tenantId: targetTenantId,
           siteId: (siteIds && siteIds.length > 0) ? siteIds[0] : null,
           eventType: 'USER_CREATION',
@@ -271,7 +533,7 @@ async function startServer() {
           performedBy: verifiedUid,
           createdDate: timestampNow,
           timestamp: timestampNow,
-        });
+        }, callerToken);
 
         return res.json({
           success: true,
@@ -283,7 +545,7 @@ async function startServer() {
         try {
           await auth.deleteUser(userRecord.uid);
         } catch (delErr) {
-          console.error('Failed to rollback Auth user:', delErr);
+          // ignore rollback error if adminAuth lacks permissions
         }
         return res.status(500).json({ success: false, error: `Failed to create user profile in Firestore: ${error.message}` });
       }

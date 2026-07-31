@@ -51,8 +51,9 @@ service cloud.firestore {
     }
 
     function isTenantActiveForWrites(tenantId) {
-      let tenantStatus = get(/databases/$(database)/documents/tenants/$(tenantId)).data.status;
-      return tenantStatus != 'DELETION_PENDING' && tenantStatus != 'inactive';
+      let tenantExists = exists(/databases/$(database)/documents/tenants/$(tenantId));
+      let tenantDoc = tenantExists ? get(/databases/$(database)/documents/tenants/$(tenantId)).data : null;
+      return tenantDoc == null || (!('status' in tenantDoc) || (tenantDoc.status != 'DELETION_PENDING' && tenantDoc.status != 'inactive'));
     }
 
     function isAssignedToSite(siteId) {
@@ -145,19 +146,21 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSuperuser() ||
                      (isAuthenticated() && request.auth.uid == userId) ||
-                     (isAuthenticated() && isTenantAdmin(resource.data.tenantId) && ('role' in resource.data) && resource.data.role != 'PLATFORM_SUPERUSER');
+                     (isAuthenticated() && hasTenantAccess(resource.data.tenantId) && getUserProfile() != null && getUserProfile().role != 'DISPLAY');
                      
-      allow create: if false; // Only trusted backend can create users
+      allow create: if isSuperuser() ||
+                      (isAuthenticated() && request.auth.uid == userId) ||
+                      (isAuthenticated() &&
+                       isTenantAdmin(request.resource.data.tenantId) &&
+                       ('role' in request.resource.data) &&
+                       request.resource.data.role != 'PLATFORM_SUPERUSER');
       
       allow update: if isSuperuser() ||
                        (isAuthenticated() && request.auth.uid == userId && identityFieldsUnchanged() && ownershipFieldsUnchanged() &&
-                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'jobTitle', 'requiresPasswordChange', 'passwordChangedAt', 'modifiedBy', 'modifiedDate', 'lastLoginAt']) &&
-                        
-                        (!('modifiedBy' in request.resource.data) || request.resource.data.modifiedBy == request.auth.uid)) ||
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'jobTitle', 'requiresPasswordChange', 'passwordChangedAt', 'modifiedBy', 'modifiedDate', 'lastLoginAt'])) ||
                        (isTenantAdmin(resource.data.tenantId) && identityFieldsUnchanged() && ownershipFieldsUnchanged() &&
-                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'jobTitle', 'role', 'siteIds', 'accountStatus', 'modifiedBy', 'modifiedDate']) &&
-                        resource.data.role != 'PLATFORM_SUPERUSER' && request.resource.data.role != 'PLATFORM_SUPERUSER' &&
-                        (!('modifiedBy' in request.resource.data) || request.resource.data.modifiedBy == request.auth.uid));
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'jobTitle', 'role', 'siteIds', 'accountStatus', 'modifiedBy', 'modifiedDate', 'requiresPasswordChange', 'failedLoginAttempts', 'failedAttemptWindowStartedAt', 'lockedAt', 'passwordChangedAt']) &&
+                        resource.data.role != 'PLATFORM_SUPERUSER' && request.resource.data.role != 'PLATFORM_SUPERUSER');
                         
       allow delete: if isSuperuser();
     }
@@ -180,7 +183,12 @@ service cloud.firestore {
       allow create, update, delete: if isSuperuser();
     }
     match /sites/{siteId} {
-      allow read: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (hasTenantAccess(resource.data.tenantId) && isAssignedToSite(siteId));
+      allow read: if isSuperuser() || 
+                     isTenantAdmin(resource.data.tenantId) || 
+                     (hasTenantAccess(resource.data.tenantId) && 
+                      (isAssignedToSite(siteId) || 
+                       ('siteId' in resource.data && isAssignedToSite(resource.data.siteId)) ||
+                       ('siteCode' in resource.data && isAssignedToSite(resource.data.siteCode))));
       allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser();
     }
@@ -467,13 +475,13 @@ service cloud.firestore {
       allow read: if isSuperuser() || 
                      (hasTenantAccess(resource.data.tenantId) && 
                       (isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId) || isWarehouseOperator(resource.data.tenantId)));
-      allow create: if isAccountActive() &&
-                     (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
-                     (!('performedBy' in request.resource.data) || request.resource.data.performedBy == request.auth.uid) &&
-                     ('userId' in request.resource.data || 'performedBy' in request.resource.data) &&
-                     (isSuperuser() || request.resource.data.tenantId == getUserProfile().tenantId) &&
-                     (!('siteId' in request.resource.data) || isAssignedToSite(request.resource.data.siteId)) &&
-                     (!('createdDate' in request.resource.data) || request.resource.data.createdDate == request.time);
+      allow create: if isSuperuser() || 
+                     (isAccountActive() &&
+                      (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
+                      (!('performedBy' in request.resource.data) || request.resource.data.performedBy == request.auth.uid) &&
+                      ('userId' in request.resource.data || 'performedBy' in request.resource.data) &&
+                      request.resource.data.tenantId == getUserProfile().tenantId &&
+                      (!('siteId' in request.resource.data) || request.resource.data.siteId == null || isAssignedToSite(request.resource.data.siteId)));
       allow update: if false;
       allow delete: if false;
     }

@@ -9,6 +9,7 @@ import {
   query, 
   where, 
   getDocs, 
+  getDoc,
   getCountFromServer,
   doc,
   setDoc,
@@ -35,14 +36,17 @@ import {
   UserCheck, 
   Key, 
   Plus, 
-  Building
+  Building,
+  Filter,
+  Search,
+  X
 } from 'lucide-react';
 import { UserProfile, UserRole, AccountStatus, Tenant } from '../../../types/auth';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const AdminOverviewPage: React.FC = () => {
-  const { userProfile, currentUser } = useAuth();
+  const { userProfile, currentUser, user } = useAuth();
   const { tenantId, siteId } = useSiteContext();
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'tenants'>('overview');
@@ -63,6 +67,53 @@ export const AdminOverviewPage: React.FC = () => {
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [tenantsList, setTenantsList] = useState<Tenant[]>([]);
+
+  // User filter states
+  const [tenantFilter, setTenantFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL'); // 'ALL' | 'ENABLED' | 'DISABLED'
+  const [searchFilter, setSearchFilter] = useState<string>('');
+
+  const tenantOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    tenantsList.forEach(t => {
+      if (t.id) set.add(t.id);
+    });
+    usersList.forEach(u => {
+      if (u.tenantId) set.add(u.tenantId);
+      else set.add('Global');
+    });
+    return Array.from(set).sort();
+  }, [tenantsList, usersList]);
+
+  const filteredUsersList = React.useMemo(() => {
+    return usersList.filter(user => {
+      // 1. Tenant Filter
+      if (tenantFilter !== 'ALL') {
+        const userTenant = user.tenantId || 'Global';
+        if (userTenant !== tenantFilter) return false;
+      }
+
+      // 2. Status Filter
+      if (statusFilter === 'ENABLED') {
+        if (user.accountStatus !== 'ACTIVE') return false;
+      } else if (statusFilter === 'DISABLED') {
+        if (user.accountStatus === 'ACTIVE') return false;
+      }
+
+      // 3. Search Filter
+      if (searchFilter.trim() !== '') {
+        const q = searchFilter.toLowerCase().trim();
+        const matchName = user.displayName?.toLowerCase().includes(q);
+        const matchEmail = user.email?.toLowerCase().includes(q);
+        const matchRole = user.role?.toLowerCase().includes(q);
+        const matchJob = user.jobTitle?.toLowerCase().includes(q);
+        if (!matchName && !matchEmail && !matchRole && !matchJob) return false;
+      }
+
+      return true;
+    });
+  }, [usersList, tenantFilter, statusFilter, searchFilter]);
   
   // New user form states
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -75,7 +126,6 @@ export const AdminOverviewPage: React.FC = () => {
   const [creatingUserMsg, setCreatingUserMsg] = useState<string | null>(null);
 
   // New Tenant form states
-  const [tenantsList, setTenantsList] = useState<Tenant[]>([]);
   const [newTenantName, setNewTenantName] = useState('');
   const [newTenantCode, setNewTenantCode] = useState('');
   const [creatingTenant, setCreatingTenant] = useState(false);
@@ -145,18 +195,28 @@ export const AdminOverviewPage: React.FC = () => {
     }
   };
 
-  // Fetch Tenants (Superuser only)
+  // Fetch Tenants (Superuser & Tenant Admin)
   const fetchTenants = async () => {
-    if (!db || userProfile?.role !== 'PLATFORM_SUPERUSER') return;
+    if (!db || !userProfile) return;
     try {
-      const snap = await getDocs(collection(db, 'tenants'));
-      const list: Tenant[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...(docSnap.data() as any) } as Tenant);
-      });
-      setTenantsList(list);
+      if (userProfile.role === 'PLATFORM_SUPERUSER') {
+        const snap = await getDocs(collection(db, 'tenants'));
+        const list: Tenant[] = [];
+        snap.forEach(docSnap => {
+          list.push({ id: docSnap.id, ...(docSnap.data() as any) } as Tenant);
+        });
+        setTenantsList(list);
+      } else if (userProfile.tenantId) {
+        const tenantSnap = await getDoc(doc(db, 'tenants', userProfile.tenantId));
+        if (tenantSnap.exists()) {
+          const tData = tenantSnap.data();
+          setTenantsList([{ id: tenantSnap.id, name: tData?.tenantName || tData?.name || tenantSnap.id, ...(tData as any) } as Tenant]);
+        } else {
+          setTenantsList([{ id: userProfile.tenantId, tenantName: userProfile.tenantId, tenantCode: userProfile.tenantId } as Tenant]);
+        }
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching tenants:', err);
     }
   };
 
@@ -169,7 +229,7 @@ export const AdminOverviewPage: React.FC = () => {
   }, [activeTab, userProfile]);
 
   useEffect(() => {
-    if (userProfile?.role === 'PLATFORM_SUPERUSER') {
+    if (userProfile) {
       fetchTenants();
     }
   }, [userProfile]);
@@ -187,7 +247,9 @@ export const AdminOverviewPage: React.FC = () => {
         const snap = await getDocs(q);
         const sites: any[] = [];
         snap.forEach(doc => {
-          sites.push({ id: doc.id, ...doc.data() });
+          const data = doc.data();
+          const sId = data.siteId || data.siteCode || doc.id;
+          sites.push({ id: doc.id, siteId: sId, ...data });
         });
         setAvailableSites(sites);
       } catch (err) {
@@ -306,7 +368,7 @@ export const AdminOverviewPage: React.FC = () => {
     }
 
     try {
-      const token = await currentUser?.getIdToken();
+      const token = await user?.getIdToken();
 
       // 1. Try secure REST endpoint first
       const apiRes = await fetch('/api/admin/provision-user', {
@@ -550,6 +612,89 @@ export const AdminOverviewPage: React.FC = () => {
           {/* User Directory */}
           <div className="lg:col-span-2 space-y-4">
             <SectionCard title="Active User Accounts">
+              {/* Filter Controls Bar */}
+              <div className="mb-4 space-y-2">
+                <div className="flex flex-wrap items-center gap-2.5 bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/60">
+                  {/* Tenant Filter */}
+                  <div className="flex items-center gap-1.5">
+                    <Filter className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="text-xs font-semibold text-slate-400">Tenant:</span>
+                    <select
+                      value={tenantFilter}
+                      onChange={e => setTenantFilter(e.target.value)}
+                      className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-md px-2.5 py-1 focus:outline-none focus:border-amber-500/50"
+                    >
+                      <option value="ALL">All Tenants ({usersList.length})</option>
+                      {tenantOptions.map(tId => {
+                        const tenantObj = tenantsList.find(t => t.id === tId);
+                        const label = tenantObj?.name ? `${tenantObj.name} (${tId})` : tId;
+                        return (
+                          <option key={tId} value={tId}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Enabled/Disabled Status Filter */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-slate-400">Status:</span>
+                    <select
+                      value={statusFilter}
+                      onChange={e => setStatusFilter(e.target.value)}
+                      className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-md px-2.5 py-1 focus:outline-none focus:border-amber-500/50"
+                    >
+                      <option value="ALL">All Statuses</option>
+                      <option value="ENABLED">Enabled (Active)</option>
+                      <option value="DISABLED">Disabled (Inactive / Locked)</option>
+                    </select>
+                  </div>
+
+                  {/* Search Query */}
+                  <div className="relative flex-1 min-w-[150px]">
+                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search name, email, role..."
+                      value={searchFilter}
+                      onChange={e => setSearchFilter(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-md pl-8 pr-7 py-1 placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
+                    />
+                    {searchFilter && (
+                      <button
+                        onClick={() => setSearchFilter('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Reset Filters */}
+                  {(tenantFilter !== 'ALL' || statusFilter !== 'ALL' || searchFilter !== '') && (
+                    <button
+                      onClick={() => {
+                        setTenantFilter('ALL');
+                        setStatusFilter('ALL');
+                        setSearchFilter('');
+                      }}
+                      className="text-xs text-amber-400 hover:text-amber-300 font-medium px-1 flex items-center gap-1"
+                    >
+                      <X className="w-3 h-3" />
+                      Reset
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter Count Badge */}
+                {(tenantFilter !== 'ALL' || statusFilter !== 'ALL' || searchFilter !== '') && (
+                  <div className="text-[11px] text-slate-400 px-1">
+                    Showing <strong className="text-slate-200">{filteredUsersList.length}</strong> of <strong className="text-slate-200">{usersList.length}</strong> user accounts
+                  </div>
+                )}
+              </div>
+
               {loadingUsers ? (
                 <div className="p-8 text-center text-slate-400">Syncing user profiles...</div>
               ) : usersError ? (
@@ -558,6 +703,20 @@ export const AdminOverviewPage: React.FC = () => {
                 </div>
               ) : usersList.length === 0 ? (
                 <div className="p-8 text-center text-slate-500 text-sm">No users found in directory.</div>
+              ) : filteredUsersList.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-sm">
+                  No user accounts match the selected filters.
+                  <button
+                    onClick={() => {
+                      setTenantFilter('ALL');
+                      setStatusFilter('ALL');
+                      setSearchFilter('');
+                    }}
+                    className="block mx-auto mt-2 text-xs text-amber-400 hover:underline font-semibold"
+                  >
+                    Reset Filters
+                  </button>
+                </div>
               ) : (
                 <div className="divide-y divide-slate-800 overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -571,7 +730,7 @@ export const AdminOverviewPage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-sm">
-                      {usersList.map(user => (
+                      {filteredUsersList.map(user => (
                         <tr key={user.uid} className="hover:bg-slate-900/10">
                           <td className="py-3 pr-2">
                             <div className="font-semibold text-slate-200">{user.displayName || 'Unnamed User'}</div>
@@ -585,8 +744,8 @@ export const AdminOverviewPage: React.FC = () => {
                           </td>
                           <td className="py-3 pr-2 text-xs text-slate-400">
                             <div>Tenant: <span className="font-semibold">{user.tenantId || 'Global'}</span></div>
-                            <div className="mt-0.5 text-[10px] text-slate-500 max-w-[120px] truncate" title={user.siteIds?.join(', ')}>
-                              Sites: {user.siteIds && user.siteIds.length > 0 ? user.siteIds.join(', ') : 'None'}
+                            <div className="mt-0.5 text-[10px] text-slate-500 max-w-[140px] truncate" title={user.siteIds && user.siteIds.length > 0 ? user.siteIds.map(id => availableSites.find(s => s.siteId === id || s.id === id)?.siteName || id).join(', ') : 'None'}>
+                              Sites: {user.siteIds && user.siteIds.length > 0 ? user.siteIds.map(id => availableSites.find(s => s.siteId === id || s.id === id)?.siteName || id).join(', ') : 'None'}
                             </div>
                           </td>
                           <td className="py-3 pr-2">
