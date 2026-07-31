@@ -100,14 +100,16 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
     setErrorMsg('');
     
     try {
+      const token = await currentUser?.getIdToken();
       const response = await fetch('/api/tenant-deletion', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           tenantId: tenant.id,
-          tenantName: tenant.tenantName,
-          requestedBy: userProfile?.uid,
-          requestedByEmail: currentUser?.email
+          tenantName: tenant.tenantName
         })
       });
       
@@ -129,12 +131,14 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
   const retryJob = async () => {
     if (!jobId) return;
     try {
+      const token = await currentUser?.getIdToken();
       const response = await fetch(`/api/tenant-deletion/${jobId}/retry`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestedBy: userProfile?.uid
-        })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({})
       });
       const data = await response.json();
       if (!data.success) throw new Error(data.error || 'Retry failed');

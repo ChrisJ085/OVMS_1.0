@@ -42,7 +42,7 @@ import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const AdminOverviewPage: React.FC = () => {
-  const { userProfile } = useAuth();
+  const { userProfile, currentUser } = useAuth();
   const { tenantId, siteId } = useSiteContext();
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'tenants'>('overview');
@@ -299,22 +299,39 @@ export const AdminOverviewPage: React.FC = () => {
     const actualTenantId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId.trim() : userProfile?.tenantId;
     const sitesArray = selectedSites;
 
+    if (newUserRole !== 'PLATFORM_SUPERUSER' && !actualTenantId) {
+      alert('Please select a tenant for this user account.');
+      setCreatingUser(false);
+      return;
+    }
+
     try {
-      const functionsInstance = getFunctions(app!);
-      const createUserFunc = httpsCallable(functionsInstance, 'createOvmsUser');
-      const response = await createUserFunc({
-        email: newUserEmail.toLowerCase().trim(),
-        displayName: newUserDisplayName.trim(),
-        jobTitle: newUserJobTitle.trim(),
-        role: newUserRole,
-        tenantId: actualTenantId,
-        siteIds: sitesArray,
-        temporaryPassword: newUserTempPass,
-        accountStatus: 'ACTIVE'
+      const token = await currentUser?.getIdToken();
+
+      // 1. Try secure REST endpoint first
+      const apiRes = await fetch('/api/admin/provision-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          email: newUserEmail.toLowerCase().trim(),
+          displayName: newUserDisplayName.trim(),
+          jobTitle: newUserJobTitle.trim(),
+          role: newUserRole,
+          tenantId: actualTenantId,
+          siteIds: sitesArray,
+          temporaryPassword: newUserTempPass,
+        })
       });
 
-      const resData = response.data as any;
-      setCreatingUserMsg(`Success! ${resData.message || `User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
+      const apiData = await apiRes.json();
+      if (!apiRes.ok || !apiData.success) {
+        throw new Error(apiData.error || apiData.message || 'Failed to provision account');
+      }
+
+      setCreatingUserMsg(`Success! ${apiData.message || `User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
 
       // Reset form
       setNewUserEmail('');
@@ -322,17 +339,45 @@ export const AdminOverviewPage: React.FC = () => {
       setNewUserJobTitle('');
       setSelectedSites([]);
       setNewUserTempPass('TempPass123!');
-    } catch (err: any) {
-      console.error('Error provisioning user:', err);
-      let errorText = err.message || 'Failed to create user account.';
-      if (err.code === 'already-exists' || err.message?.includes('already exists')) {
-        errorText = 'An account with this email address already exists in Firebase Authentication or Firestore.';
-      } else if (err.code === 'permission-denied' || err.message?.includes('permission-denied')) {
-        errorText = `Permission denied: ${err.message || 'You do not have the required permissions to perform this operation or to assign these sites.'}`;
-      } else if (err.code === 'invalid-argument' || err.message?.includes('invalid-argument')) {
-        errorText = `Invalid argument: ${err.message || 'Please verify that all fields are correct and sites belong to the selected tenant.'}`;
+    } catch (apiErr: any) {
+      console.warn('REST provisioning failed, attempting Firebase Function fallback:', apiErr);
+
+      // 2. Fallback to Cloud Function if REST fails
+      try {
+        const functionsInstance = getFunctions(app!);
+        const createUserFunc = httpsCallable(functionsInstance, 'createOvmsUser');
+        const response = await createUserFunc({
+          email: newUserEmail.toLowerCase().trim(),
+          displayName: newUserDisplayName.trim(),
+          jobTitle: newUserJobTitle.trim(),
+          role: newUserRole,
+          tenantId: actualTenantId,
+          siteIds: sitesArray,
+          temporaryPassword: newUserTempPass,
+          accountStatus: 'ACTIVE'
+        });
+
+        const resData = response.data as any;
+        setCreatingUserMsg(`Success! ${resData.message || `User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
+
+        // Reset form
+        setNewUserEmail('');
+        setNewUserDisplayName('');
+        setNewUserJobTitle('');
+        setSelectedSites([]);
+        setNewUserTempPass('TempPass123!');
+      } catch (funcErr: any) {
+        console.error('Error provisioning user:', funcErr);
+        let errorText = apiErr.message || funcErr.message || 'Failed to create user account.';
+        if (funcErr.code === 'already-exists' || funcErr.message?.includes('already exists') || apiErr.message?.includes('already exists')) {
+          errorText = 'An account with this email address already exists in Firebase Authentication or Firestore.';
+        } else if (funcErr.code === 'permission-denied' || funcErr.message?.includes('permission-denied') || apiErr.message?.includes('Forbidden')) {
+          errorText = `Permission denied: ${funcErr.message || apiErr.message || 'You do not have the required permissions.'}`;
+        } else if (funcErr.code === 'invalid-argument' || funcErr.message?.includes('invalid-argument')) {
+          errorText = `Invalid argument: ${funcErr.message || 'Please verify that all fields are correct.'}`;
+        }
+        setCreatingUserMsg(`Error: ${errorText}`);
       }
-      setCreatingUserMsg(`Error: ${errorText}`);
     } finally {
       setCreatingUser(false);
       fetchUsers();
@@ -692,25 +737,27 @@ export const AdminOverviewPage: React.FC = () => {
                     <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Sites</label>
                     {availableSites.length > 0 ? (
                       <div className="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950 border border-slate-800 rounded-lg">
-                        {availableSites.map(site => (
+                        {availableSites.map(site => {
+                          const siteVal = site.siteId || site.id;
+                          return (
                           <label key={site.id} className="flex items-center gap-2 cursor-pointer group">
                             <input
                               type="checkbox"
-                              checked={selectedSites.includes(site.id)}
+                              checked={selectedSites.includes(siteVal)}
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  setSelectedSites([...selectedSites, site.id]);
+                                  setSelectedSites([...selectedSites, siteVal]);
                                 } else {
-                                  setSelectedSites(selectedSites.filter(id => id !== site.id));
+                                  setSelectedSites(selectedSites.filter(id => id !== siteVal));
                                 }
                               }}
                               className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-950"
                             />
                             <span className="text-sm text-slate-300 group-hover:text-slate-200">
-                              {site.siteName || site.name || site.id} <span className="text-xs text-slate-500">({site.id})</span>
+                              {site.siteName || site.name || siteVal} <span className="text-xs text-slate-500">({siteVal})</span>
                             </span>
                           </label>
-                        ))}
+                        )})}
                       </div>
                     ) : (
                       <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-500 italic">

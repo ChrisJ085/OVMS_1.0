@@ -24,16 +24,35 @@ async function startServer() {
   // Start tenant deletion job
   app.post("/api/tenant-deletion", async (req, res) => {
     try {
-      const { tenantId, tenantName, requestedBy, requestedByEmail } = req.body;
-      if (!tenantId || !tenantName || !requestedBy) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      let verifiedToken;
+      try {
+        verifiedToken = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
+      } catch (error) {
+        return res.status(401).json({ error: "Unauthorized: Invalid token" });
+      }
+
+      const verifiedUid = verifiedToken.uid;
+      const userDoc = await db.collection("users").doc(verifiedUid).get();
+      const userProfile = userDoc.data();
+
+      // Check if user is active and PLATFORM_SUPERUSER
+      const isActive = userProfile && userProfile.accountStatus === 'ACTIVE';
+      if (!userDoc.exists || userProfile?.role !== "PLATFORM_SUPERUSER" || !isActive) {
+        return res.status(403).json({ error: "Forbidden: Insufficient privileges or inactive account" });
+      }
+
+      const { tenantId, tenantName } = req.body;
+      if (!tenantId || !tenantName) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Check if user is PLATFORM_SUPERUSER
-      const userDoc = await db.collection("users").doc(requestedBy).get();
-      if (!userDoc.exists || userDoc.data()?.role !== "PLATFORM_SUPERUSER") {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+      const requestedBy = verifiedUid;
+      const requestedByEmail = verifiedToken.email || userProfile?.email || "unknown";
 
       // Check if tenant is protected
       const tenantDoc = await db.collection("tenants").doc(tenantId).get();
@@ -84,11 +103,26 @@ async function startServer() {
   app.post("/api/tenant-deletion/:jobId/retry", async (req, res) => {
     try {
       const { jobId } = req.params;
-      const { requestedBy } = req.body;
       
-      const userDoc = await db.collection("users").doc(requestedBy).get();
-      if (!userDoc.exists || userDoc.data()?.role !== "PLATFORM_SUPERUSER") {
-        return res.status(403).json({ error: "Forbidden" });
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      let verifiedToken;
+      try {
+        verifiedToken = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
+      } catch (error) {
+        return res.status(401).json({ error: "Unauthorized: Invalid token" });
+      }
+
+      const verifiedUid = verifiedToken.uid;
+      const userDoc = await db.collection("users").doc(verifiedUid).get();
+      const userProfile = userDoc.data();
+
+      const isActive = userProfile && userProfile.accountStatus === 'ACTIVE';
+      if (!userDoc.exists || userProfile?.role !== "PLATFORM_SUPERUSER" || !isActive) {
+        return res.status(403).json({ error: "Forbidden: Insufficient privileges or inactive account" });
       }
       
       const jobDocRef = db.collection("tenantDeletionJobs").doc(jobId);
@@ -108,6 +142,154 @@ async function startServer() {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Provision User Account Endpoint (PLATFORM_SUPERUSER and TENANT_ADMIN)
+  app.post("/api/admin/provision-user", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Missing authorization header" });
+      }
+
+      let verifiedToken;
+      try {
+        verifiedToken = await auth.verifyIdToken(authHeader.split('Bearer ')[1]);
+      } catch (error: any) {
+        return res.status(401).json({ success: false, error: `Unauthorized: Invalid token (${error.message})` });
+      }
+
+      const verifiedUid = verifiedToken.uid;
+      const callerDoc = await db.collection("users").doc(verifiedUid).get();
+      if (!callerDoc.exists) {
+        return res.status(403).json({ success: false, error: "Forbidden: Caller user profile not found" });
+      }
+
+      const callerProfile = callerDoc.data();
+      if (callerProfile?.accountStatus !== 'ACTIVE') {
+        return res.status(403).json({ success: false, error: "Forbidden: Your administrator account is not active" });
+      }
+
+      if (callerProfile?.role !== 'PLATFORM_SUPERUSER' && callerProfile?.role !== 'TENANT_ADMIN') {
+        return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers and Tenant Admins can provision accounts" });
+      }
+
+      const { email, displayName, jobTitle, role, tenantId, siteIds, temporaryPassword } = req.body;
+
+      if (!email || !displayName || !role) {
+        return res.status(400).json({ success: false, error: "Email, Display Name, and Role are required" });
+      }
+
+      const validRoles = ['PLATFORM_SUPERUSER', 'TENANT_ADMIN', 'PLANNER', 'WAREHOUSE_OPERATOR', 'VIEWER', 'DISPLAY'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ success: false, error: `Invalid role specified: ${role}` });
+      }
+
+      // Check tenant admin privileges
+      if (callerProfile.role === 'TENANT_ADMIN') {
+        if (role === 'PLATFORM_SUPERUSER') {
+          return res.status(403).json({ success: false, error: "Tenant Admins cannot create Platform Superusers" });
+        }
+        if (tenantId !== callerProfile.tenantId) {
+          return res.status(403).json({ success: false, error: "Tenant Admins can only create users within their own tenant" });
+        }
+      }
+
+      // Validate tenant selection for non-superusers
+      const targetTenantId = role === 'PLATFORM_SUPERUSER' ? null : (tenantId ? tenantId.trim() : null);
+      if (role !== 'PLATFORM_SUPERUSER' && !targetTenantId) {
+        return res.status(400).json({ success: false, error: "A valid tenant must be selected for non-superuser accounts" });
+      }
+
+      const cleanEmail = email.toLowerCase().trim();
+
+      // Check if user already exists in Auth
+      try {
+        const existingUser = await auth.getUserByEmail(cleanEmail);
+        if (existingUser) {
+          return res.status(409).json({ success: false, error: `An account with email '${cleanEmail}' already exists in Firebase Authentication.` });
+        }
+      } catch (err: any) {
+        if (err.code !== 'auth/user-not-found') {
+          return res.status(400).json({ success: false, error: `Auth verification failed: ${err.message}` });
+        }
+      }
+
+      // Check if user profile already exists in Firestore
+      const existingDocSnap = await db.collection('users').where('email', '==', cleanEmail).get();
+      if (!existingDocSnap.empty) {
+        return res.status(409).json({ success: false, error: `A user profile with email '${cleanEmail}' already exists in Firestore.` });
+      }
+
+      // Create Auth user
+      let userRecord;
+      try {
+        userRecord = await auth.createUser({
+          email: cleanEmail,
+          password: temporaryPassword || 'TempPass123!',
+          displayName: displayName.trim(),
+        });
+      } catch (error: any) {
+        return res.status(400).json({ success: false, error: `Failed to create Firebase Authentication account: ${error.message}` });
+      }
+
+      // Create Firestore User Document
+      try {
+        const timestampNow = FieldValue.serverTimestamp();
+        const profilePayload = {
+          uid: userRecord.uid,
+          email: cleanEmail,
+          displayName: displayName.trim(),
+          jobTitle: jobTitle ? jobTitle.trim() : '',
+          role,
+          tenantId: targetTenantId,
+          siteIds: role === 'PLATFORM_SUPERUSER' ? [] : (siteIds || []),
+          accountStatus: 'ACTIVE',
+          requiresPasswordChange: true,
+          failedLoginAttempts: 0,
+          failedAttemptWindowStartedAt: null,
+          lockedAt: null,
+          lastLoginAt: null,
+          passwordChangedAt: null,
+          createdBy: verifiedUid,
+          createdDate: timestampNow,
+          modifiedBy: verifiedUid,
+          modifiedDate: timestampNow,
+        };
+
+        await db.collection('users').doc(userRecord.uid).set(profilePayload);
+
+        // Audit Log
+        await db.collection('auditLogs').add({
+          tenantId: targetTenantId,
+          siteId: (siteIds && siteIds.length > 0) ? siteIds[0] : null,
+          eventType: 'USER_CREATION',
+          entityType: 'UserProfile',
+          entityId: userRecord.uid,
+          summary: `Created user account for ${cleanEmail} with role ${role}`,
+          performedBy: verifiedUid,
+          createdDate: timestampNow,
+          timestamp: timestampNow,
+        });
+
+        return res.json({
+          success: true,
+          uid: userRecord.uid,
+          message: `User ${cleanEmail} successfully created with role ${role}.`
+        });
+      } catch (error: any) {
+        // Rollback Auth user
+        try {
+          await auth.deleteUser(userRecord.uid);
+        } catch (delErr) {
+          console.error('Failed to rollback Auth user:', delErr);
+        }
+        return res.status(500).json({ success: false, error: `Failed to create user profile in Firestore: ${error.message}` });
+      }
+    } catch (error: any) {
+      console.error('Provisioning endpoint error:', error);
+      return res.status(500).json({ success: false, error: error.message || 'Internal server error' });
     }
   });
 

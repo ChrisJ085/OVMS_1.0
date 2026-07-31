@@ -108,6 +108,10 @@ exports.createOvmsUser = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', `Invalid role specified: ${role}`);
   }
 
+  if (role !== 'PLATFORM_SUPERUSER' && !tenantId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid tenant must be selected for non-superuser accounts.');
+  }
+
   // Enforce specific role creation permissions
   if (callerProfile.role === 'TENANT_ADMIN') {
     if (role === 'PLATFORM_SUPERUSER') {
@@ -138,14 +142,25 @@ exports.createOvmsUser = functions.https.onCall(async (data, context) => {
         continue;
       }
 
-      // Check Firestore locations collection
-      const locSnap = await db.collection('locations')
-        .where('tenantId', '==', tenantId)
-        .where('siteId', '==', sId)
-        .limit(1)
-        .get();
+      // Check Firestore sites collection
+      let isValidSite = false;
+      const siteDoc = await db.collection('sites').doc(sId).get();
+      
+      if (siteDoc.exists && siteDoc.data().tenantId === tenantId) {
+        isValidSite = true;
+      } else {
+        // Fallback to checking by siteId field just in case
+        const siteSnap = await db.collection('sites')
+          .where('tenantId', '==', tenantId)
+          .where('siteId', '==', sId)
+          .limit(1)
+          .get();
+        if (!siteSnap.empty) {
+          isValidSite = true;
+        }
+      }
 
-      if (locSnap.empty) {
+      if (!isValidSite) {
         throw new functions.https.HttpsError('invalid-argument', `Site ID '${sId}' does not exist or does not belong to tenant '${tenantId}'.`);
       }
     }
