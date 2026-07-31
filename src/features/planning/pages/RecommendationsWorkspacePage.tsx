@@ -61,7 +61,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
     if (!tenantId || !siteId) return;
     setGenerating(true);
     try {
-      const q = query(collection(db, 'products'), where('tenantId', '==', tenantId), where('status', '==', 'active'));
+      const q = query(collection(db, 'products'), where('tenantId', '==', tenantId), where('siteId', '==', siteId), where('status', '==', 'active'));
       const snap = await getDocs(q);
       
       let count = 0;

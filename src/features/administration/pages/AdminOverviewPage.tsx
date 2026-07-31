@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getSiteSettings } from '../services/settingsService';
+import { TenantDeletionWorkflow } from './components/TenantDeletionWorkflow';
 import { SiteSettings } from '../../../types/settings';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
@@ -45,6 +46,7 @@ export const AdminOverviewPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'tenants'>('overview');
+  const [deletingTenant, setDeletingTenant] = useState<any>(null);
   
   const [stats, setStats] = useState({
     productsWithoutRules: 0,
@@ -68,7 +70,6 @@ export const AdminOverviewPage: React.FC = () => {
   const [newUserJobTitle, setNewUserJobTitle] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('VIEWER');
   const [newUserTenantId, setNewUserTenantId] = useState('');
-  const [newUserSiteIds, setNewUserSiteIds] = useState('');
   const [newUserTempPass, setNewUserTempPass] = useState('TempPass123!');
   const [creatingUser, setCreatingUser] = useState(false);
   const [creatingUserMsg, setCreatingUserMsg] = useState<string | null>(null);
@@ -79,6 +80,9 @@ export const AdminOverviewPage: React.FC = () => {
   const [newTenantCode, setNewTenantCode] = useState('');
   const [creatingTenant, setCreatingTenant] = useState(false);
   const [tenantMsg, setTenantMsg] = useState<string | null>(null);
+
+  const [availableSites, setAvailableSites] = useState<any[]>([]);
+  const [selectedSites, setSelectedSites] = useState<string[]>([]);
 
   // Fetch stats and site settings
   useEffect(() => {
@@ -120,13 +124,17 @@ export const AdminOverviewPage: React.FC = () => {
       if (userProfile.role === 'PLATFORM_SUPERUSER') {
         q = collection(db, 'users');
       } else {
-        q = query(collection(db, 'users'), where('tenantId', '==', userProfile.tenantId), where('role', '!=', 'PLATFORM_SUPERUSER'));
+        q = query(collection(db, 'users'), where('tenantId', '==', userProfile.tenantId));
       }
       
       const snap = await getDocs(q);
-      const list: UserProfile[] = [];
+      let list: UserProfile[] = [];
       snap.forEach(docSnap => {
-        list.push({ uid: docSnap.id, ...(docSnap.data() as any) } as UserProfile);
+        const data = docSnap.data() as UserProfile;
+        // Filter out platform superusers for non-superusers locally to avoid composite index requirement
+        if (userProfile.role === 'PLATFORM_SUPERUSER' || data.role !== 'PLATFORM_SUPERUSER') {
+          list.push({ uid: docSnap.id, ...data } as UserProfile);
+        }
       });
       setUsersList(list);
     } catch (err: any) {
@@ -159,6 +167,35 @@ export const AdminOverviewPage: React.FC = () => {
       fetchTenants();
     }
   }, [activeTab, userProfile]);
+
+  useEffect(() => {
+    if (userProfile?.role === 'PLATFORM_SUPERUSER') {
+      fetchTenants();
+    }
+  }, [userProfile]);
+
+  useEffect(() => {
+    const fetchSitesForProvisioning = async () => {
+      const targetTenantId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId : userProfile?.tenantId;
+      if (!targetTenantId || !db) {
+        setAvailableSites([]);
+        setSelectedSites([]);
+        return;
+      }
+      try {
+        const q = query(collection(db, 'sites'), where('tenantId', '==', targetTenantId));
+        const snap = await getDocs(q);
+        const sites: any[] = [];
+        snap.forEach(doc => {
+          sites.push({ id: doc.id, ...doc.data() });
+        });
+        setAvailableSites(sites);
+      } catch (err) {
+        console.error("Failed to load sites for provisioning:", err);
+      }
+    };
+    fetchSitesForProvisioning();
+  }, [newUserTenantId, userProfile?.tenantId, userProfile?.role]);
 
   // Handle Account Unlock
   const handleUnlockUser = async (targetUid: string) => {
@@ -260,7 +297,7 @@ export const AdminOverviewPage: React.FC = () => {
     setCreatingUserMsg(null);
 
     const actualTenantId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId.trim() : userProfile?.tenantId;
-    const sitesArray = (newUserSiteIds || '').split(',').map(s => s.trim()).filter(Boolean);
+    const sitesArray = selectedSites;
 
     try {
       const functionsInstance = getFunctions(app!);
@@ -283,7 +320,7 @@ export const AdminOverviewPage: React.FC = () => {
       setNewUserEmail('');
       setNewUserDisplayName('');
       setNewUserJobTitle('');
-      setNewUserSiteIds('');
+      setSelectedSites([]);
       setNewUserTempPass('TempPass123!');
     } catch (err: any) {
       console.error('Error provisioning user:', err);
@@ -624,30 +661,62 @@ export const AdminOverviewPage: React.FC = () => {
                   </select>
                 </div>
 
-                {userProfile?.role === 'PLATFORM_SUPERUSER' && (
+                {userProfile?.role === 'PLATFORM_SUPERUSER' ? (
                   <div className="space-y-1.5 animate-fade-in">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Tenant Code</label>
-                    <input
-                      type="text"
+                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Tenant</label>
+                    <select
                       required
                       value={newUserTenantId}
                       onChange={e => setNewUserTenantId(e.target.value)}
-                      placeholder="e.g. GXO_BEAUTY"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- Select a Tenant --</option>
+                      {tenantsList.map(t => (
+                        <option key={t.id} value={t.id}>{t.tenantName} ({t.tenantCode})</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Tenant Code</label>
+                    <input
+                      type="text"
+                      disabled
+                      value={userProfile?.tenantId || ''}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-500 cursor-not-allowed"
                     />
                   </div>
                 )}
 
                 <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Site IDs (Comma-separated)</label>
-                    <input
-                      type="text"
-                      value={newUserSiteIds}
-                      onChange={e => setNewUserSiteIds(e.target.value)}
-                      placeholder="e.g. site_north, site_south"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"
-                    />
-                    <p className="text-[10px] text-slate-500">Comma-separated list of assigned site IDs.</p>
+                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Sites</label>
+                    {availableSites.length > 0 ? (
+                      <div className="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950 border border-slate-800 rounded-lg">
+                        {availableSites.map(site => (
+                          <label key={site.id} className="flex items-center gap-2 cursor-pointer group">
+                            <input
+                              type="checkbox"
+                              checked={selectedSites.includes(site.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedSites([...selectedSites, site.id]);
+                                } else {
+                                  setSelectedSites(selectedSites.filter(id => id !== site.id));
+                                }
+                              }}
+                              className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-950"
+                            />
+                            <span className="text-sm text-slate-300 group-hover:text-slate-200">
+                              {site.siteName || site.name || site.id} <span className="text-xs text-slate-500">({site.id})</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-500 italic">
+                        No sites available for the selected tenant.
+                      </div>
+                    )}
                   </div>
 
                 <div className="space-y-1.5">
@@ -696,20 +765,33 @@ export const AdminOverviewPage: React.FC = () => {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="text-slate-500 text-xs uppercase font-semibold">
-                        <th className="pb-3">Tenant Name</th>
+                        <th className="pb-3 pl-3">Tenant Name</th>
                         <th className="pb-3">Tenant Code / ID</th>
                         <th className="pb-3">Status</th>
+                        <th className="pb-3 text-right pr-3">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-sm">
                       {tenantsList.map(tenant => (
                         <tr key={tenant.id} className="hover:bg-slate-900/10">
-                          <td className="py-3 font-semibold text-slate-200">{tenant.tenantName}</td>
+                          <td className="py-3 pl-3 font-semibold text-slate-200">{tenant.tenantName}</td>
                           <td className="py-3 font-mono text-xs text-amber-500">{tenant.tenantCode}</td>
                           <td className="py-3">
-                            <span className="text-xs bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-0.5 rounded">
-                              Active
+                            <span className={`text-xs px-2 py-0.5 rounded border ${
+                              tenant.status === 'inactive' ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' :
+                              tenant.status === 'DELETION_PENDING' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                              'bg-green-500/10 text-green-400 border-green-500/20'
+                            }`}>
+                              {tenant.status === 'inactive' ? 'Inactive' : tenant.status === 'DELETION_PENDING' ? 'Deletion Pending' : 'Active'}
                             </span>
+                          </td>
+                          <td className="py-3 text-right pr-3">
+                            <button
+                              onClick={() => setDeletingTenant(tenant)}
+                              className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded transition-colors"
+                            >
+                              Manage
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -766,6 +848,18 @@ export const AdminOverviewPage: React.FC = () => {
             </SectionCard>
           </div>
 
+        </div>
+      )}
+
+      {deletingTenant && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <TenantDeletionWorkflow
+              tenant={deletingTenant}
+              onClose={() => setDeletingTenant(null)}
+              onRefresh={fetchTenants}
+            />
+          </div>
         </div>
       )}
 

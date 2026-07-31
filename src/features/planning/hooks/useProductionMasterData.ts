@@ -37,7 +37,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
 
         // Fetch products
         const productsRef = collection(db, 'products');
-        const qProducts = query(productsRef, where('tenantId', '==', tenantId), where('status', '==', 'active'));
+        const qProducts = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId), where('status', '==', 'active'));
         const snapProducts = await getDocs(qProducts);
         const fetchedProducts = snapProducts.docs.map(d => ({ id: d.id, ...d.data() } as Product));
 

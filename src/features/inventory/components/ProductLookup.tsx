@@ -13,7 +13,7 @@ interface ProductLookupProps {
 }
 
 export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, disabled }) => {
-  const { tenantId } = useSiteContext();
+  const { tenantId, siteId } = useSiteContext();
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,6 +23,7 @@ export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, d
   useEffect(() => {
     const unsubscribe = subscribeToProducts(
       tenantId,
+      siteId,
       (items) => {
         // Only active products
         setProducts(items.filter(p => p.status === 'active'));
@@ -43,7 +44,7 @@ export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, d
       unsubscribe();
       unsubUnits();
     };
-  }, [tenantId]);
+  }, [tenantId, siteId]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

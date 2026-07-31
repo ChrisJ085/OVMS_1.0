@@ -15,7 +15,7 @@ export async function validateImportData(
 
   if (type === 'PRODUCTS') {
     const productsRef = collection(db, 'products');
-    const q = query(productsRef, where('tenantId', '==', tenantId));
+    const q = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
     const snapshot = await getDocs(q);
     const existingCodes = new Set(snapshot.docs.map(d => d.data().productCode));
 
@@ -61,7 +61,7 @@ export async function validateImportData(
       }
   } else if (type === 'INVENTORY') {
      const productsRef = collection(db, 'products');
-     const qProd = query(productsRef, where('tenantId', '==', tenantId));
+     const qProd = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
      const prodSnap = await getDocs(qProd);
      const productMap = new Map(prodSnap.docs.map(d => [d.data().productCode, d]));
 
@@ -107,7 +107,7 @@ export async function validateImportData(
       }
   } else if (type === 'PLANNING_RULES') {
     const productsRef = collection(db, 'products');
-    const qProd = query(productsRef, where('tenantId', '==', tenantId));
+    const qProd = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
     const prodSnap = await getDocs(qProd);
     const productMap = new Map(prodSnap.docs.map(d => [d.data().productCode, d]));
 

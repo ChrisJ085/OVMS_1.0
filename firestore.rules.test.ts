@@ -1227,4 +1227,53 @@ describe('Firestore Security Rules', () => {
       }));
     });
   });
+
+  describe('Tenant Deletion Protection', () => {
+    it('prevents normal writes when tenant is DELETION_PENDING', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'tenants', 'tenant1'), {
+          tenantName: 'Tenant 1',
+          status: 'DELETION_PENDING'
+        });
+      });
+      const db = getDb({ uid: 'admin1' });
+      await assertFails(setDoc(doc(db, 'products', 'new_prod'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        status: 'active'
+      }));
+    });
+
+    it('prevents normal writes when tenant is inactive', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, 'tenants', 'tenant1'), {
+          tenantName: 'Tenant 1',
+          status: 'inactive'
+        });
+      });
+      const db = getDb({ uid: 'admin1' });
+      await assertFails(setDoc(doc(db, 'products', 'new_prod2'), {
+        tenantId: 'tenant1',
+        siteId: 'site1',
+        status: 'active'
+      }));
+    });
+
+    it('allows superusers to read deletion jobs', async () => {
+      const db = getDb({ uid: 'super1' });
+      await assertSucceeds(getDoc(doc(db, 'tenantDeletionJobs', 'job1')));
+    });
+
+    it('denies admins from reading deletion jobs', async () => {
+      const db = getDb({ uid: 'admin1' });
+      await assertFails(getDoc(doc(db, 'tenantDeletionJobs', 'job1')));
+    });
+
+    it('denies superusers from writing deletion jobs (backend only)', async () => {
+      const db = getDb({ uid: 'super1' });
+      await assertFails(setDoc(doc(db, 'tenantDeletionJobs', 'job1'), { status: 'PREVIEW' }));
+    });
+  });
 });

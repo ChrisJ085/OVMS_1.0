@@ -61,7 +61,7 @@ export const InventoryBalancesPage: React.FC = () => {
       }
     );
 
-    const unsubProducts = subscribeToProducts(tenantId, setProducts, console.error);
+    const unsubProducts = subscribeToProducts(tenantId, siteId, setProducts, console.error);
 
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,

@@ -53,6 +53,7 @@ export const createProductFromImport = async (
   // 3. Create product
   const result = await createProduct({
     tenantId,
+    siteId,
     productCode: input.productCode,
     description: input.description,
     categoryId: input.categoryId || 'default',

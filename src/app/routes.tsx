@@ -152,7 +152,7 @@ function AppRouterWrapper() {
     return (
       <LoginPage 
         onLoginSuccess={login} 
-        authError={authError} 
+        authError={authError?.userMessage || null} 
         loading={loading}
       />
     );
@@ -163,7 +163,7 @@ function AppRouterWrapper() {
       <PasswordChangePage 
         onSubmit={changePassword} 
         loading={loading}
-        error={authError}
+        error={authError?.userMessage || null}
         onLogout={logout}
       />
     );

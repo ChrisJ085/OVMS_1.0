@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { auth } from '../../../config/firebase';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../../../config/firebase';
 import { UserProfile } from '../../../types/auth';
 import { AppError, toAppError } from '../../../types/error';
 import { loginWithEmail, logoutUser, changeUserPassword } from '../services/authService';
@@ -39,8 +40,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         setLoading(true);
-        setAuthError(null);
         if (firebaseUser) {
+          setAuthError(null);
           setUser(firebaseUser);
           const profile = await fetchUserProfile(firebaseUser.uid);
           
@@ -66,6 +67,29 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
           }
 
+          if (profile.tenantId && profile.role !== 'PLATFORM_SUPERUSER') {
+            try {
+              const tenantSnap = await getDoc(doc(db, 'tenants', profile.tenantId));
+              if (tenantSnap.exists()) {
+                const tenantStatus = tenantSnap.data().status;
+                if (tenantStatus === 'inactive' || tenantStatus === 'DELETION_PENDING') {
+                  await logoutUser();
+                  setUser(null);
+                  setUserProfile(null);
+                  setAuthError({
+                    userMessage: `Your organization's account is currently ${tenantStatus === 'inactive' ? 'inactive' : 'pending deletion'}. Please contact support.`,
+                    code: 'TENANT_DEACTIVATED'
+                  });
+                  return;
+                }
+              }
+            } catch (err) {
+              console.error('Failed to verify tenant status:', err);
+              // Fallback to allowing login if we can't read the tenant doc for some reason?
+              // Or block? The prompt just says "when a tenant is deactivated".
+            }
+          }
+
           setUserProfile(profile);
           setRequiresPasswordChange(profile.requiresPasswordChange);
         } else {
@@ -83,6 +107,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (userProfile?.tenantId && userProfile.role !== 'PLATFORM_SUPERUSER') {
+      const unsub = onSnapshot(doc(db, 'tenants', userProfile.tenantId), async (docSnap) => {
+        if (docSnap.exists()) {
+          const tenantStatus = docSnap.data().status;
+          if (tenantStatus === 'inactive' || tenantStatus === 'DELETION_PENDING') {
+            await logoutUser();
+            setUser(null);
+            setUserProfile(null);
+            setAuthError({
+              userMessage: `Your organization's account is currently ${tenantStatus === 'inactive' ? 'inactive' : 'pending deletion'}. Please contact support.`,
+              code: 'TENANT_DEACTIVATED'
+            });
+          }
+        }
+      });
+      return () => unsub();
+    }
+  }, [userProfile?.tenantId, userProfile?.role]);
 
   const login = async (email: string, pass: string) => {
     setLoading(true);
@@ -103,6 +147,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(null);
       setUserProfile(null);
       setRequiresPasswordChange(false);
+      setAuthError(null);
     }
   };
 

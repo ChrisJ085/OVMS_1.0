@@ -18,12 +18,13 @@ const COLLECTION_NAME = 'products';
  */
 async function isUniqueProductCode(
   tenantId: string,
+  siteId: string,
   productCode: string,
   excludeId?: string
 ): Promise<boolean> {
   const constraints = [
     where('tenantId', '==', tenantId),
-    where('siteId', '==', ''),
+    where('siteId', '==', siteId),
     where('productCode', '==', productCode)
   ];
 
@@ -56,7 +57,7 @@ export const createProduct = async (
 ): Promise<ServiceResult<string>> => {
   try {
     const codeValue = trimCode(data.productCode);
-    const isUnique = await isUniqueProductCode(data.tenantId, codeValue);
+    const isUnique = await isUniqueProductCode(data.tenantId, data.siteId, codeValue);
     if (!isUnique) {
       return { success: false, error: `A product with code "${codeValue}" already exists.` };
     }
@@ -85,7 +86,7 @@ export const createProduct = async (
       unitOfMeasureId: primaryConfig.unitOfMeasureId,
       casesPerPallet: primaryConfig.casesPerPallet,
       unitsPerCase: primaryConfig.unitsPerCase,
-      siteId: '', // Always empty for tenant-level products
+      siteId: data.siteId,
       status: 'active'
     });
     return { success: true, data: id };
@@ -105,7 +106,7 @@ export const updateProduct = async (
 
     if (data.productCode) {
       const codeValue = trimCode(data.productCode);
-      const isUnique = await isUniqueProductCode(tenantId, codeValue, id);
+      const isUnique = await isUniqueProductCode(tenantId, data.siteId !== undefined ? data.siteId : currentProduct.siteId, codeValue, id);
       if (!isUnique) {
         return { success: false, error: `A product with code "${codeValue}" already exists.` };
       }
@@ -173,12 +174,13 @@ export const setProductStatus = async (
 
 export const subscribeToProducts = (
   tenantId: string,
+  siteId: string,
   onUpdate: (products: Product[]) => void,
   onError: (error: Error) => void
 ) => {
   const constraints: QueryConstraint[] = [
     where('tenantId', '==', tenantId),
-    where('siteId', '==', '')
+    where('siteId', '==', siteId)
   ];
   
   return subscribeToCollection<Product>(

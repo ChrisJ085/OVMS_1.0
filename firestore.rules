@@ -32,7 +32,8 @@ service cloud.firestore {
       return isAccountActive() &&
              profile != null && profile.role == roleName &&
              tenantId != null &&
-             profile.tenantId == tenantId;
+             profile.tenantId == tenantId &&
+             isTenantActiveForWrites(tenantId);
     }
 
     function isTenantAdmin(tenantId) { return isRole(tenantId, 'TENANT_ADMIN'); }
@@ -47,6 +48,11 @@ service cloud.firestore {
     function belongsToUserTenant(tenantId) {
       let profile = getUserProfile();
       return isAccountActive() && (isSuperuser() || (tenantId != null && profile.tenantId == tenantId));
+    }
+
+    function isTenantActiveForWrites(tenantId) {
+      let tenantStatus = get(/databases/$(database)/documents/tenants/$(tenantId)).data.status;
+      return tenantStatus != 'DELETION_PENDING' && tenantStatus != 'inactive';
     }
 
     function isAssignedToSite(siteId) {
@@ -159,6 +165,16 @@ service cloud.firestore {
     // ------------------------------------------------------------------------
     // Tenants & Sites & Settings
     // ------------------------------------------------------------------------
+    match /tenantDeletionJobs/{jobId} {
+      allow read: if isSuperuser();
+      allow write: if false; // Only backend can write to deletion jobs
+    }
+
+    match /platformDeletionReceipts/{receiptId} {
+      allow read: if isSuperuser();
+      allow write: if false; // Only backend can write receipts
+    }
+
     match /tenants/{tenantId} {
       allow read: if hasTenantAccess(tenantId) && getUserProfile() != null && getUserProfile().role != 'DISPLAY';
       allow create, update, delete: if isSuperuser();
@@ -169,7 +185,9 @@ service cloud.firestore {
       allow delete: if isSuperuser();
     }
     match /siteSettings/{settingId} {
-      allow read: if isSuperuser() || (hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && (getUserProfile() != null && (getUserProfile().role != 'DISPLAY' || ('isSensitive' in resource.data && resource.data.isSensitive == false))));
+      allow read: if isSuperuser() || 
+                    (resource == null && hasAssignedSiteAccess(settingId.split('_')[0], settingId.split('_')[1])) ||
+                    (resource != null && hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && (getUserProfile() != null && (getUserProfile().role != 'DISPLAY' || ('isSensitive' in resource.data && resource.data.isSensitive == false))));
       allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser();
     }

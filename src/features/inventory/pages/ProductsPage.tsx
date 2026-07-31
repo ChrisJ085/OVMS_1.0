@@ -17,7 +17,7 @@ import { ProductDetailModal } from './components/ProductDetailModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const ProductsPage: React.FC = () => {
-  const { tenantId } = useSiteContext();
+  const { tenantId, siteId } = useSiteContext();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
@@ -39,6 +39,7 @@ export const ProductsPage: React.FC = () => {
     setLoading(true);
     const unsubProducts = subscribeToProducts(
       tenantId,
+      siteId,
       (items) => {
         setProducts(items);
         setLoading(false);
@@ -76,7 +77,7 @@ export const ProductsPage: React.FC = () => {
       unsubUnits();
       unsubDestinations();
     };
-  }, [tenantId]);
+  }, [tenantId, siteId]);
 
   const confirmAction = async () => {
     if (!actionItem || !actionItem.item.id) return;

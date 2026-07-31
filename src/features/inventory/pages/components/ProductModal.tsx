@@ -19,7 +19,7 @@ interface ProductModalProps {
 export const ProductModal: React.FC<ProductModalProps> = ({ 
   isOpen, onClose, item, categories, units, destinations 
 }) => {
-  const { tenantId } = useSiteContext();
+  const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<Product>>({
     operationallyRelevant: true,
     configurations: []
@@ -38,6 +38,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         setFormData({
           productCode: '',
           description: '',
+          siteId,
           categoryId: activeCategories.length > 0 ? activeCategories[0].id : '',
           configurations: [
             { unitOfMeasureId: initialUomId, casesPerPallet: null, unitsPerCase: null }
@@ -48,7 +49,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         });
       }
     }
-  }, [isOpen, item, categories, units]);
+  }, [isOpen, item, categories, units, siteId]);
 
   if (!isOpen) return null;
 
