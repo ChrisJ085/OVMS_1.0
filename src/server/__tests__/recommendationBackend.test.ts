@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { CANONICAL_TRIGGER_TYPES } from '../../types/recommendation';
 import {
   canonicalSerialize,
   generateCanonicalFingerprint
@@ -161,8 +162,8 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
       }
 
       // 9. Reject unsupported trigger types
-      const allowedTriggerTypes = ['MANUAL', 'MANUAL_RECALCULATION', 'SCHEDULED', 'EVENT_DRIVEN'];
-      if (!allowedTriggerTypes.includes(requested.triggerType)) {
+      const allowedTriggerTypes = CANONICAL_TRIGGER_TYPES;
+      if (!allowedTriggerTypes.includes(requested.triggerType as any)) {
         return { authorized: false, status: 400, error: 'Bad Request: Unsupported trigger type' };
       }
 
@@ -172,7 +173,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies access if accountStatus is not ACTIVE', () => {
       const result = validateRecommendationJobAccess(
         { role: 'TENANT_ADMIN', tenantId: 'tenant_1', accountStatus: 'INACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_1', siteStatus: 'ACTIVE', tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -183,7 +184,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies access for disallowed roles like WAREHOUSE_OPERATOR', () => {
       const result = validateRecommendationJobAccess(
         { role: 'WAREHOUSE_OPERATOR', tenantId: 'tenant_1', accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_1', siteStatus: 'ACTIVE', tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -194,7 +195,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('enforces tenant isolation for PLANNER role', () => {
       const result = validateRecommendationJobAccess(
         { role: 'PLANNER', tenantId: 'tenant_1', siteIds: ['site_A'], accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_2', siteId: 'site_A', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_2', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_2', siteStatus: 'ACTIVE', tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -205,7 +206,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('enforces site assignment isolation for PLANNER role', () => {
       const result = validateRecommendationJobAccess(
         { role: 'PLANNER', tenantId: 'tenant_1', siteIds: ['site_A'], accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_B', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_B', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_1', siteStatus: 'ACTIVE', tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -216,7 +217,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies request if site document does not exist', () => {
       const result = validateRecommendationJobAccess(
         { role: 'TENANT_ADMIN', tenantId: 'tenant_1', accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_X', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_X', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: false, tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -227,7 +228,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies request if site tenantId mismatches requested tenantId', () => {
       const result = validateRecommendationJobAccess(
         { role: 'PLATFORM_SUPERUSER', tenantId: null, accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_2', siteStatus: 'ACTIVE', tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -238,7 +239,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies request if tenant is inactive', () => {
       const result = validateRecommendationJobAccess(
         { role: 'TENANT_ADMIN', tenantId: 'tenant_1', accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_1', siteStatus: 'ACTIVE', tenantExists: true, tenantStatus: 'INACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -249,7 +250,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies request if site is inactive', () => {
       const result = validateRecommendationJobAccess(
         { role: 'TENANT_ADMIN', tenantId: 'tenant_1', accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL' },
+        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION' },
         { siteExists: true, siteTenantId: 'tenant_1', siteStatus: 'INACTIVE', tenantExists: true, tenantStatus: 'ACTIVE' }
       );
       expect(result.authorized).toBe(false);
@@ -260,7 +261,7 @@ describe('Backend Recommendation System Architecture & Safety Constraints', () =
     it('denies request if product does not belong to requested tenant or site', () => {
       const result = validateRecommendationJobAccess(
         { role: 'TENANT_ADMIN', tenantId: 'tenant_1', accountStatus: 'ACTIVE' },
-        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL', productIds: ['prod_1'] },
+        { tenantId: 'tenant_1', siteId: 'site_A', triggerType: 'MANUAL_RECALCULATION', productIds: ['prod_1'] },
         {
           siteExists: true,
           siteTenantId: 'tenant_1',

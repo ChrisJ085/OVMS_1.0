@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { FieldValue, Query, DocumentReference } from 'firebase-admin/firestore';
+import { FieldValue, Query, DocumentReference, Timestamp } from 'firebase-admin/firestore';
 import { adminAuth as auth, adminDb as db, resolvedAdminProjectId } from "./src/config/firebaseAdmin";
 import { RecommendationBackendService } from "./src/server/recommendationBackendService";
 import { CANONICAL_TRIGGER_TYPES } from "./src/types/recommendation";
@@ -59,6 +59,38 @@ function firestoreValueToJs(val: any): any {
     return firestoreFieldsToJs(val.mapValue.fields);
   }
   return null;
+}
+
+function buildDisplayPriorityDoc(p: any, priorityId?: string) {
+  const docId = priorityId || p.id || '';
+  return {
+    tenantId: p.tenantId || '',
+    siteId: p.siteId || '',
+    sourcePriorityId: docId,
+    priorityCode: p.productCodeSnapshot || p.productId || '',
+    productCodeSnapshot: p.productCodeSnapshot || '',
+    descriptionSnapshot: p.descriptionSnapshot || '',
+    title: p.descriptionSnapshot || p.instruction || '',
+    instruction: p.instruction || '',
+    priorityStatus: p.priorityStatus || 'ACTIVE',
+    priorityLevelId: p.priorityLevelId || 'NORMAL',
+    priorityLevelLabel: p.priorityLevelLabel || p.priorityLevelId || 'NORMAL',
+    actionTypeId: p.actionTypeId || '',
+    actionTypeLabel: p.actionTypeLabel || '',
+    requestedQuantity: p.requestedQuantity ?? null,
+    progressQuantity: p.progressQuantity ?? 0,
+    progressPercent: p.progressPercent ?? 0,
+    destinationId: p.destinationId ?? null,
+    destinationLabel: p.destinationLabel || '',
+    overflowDestinationId: p.overflowDestinationId ?? null,
+    overflowDestinationLabel: p.overflowDestinationLabel || '',
+    startAt: p.startAt || null,
+    createdDate: p.createdDate || null,
+    completedAt: p.completedAt || null,
+    expireAt: p.expireAt || null,
+    untilSwitchedOff: p.untilSwitchedOff || false,
+    modifiedDate: p.modifiedDate || FieldValue.serverTimestamp()
+  };
 }
 
 async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ exists: boolean; data?: any }> {
@@ -245,9 +277,8 @@ async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Prom
   }
 }
 
-async function startServer() {
+export async function createApp() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json());
 
@@ -794,10 +825,475 @@ async function startServer() {
     }
   });
 
-  // Start background job polling worker every 5 seconds
-  setInterval(() => {
-    RecommendationBackendService.claimAndProcessNextJob().catch(() => {});
-  }, 5000);
+  // ------------------------------------------------------------------------
+  // Recommendations Override Endpoints
+  // ------------------------------------------------------------------------
+
+  // POST /api/recommendations/:id/override
+  app.post("/api/recommendations/:id/override", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Missing Bearer token" });
+      }
+      const token = authHeader.split("Bearer ")[1];
+      let decodedToken;
+      try {
+        decodedToken = await auth.verifyIdToken(token);
+      } catch (e: any) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Invalid token" });
+      }
+
+      const uid = decodedToken.uid;
+      const profileRes = await safeGetUserProfile(uid, token);
+      if (!profileRes.exists || !profileRes.data) {
+        return res.status(403).json({ success: false, error: "Forbidden: User profile not found" });
+      }
+
+      const profile = profileRes.data;
+      if (profile.accountStatus !== "ACTIVE") {
+        return res.status(403).json({ success: false, error: "Forbidden: User account is inactive" });
+      }
+
+      const allowedRoles = ["PLATFORM_SUPERUSER", "TENANT_ADMIN", "PLANNER"];
+      if (!allowedRoles.includes(profile.role)) {
+        return res.status(403).json({ success: false, error: "Forbidden: Insufficient role permissions" });
+      }
+
+      const recommendationId = req.params.id;
+      const { overrideData } = req.body;
+
+      if (!overrideData || typeof overrideData.reason !== "string" || overrideData.reason.trim() === "") {
+        return res.status(400).json({ success: false, error: "Bad Request: override reason is required" });
+      }
+
+      const recRef = db.collection("recommendations").doc(recommendationId);
+      const currentRecRef = db.collection("currentRecommendations").doc(recommendationId);
+
+      const result = await db.runTransaction(async (transaction) => {
+        const recSnap = await transaction.get(recRef);
+        if (!recSnap.exists) {
+          return { status: 404, data: { success: false, error: "Recommendation not found" } };
+        }
+
+        const rec = recSnap.data()!;
+
+        // Check target recommendation status is ACTIVE
+        if (rec.recommendationStatus !== "ACTIVE") {
+          return { status: 400, data: { success: false, error: "Recommendation is not active" } };
+        }
+
+        // Apply strict Tenant Isolation
+        if (profile.role !== "PLATFORM_SUPERUSER" && rec.tenantId !== profile.tenantId) {
+          return { status: 403, data: { success: false, error: "Forbidden: Tenant isolation violation" } };
+        }
+
+        // Apply strict Site Assignment
+        if (profile.role === "PLANNER") {
+          if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(rec.siteId)) {
+            return { status: 403, data: { success: false, error: "Forbidden: Site assignment isolation violation" } };
+          }
+        }
+
+        const overrideContext = {
+          overriddenBy: uid,
+          overriddenAt: FieldValue.serverTimestamp(),
+          reason: overrideData.reason,
+          overrideStatus: "OVERRIDE_ACTIVE",
+          actionTypeId: overrideData.actionTypeId || rec.decisionOutput?.recommendedActionTypeId || "RELEASE",
+          quantity: overrideData.quantity !== undefined ? overrideData.quantity : (rec.decisionOutput?.recommendedQuantity || 0),
+          destinationId: overrideData.destinationId || rec.decisionOutput?.recommendedDestinationId || null,
+          priorityLevelId: overrideData.priorityLevelId || rec.decisionOutput?.recommendedPriorityLevelId || "NORMAL",
+          instruction: overrideData.instruction || `Planner override for ${rec.productCodeSnapshot}`
+        };
+
+        // Write priority document deterministically
+        const priorityId = 'priority_' + recommendationId;
+        const priorityRef = db.collection("priorities").doc(priorityId);
+        const displayPriorityRef = db.collection("displayPriorities").doc(priorityId);
+
+        const priorityDoc = {
+          id: priorityId,
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          sourceType: "SYSTEM_RECOMMENDATION",
+          sourceRecommendationId: recommendationId,
+          productId: rec.productId,
+          productCodeSnapshot: rec.productCodeSnapshot,
+          descriptionSnapshot: rec.descriptionSnapshot,
+          actionTypeId: overrideContext.actionTypeId,
+          requestedQuantity: overrideContext.quantity,
+          destinationId: overrideContext.destinationId,
+          priorityLevelId: overrideContext.priorityLevelId,
+          instruction: overrideContext.instruction,
+          plannerReason: overrideData.reason,
+          priorityStatus: "ACTIVE",
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp(),
+          createdDate: FieldValue.serverTimestamp()
+        };
+
+        const displayPriorityDoc = buildDisplayPriorityDoc(priorityDoc, priorityId);
+
+        // Perform updates in transaction
+        transaction.update(recRef, {
+          recommendationStatus: "OVERRIDDEN",
+          overrideContext,
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp()
+        });
+
+        // Also update currentRecommendations if exists
+        const currentSnap = await transaction.get(currentRecRef);
+        if (currentSnap.exists) {
+          transaction.update(currentRecRef, {
+            recommendationStatus: "OVERRIDDEN",
+            overrideContext,
+            modifiedBy: uid,
+            modifiedDate: FieldValue.serverTimestamp()
+          });
+        }
+
+        transaction.set(priorityRef, priorityDoc, { merge: true });
+        transaction.set(displayPriorityRef, displayPriorityDoc, { merge: true });
+
+        // Audit Log entry in transaction
+        const auditRef = db.collection("auditLogs").doc();
+        transaction.set(auditRef, {
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          eventType: "RECOMMENDATION_OVERRIDE",
+          entityType: "Recommendation",
+          entityId: recommendationId,
+          summary: `Planner override applied to recommendation ${recommendationId}`,
+          performedBy: uid,
+          createdDate: FieldValue.serverTimestamp(),
+          timestamp: FieldValue.serverTimestamp()
+        });
+
+        return { status: 200, data: { success: true } };
+      });
+
+      return res.status(result.status).json(result.data);
+    } catch (error: any) {
+      console.error("Override endpoint error:", error);
+      return res.status(500).json({ success: false, error: error.message || "Internal server error" });
+    }
+  });
+
+  // POST /api/recommendations/:id/suppress
+  app.post("/api/recommendations/:id/suppress", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Missing Bearer token" });
+      }
+      const token = authHeader.split("Bearer ")[1];
+      let decodedToken;
+      try {
+        decodedToken = await auth.verifyIdToken(token);
+      } catch (e: any) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Invalid token" });
+      }
+
+      const uid = decodedToken.uid;
+      const profileRes = await safeGetUserProfile(uid, token);
+      if (!profileRes.exists || !profileRes.data) {
+        return res.status(403).json({ success: false, error: "Forbidden: User profile not found" });
+      }
+
+      const profile = profileRes.data;
+      if (profile.accountStatus !== "ACTIVE") {
+        return res.status(403).json({ success: false, error: "Forbidden: User account is inactive" });
+      }
+
+      const allowedRoles = ["PLATFORM_SUPERUSER", "TENANT_ADMIN", "PLANNER"];
+      if (!allowedRoles.includes(profile.role)) {
+        return res.status(403).json({ success: false, error: "Forbidden: Insufficient role permissions" });
+      }
+
+      const recommendationId = req.params.id;
+      const { suppressionData } = req.body;
+
+      if (!suppressionData || typeof suppressionData.reason !== "string" || suppressionData.reason.trim() === "") {
+        return res.status(400).json({ success: false, error: "Bad Request: suppression reason is required" });
+      }
+
+      const recRef = db.collection("recommendations").doc(recommendationId);
+      const currentRecRef = db.collection("currentRecommendations").doc(recommendationId);
+
+      const result = await db.runTransaction(async (transaction) => {
+        const recSnap = await transaction.get(recRef);
+        if (!recSnap.exists) {
+          return { status: 404, data: { success: false, error: "Recommendation not found" } };
+        }
+
+        const rec = recSnap.data()!;
+
+        // Check target recommendation status is ACTIVE
+        if (rec.recommendationStatus !== "ACTIVE") {
+          return { status: 400, data: { success: false, error: "Recommendation is not active" } };
+        }
+
+        // Apply strict Tenant Isolation
+        if (profile.role !== "PLATFORM_SUPERUSER" && rec.tenantId !== profile.tenantId) {
+          return { status: 403, data: { success: false, error: "Forbidden: Tenant isolation violation" } };
+        }
+
+        // Apply strict Site Assignment
+        if (profile.role === "PLANNER") {
+          if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(rec.siteId)) {
+            return { status: 403, data: { success: false, error: "Forbidden: Site assignment isolation violation" } };
+          }
+        }
+
+        const suppressionContext = {
+          suppressedBy: uid,
+          suppressedAt: FieldValue.serverTimestamp(),
+          reason: suppressionData.reason,
+          scope: suppressionData.scope || "UNTIL_NEXT_SNAPSHOT",
+          expireAt: suppressionData.expireAt ? Timestamp.fromDate(new Date(suppressionData.expireAt)) : null
+        };
+
+        // Perform updates in transaction
+        transaction.update(recRef, {
+          recommendationStatus: "SUPPRESSED",
+          suppressionContext,
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp()
+        });
+
+        // Also update currentRecommendations if exists
+        const currentSnap = await transaction.get(currentRecRef);
+        if (currentSnap.exists) {
+          transaction.update(currentRecRef, {
+            recommendationStatus: "SUPPRESSED",
+            suppressionContext,
+            modifiedBy: uid,
+            modifiedDate: FieldValue.serverTimestamp()
+          });
+        }
+
+        // Withdraw any matching priority
+        const priorityId = rec.linkedPriorityId || ('priority_' + recommendationId);
+        const priorityRef = db.collection("priorities").doc(priorityId);
+        const displayPriorityRef = db.collection("displayPriorities").doc(priorityId);
+
+        const prioSnap = await transaction.get(priorityRef);
+        if (prioSnap.exists) {
+          transaction.update(priorityRef, {
+            priorityStatus: "WITHDRAWN",
+            modifiedBy: uid,
+            modifiedDate: FieldValue.serverTimestamp()
+          });
+          transaction.delete(displayPriorityRef);
+        }
+
+        // Audit Log entry in transaction
+        const auditRef = db.collection("auditLogs").doc();
+        transaction.set(auditRef, {
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          eventType: "RECOMMENDATION_SUPPRESSION",
+          entityType: "Recommendation",
+          entityId: recommendationId,
+          summary: `Recommendation ${recommendationId} suppressed`,
+          performedBy: uid,
+          createdDate: FieldValue.serverTimestamp(),
+          timestamp: FieldValue.serverTimestamp()
+        });
+
+        return { status: 200, data: { success: true } };
+      });
+
+      return res.status(result.status).json(result.data);
+    } catch (error: any) {
+      console.error("Suppression endpoint error:", error);
+      return res.status(500).json({ success: false, error: error.message || "Internal server error" });
+    }
+  });
+
+  // POST /api/recommendations/:id/restore-automatic
+  app.post("/api/recommendations/:id/restore-automatic", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Missing Bearer token" });
+      }
+      const token = authHeader.split("Bearer ")[1];
+      let decodedToken;
+      try {
+        decodedToken = await auth.verifyIdToken(token);
+      } catch (e: any) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Invalid token" });
+      }
+
+      const uid = decodedToken.uid;
+      const profileRes = await safeGetUserProfile(uid, token);
+      if (!profileRes.exists || !profileRes.data) {
+        return res.status(403).json({ success: false, error: "Forbidden: User profile not found" });
+      }
+
+      const profile = profileRes.data;
+      if (profile.accountStatus !== "ACTIVE") {
+        return res.status(403).json({ success: false, error: "Forbidden: User account is inactive" });
+      }
+
+      const allowedRoles = ["PLATFORM_SUPERUSER", "TENANT_ADMIN", "PLANNER"];
+      if (!allowedRoles.includes(profile.role)) {
+        return res.status(403).json({ success: false, error: "Forbidden: Insufficient role permissions" });
+      }
+
+      const recommendationId = req.params.id;
+
+      const recRef = db.collection("recommendations").doc(recommendationId);
+      const currentRecRef = db.collection("currentRecommendations").doc(recommendationId);
+
+      const result = await db.runTransaction(async (transaction) => {
+        const recSnap = await transaction.get(recRef);
+        if (!recSnap.exists) {
+          return { status: 404, data: { success: false, error: "Recommendation not found" } };
+        }
+
+        const rec = recSnap.data()!;
+
+        // Check target recommendation status is OVERRIDDEN or SUPPRESSED (or ACTIVE)
+        const allowedStatuses = ["OVERRIDDEN", "SUPPRESSED", "ACTIVE"];
+        if (!allowedStatuses.includes(rec.recommendationStatus)) {
+          return { status: 400, data: { success: false, error: "Recommendation cannot be restored" } };
+        }
+
+        // Apply strict Tenant Isolation
+        if (profile.role !== "PLATFORM_SUPERUSER" && rec.tenantId !== profile.tenantId) {
+          return { status: 403, data: { success: false, error: "Forbidden: Tenant isolation violation" } };
+        }
+
+        // Apply strict Site Assignment
+        if (profile.role === "PLANNER") {
+          if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(rec.siteId)) {
+            return { status: 403, data: { success: false, error: "Forbidden: Site assignment isolation violation" } };
+          }
+        }
+
+        // Perform updates in transaction
+        transaction.update(recRef, {
+          recommendationStatus: "SUPERSEDED",
+          overrideContext: null,
+          suppressionContext: null,
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp()
+        });
+
+        // Also update currentRecommendations if exists
+        const currentSnap = await transaction.get(currentRecRef);
+        if (currentSnap.exists) {
+          transaction.update(currentRecRef, {
+            recommendationStatus: "SUPERSEDED",
+            overrideContext: null,
+            suppressionContext: null,
+            modifiedBy: uid,
+            modifiedDate: FieldValue.serverTimestamp()
+          });
+        }
+
+        // Audit Log entry in transaction
+        const auditRef = db.collection("auditLogs").doc();
+        transaction.set(auditRef, {
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          eventType: "RECOMMENDATION_RESTORE",
+          entityType: "Recommendation",
+          entityId: recommendationId,
+          summary: `Recommendation ${recommendationId} restored to automatic`,
+          performedBy: uid,
+          createdDate: FieldValue.serverTimestamp(),
+          timestamp: FieldValue.serverTimestamp()
+        });
+
+        return { status: 200, data: { success: true, rec } };
+      });
+
+      if (result.status === 200 && result.data?.rec) {
+        // Trigger a background recalculation job
+        const rec = result.data.rec;
+
+        // Create a job directly in Firebase Firestore as done by the API
+        const serverIdempotencyHash = crypto.createHash("sha256").update(JSON.stringify({
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          triggerType: "MANUAL_RECALCULATION",
+          productIds: [rec.productId]
+        })).digest("hex");
+
+        const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const now = FieldValue.serverTimestamp();
+
+        const jobDoc = {
+          id: jobId,
+          jobId,
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          status: "QUEUED",
+          triggerType: "MANUAL_RECALCULATION",
+          triggerReferenceId: null,
+          sourceInventorySnapshotId: null,
+          sourceProductionPlanImportId: null,
+          idempotencyKey: jobId,
+          serverIdempotencyHash,
+          requestedBy: uid,
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          leaseExpiresAt: null,
+          workerId: null,
+          attemptCount: 0,
+          maxAttempts: 3,
+          productCount: 1,
+          processedCount: 0,
+          createdCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          supersededCount: 0,
+          withdrawnCount: 0,
+          failedCount: 0,
+          errors: [],
+          productIds: [rec.productId],
+          engineVersion: "2.0.0",
+          createdDate: now,
+          modifiedDate: now,
+          createdBy: uid,
+          modifiedBy: uid
+        };
+
+        await db.collection("recommendationGenerationJobs").doc(jobId).set(jobDoc);
+
+        setTimeout(() => {
+          RecommendationBackendService.claimAndProcessNextJob().catch(err =>
+            console.error("[Server] Background recommendation job claim error:", err)
+          );
+        }, 50);
+      }
+
+      return res.status(result.status).json({ success: result.data.success, error: result.data.error });
+    } catch (error: any) {
+      console.error("Restore endpoint error:", error);
+      return res.status(500).json({ success: false, error: error.message || "Internal server error" });
+    }
+  });
+
+  // Start background job polling worker every 5 seconds (only if not testing)
+  if (process.env.NODE_ENV !== "test") {
+    setInterval(() => {
+      RecommendationBackendService.claimAndProcessNextJob().catch(() => {});
+    }, 5000);
+  }
+
+  return app;
+}
+
+export async function startServer() {
+  const app = await createApp();
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
