@@ -16,7 +16,7 @@ import { ServiceResult } from '../../../types/common';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { Product } from '../../../types/product';
 import { Location } from '../../../types/inventory';
-import { runSiteRecommendationJob } from '../../planning/services/recommendationService';
+import { enqueueRecommendationJob } from '../../planning/services/jobRequestService';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',
@@ -386,7 +386,7 @@ export interface BatchInventoryUpdateParams {
 
 export const batchUpdateInventoryFromPastedData = async (
   params: BatchInventoryUpdateParams
-): Promise<ServiceResult<{ updatedCount: number }>> => {
+): Promise<ServiceResult<{ updatedCount: number; snapshotId?: string; jobId?: string }>> => {
   if (!params.items || params.items.length === 0) {
     return { success: false, error: 'No items provided for inventory update.' };
   }
@@ -481,6 +481,8 @@ export const batchUpdateInventoryFromPastedData = async (
 
     // Record Inventory Snapshot and trigger automatic Decision Engine reassessment
     const snapshotId = `inv_snap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    let jobId: string | null = null;
+
     try {
       if (db) {
         await setDoc(doc(db, 'inventorySnapshots', snapshotId), {
@@ -496,17 +498,24 @@ export const batchUpdateInventoryFromPastedData = async (
         });
       }
 
-      // Trigger automatic decision engine reassessment across the site
-      runSiteRecommendationJob(params.tenantId, params.siteId, {
+      // Enqueue backend recommendation generation job (Requirement 4)
+      const jobRes = await enqueueRecommendationJob({
+        tenantId: params.tenantId,
+        siteId: params.siteId,
         triggerType: 'INVENTORY_IMPORT',
         triggerReferenceId: snapshotId,
+        sourceInventorySnapshotId: snapshotId,
         requestedBy: params.performedBy
-      }).catch(err => console.error('Background recommendation job error:', err));
+      });
+
+      if (jobRes.success && jobRes.data) {
+        jobId = jobRes.data.jobId;
+      }
     } catch (snapErr) {
-      console.warn('Failed to record inventory snapshot or trigger job:', snapErr);
+      console.warn('Failed to record inventory snapshot or enqueue job:', snapErr);
     }
 
-    return { success: true, data: { updatedCount: totalUpdated } };
+    return { success: true, data: { updatedCount: totalUpdated, snapshotId, jobId } };
   } catch (error: any) {
     return { success: false, error: error.message || 'Failed to update inventory balances.' };
   }

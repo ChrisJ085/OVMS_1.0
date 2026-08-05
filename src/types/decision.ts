@@ -9,6 +9,7 @@ export type DataQualityCode =
   | 'PLANNING_RULE_MISSING'
   | 'INVENTORY_STALE'
   | 'INVENTORY_MISSING'
+  | 'MISSING_INVENTORY'
   | 'PRODUCTION_SOURCE_MISSING'
   | 'PRODUCTION_SOURCE_STALE'
   | 'PROMOTION_CONFLICT'
@@ -17,19 +18,20 @@ export type DataQualityCode =
   | 'INVALID_THRESHOLD'
   | 'ACTION_QUANTITY_CONTRADICTION';
 
-export interface DataQualityIssue {
+export type DataQualityIssue = {
   code: DataQualityCode;
   severity: DataQualitySeverity;
   blocking: boolean;
   message: string;
   sourceArea: 'PLANNING_RULE' | 'INVENTORY' | 'PRODUCTION' | 'PROMOTION' | 'CONFIGURATION' | 'PRODUCT_MASTER';
   sourceReference?: string | null;
-}
+};
 
 export type DataQualityStatus = 
   | 'COMPLETE'
   | 'INVENTORY_STALE'
   | 'INVENTORY_MISSING'
+  | 'MISSING_INVENTORY'
   | 'PLANNING_RULE_MISSING'
   | 'PRODUCTION_DATA_MISSING'
   | 'PRODUCTION_SOURCE_MISSING'
@@ -101,6 +103,8 @@ export interface DecisionInputSnapshot {
   siteId: string;
   productId: string;
   productCodeSnapshot: string;
+  descriptionSnapshot?: string;
+  unitOfMeasure?: string;
   inventoryTotal: number;
   inventoryByLocation: InventoryBalance[];
   inventoryUpdatedAt: Date | null;

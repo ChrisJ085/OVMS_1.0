@@ -22,6 +22,7 @@ import { ServiceResult } from '../../../types/common';
 import { getProduct, getAllProducts } from '../../inventory/services/productService';
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { buildDisplayPriorityDoc } from '../../operations/services/priorityService';
+import { enqueueRecommendationJob, subscribeToJobProgress } from './jobRequestService';
 
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const JOBS_COLLECTION = 'recommendationGenerationJobs';
@@ -64,6 +65,75 @@ export interface RunJobOptions {
  * Site-wide / Product-scoped automatic Recommendation Generation Engine Job
  */
 export const runSiteRecommendationJob = async (
+  tenantId: string,
+  siteId: string,
+  options: RunJobOptions
+): Promise<ServiceResult<RecommendationGenerationJob>> => {
+  try {
+    const enqueueRes = await enqueueRecommendationJob({
+      tenantId,
+      siteId,
+      triggerType: options.triggerType,
+      triggerReferenceId: options.triggerReferenceId,
+      productIds: options.productIds,
+      requestedBy: options.requestedBy
+    });
+
+    if (!enqueueRes.success || !enqueueRes.data) {
+      return { success: false, error: enqueueRes.error || 'Failed to queue backend recommendation job' };
+    }
+
+    const jobId = enqueueRes.data.jobId;
+
+    const finalJob = await new Promise<RecommendationGenerationJob | null>((resolve) => {
+      let timeoutId: any = null;
+      const unsub = subscribeToJobProgress(jobId, (job) => {
+        if (job && (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'COMPLETED_WITH_WARNINGS')) {
+          if (timeoutId) clearTimeout(timeoutId);
+          unsub();
+          resolve(job);
+        }
+      });
+
+      timeoutId = setTimeout(() => {
+        unsub();
+        resolve({
+          id: jobId,
+          jobId,
+          tenantId,
+          siteId,
+          status: 'QUEUED',
+          triggerType: options.triggerType,
+          triggerReferenceId: options.triggerReferenceId || null,
+          requestedBy: options.requestedBy || 'user',
+          requestedAt: Timestamp.now(),
+          startedAt: null,
+          completedAt: null,
+          productCount: options.productIds?.length || 0,
+          processedCount: 0,
+          createdCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          supersededCount: 0,
+          withdrawnCount: 0,
+          failedCount: 0,
+          errors: [],
+          engineVersion: ENGINE_VERSION,
+          createdDate: Timestamp.now(),
+          modifiedDate: Timestamp.now(),
+          createdBy: options.requestedBy || 'user',
+          modifiedBy: options.requestedBy || 'user'
+        });
+      }, 5000);
+    });
+
+    return { success: true, data: finalJob || undefined };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to run site recommendation job' };
+  }
+};
+
+const _unusedLegacyRunSiteRecommendationJob = async (
   tenantId: string,
   siteId: string,
   options: RunJobOptions

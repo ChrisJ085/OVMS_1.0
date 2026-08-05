@@ -338,11 +338,20 @@ service cloud.firestore {
     }
     match /recommendations/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update: if isSuperuser() || 
-                               isTenantAdmin(request.resource.data.tenantId) ||
-                               ((isPlanner(request.resource.data.tenantId)) && 
-                                isAssignedToSite(getSiteId(request.resource)) && 
-                                (request.method == 'create' || ownershipFieldsUnchanged()));
+      allow create: if (isSuperuser() || 
+                       isTenantAdmin(request.resource.data.tenantId) ||
+                       ((isPlanner(request.resource.data.tenantId)) && 
+                        isAssignedToSite(getSiteId(request.resource))))
+                       && !('publishingStatus' in request.resource.data && request.resource.data.publishingStatus in ['AUTO_PUBLISHED', 'FAILED_VALIDATION'])
+                       && (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'system')
+                       && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION');
+      allow update: if (isSuperuser() || 
+                       isTenantAdmin(request.resource.data.tenantId) ||
+                       ((isPlanner(request.resource.data.tenantId)) && 
+                        isAssignedToSite(getSiteId(request.resource))))
+                       && ownershipFieldsUnchanged()
+                       && !('publishingStatus' in request.resource.data && request.resource.data.publishingStatus in ['AUTO_PUBLISHED', 'FAILED_VALIDATION'])
+                       && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION');
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
 
@@ -351,7 +360,11 @@ service cloud.firestore {
     // ------------------------------------------------------------------------
     match /recommendationGenerationJobs/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
+      allow create: if (isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))))
+                       && request.resource.data.status == 'QUEUED'
+                       && (!('workerId' in request.resource.data) || request.resource.data.workerId == null)
+                       && (!('leaseExpiresAt' in request.resource.data) || request.resource.data.leaseExpiresAt == null);
+      allow update: if isSuperuser();
       allow delete: if isSuperuser();
     }
     match /inventorySnapshots/{id} {
@@ -361,10 +374,13 @@ service cloud.firestore {
     }
     match /priorities/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
-      allow update: if isSuperuser() || 
+      allow create: if (isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))))
+                       && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION')
+                       && (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'system');
+      allow update: if (isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
-                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields());
+                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields()))
+                       && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION');
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     function isDisplaySafeProjection() {
@@ -417,10 +433,12 @@ service cloud.firestore {
     }
     match /exceptions/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
-      allow create: if isSuperuser() || 
+      allow create: if (isSuperuser() || 
                        isTenantAdmin(request.resource.data.tenantId) ||
                        ((isPlanner(request.resource.data.tenantId) || isWarehouseOperator(request.resource.data.tenantId)) && 
-                        isAssignedToSite(getSiteId(request.resource)));
+                        isAssignedToSite(getSiteId(request.resource))))
+                       && (!('sourceArea' in request.resource.data) || request.resource.data.sourceArea != 'DECISION_ENGINE')
+                       && (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'system');
       allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
                        (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged()) ||

@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { FieldValue, Query, DocumentReference } from 'firebase-admin/firestore';
 import { adminAuth as auth, adminDb as db, resolvedAdminProjectId } from "./src/config/firebaseAdmin";
+import { RecommendationBackendService } from "./src/server/recommendationBackendService";
 
 const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBi4tywQk5WaNIvalD3uSrz4Au7WxolJlM";
 const FIREBASE_PROJECT_ID = resolvedAdminProjectId || "ovms-ad209";
@@ -554,6 +555,106 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || 'Internal server error' });
     }
   });
+
+  // REST Route to enqueue or trigger a recommendation job on trusted backend
+  app.post("/api/recommendation-jobs", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Missing Bearer token" });
+      }
+      const token = authHeader.split("Bearer ")[1];
+      let decodedToken;
+      try {
+        decodedToken = await auth.verifyIdToken(token);
+      } catch (e: any) {
+        return res.status(401).json({ success: false, error: "Unauthorized: Invalid token" });
+      }
+
+      const uid = decodedToken.uid;
+      const profileRes = await safeGetUserProfile(uid, token);
+      if (!profileRes.exists || !profileRes.data) {
+        return res.status(403).json({ success: false, error: "Forbidden: User profile not found" });
+      }
+
+      const {
+        tenantId,
+        siteId,
+        triggerType = "MANUAL_RECALCULATION",
+        triggerReferenceId = null,
+        sourceInventorySnapshotId = null,
+        sourceProductionPlanImportId = null,
+        productIds = [],
+        idempotencyKey = null
+      } = req.body;
+
+      if (!tenantId || !siteId) {
+        return res.status(400).json({ success: false, error: "tenantId and siteId are required" });
+      }
+
+      const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const now = FieldValue.serverTimestamp();
+
+      const jobDoc = {
+        id: jobId,
+        jobId,
+        tenantId,
+        siteId,
+        status: "QUEUED",
+        triggerType,
+        triggerReferenceId,
+        sourceInventorySnapshotId,
+        sourceProductionPlanImportId,
+        idempotencyKey: idempotencyKey || jobId,
+        requestedBy: uid,
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        leaseExpiresAt: null,
+        workerId: null,
+        attemptCount: 0,
+        maxAttempts: 3,
+        productCount: productIds.length || 0,
+        processedCount: 0,
+        createdCount: 0,
+        updatedCount: 0,
+        unchangedCount: 0,
+        supersededCount: 0,
+        withdrawnCount: 0,
+        failedCount: 0,
+        errors: [],
+        productIds,
+        engineVersion: "2.0.0",
+        createdDate: now,
+        modifiedDate: now,
+        createdBy: uid,
+        modifiedBy: uid
+      };
+
+      await db.collection("recommendationGenerationJobs").doc(jobId).set(jobDoc);
+
+      // Trigger processing immediately in background
+      setTimeout(() => {
+        RecommendationBackendService.claimAndProcessNextJob().catch(err =>
+          console.error("[Server] Background recommendation job claim error:", err)
+        );
+      }, 50);
+
+      return res.json({
+        success: true,
+        jobId,
+        message: "Recommendation job successfully queued for trusted backend execution"
+      });
+    } catch (error: any) {
+      console.error("[Server] Error queuing recommendation job:", error);
+      return res.status(500).json({ success: false, error: error.message || "Failed to create recommendation job" });
+    }
+  });
+
+  // Start background job polling worker every 5 seconds
+  setInterval(() => {
+    RecommendationBackendService.claimAndProcessNextJob().catch(() => {});
+  }, 5000);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

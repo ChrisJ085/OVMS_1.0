@@ -5,11 +5,10 @@ import {
   subscribeToCollection
 } from '../../../services/firestoreBase';
 import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
-
-import { runSiteRecommendationJob } from './recommendationService';
+import { enqueueRecommendationJob } from './jobRequestService';
 
 const COLLECTION_NAME = 'planningRules';
 
@@ -113,10 +112,15 @@ export const createPlanningRule = async (
       status: 'active'
     });
 
-    runSiteRecommendationJob(data.tenantId, data.siteId || '', {
-      triggerType: 'PLANNING_RULE_CHANGE',
-      productIds: [data.productId]
-    }).catch(err => console.error('Recommendation trigger error:', err));
+    if (data.tenantId && data.siteId && data.productId) {
+      enqueueRecommendationJob({
+        tenantId: data.tenantId,
+        siteId: data.siteId,
+        triggerType: 'PLANNING_RULE_CHANGE',
+        triggerReferenceId: id,
+        productIds: [data.productId]
+      }).catch(err => console.error('Recommendation trigger error:', err));
+    }
 
     return { success: true, data: id };
   } catch (e) {
@@ -134,12 +138,15 @@ export const updatePlanningRule = async (
   if (error) return { success: false, error };
 
   try {
-    // Note: if updating dates or productId, we should check for overlaps
-    // But typically we don't change productId of an existing rule.
-    // If effective dates change:
+    let productId = data.productId;
+    if (!productId && db) {
+      const existing = await getDoc(doc(db, COLLECTION_NAME, id));
+      if (existing.exists()) {
+        productId = existing.data().productId;
+      }
+    }
+
     if (data.effectiveFrom || data.effectiveTo || data.productId) {
-       // We'll need the full rule to check overlap properly if only partial is sent,
-       // but typically our form sends the whole object.
        const fromDate = (data.effectiveFrom as any).toDate ? (data.effectiveFrom as any).toDate() : new Date(data.effectiveFrom as any);
        const toDate = data.effectiveTo ? ((data.effectiveTo as any).toDate ? (data.effectiveTo as any).toDate() : new Date(data.effectiveTo as any)) : null;
        
@@ -152,6 +159,17 @@ export const updatePlanningRule = async (
     }
 
     await updateDocument(COLLECTION_NAME, id, data);
+
+    if (tenantId && siteId && productId) {
+      enqueueRecommendationJob({
+        tenantId,
+        siteId,
+        triggerType: 'PLANNING_RULE_CHANGE',
+        triggerReferenceId: id,
+        productIds: [productId]
+      }).catch(err => console.error('Recommendation trigger error on update:', err));
+    }
+
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
@@ -163,11 +181,36 @@ export const setPlanningRuleStatus = async (
   active: boolean
 ): Promise<ServiceResult<void>> => {
   try {
+    let tenantId = '';
+    let siteId = '';
+    let productId = '';
+
+    if (db) {
+      const existing = await getDoc(doc(db, COLLECTION_NAME, id));
+      if (existing.exists()) {
+        const rData = existing.data();
+        tenantId = rData.tenantId;
+        siteId = rData.siteId;
+        productId = rData.productId;
+      }
+    }
+
     if (!active) {
       await deactivateDocument(COLLECTION_NAME, id);
     } else {
       await updateDocument(COLLECTION_NAME, id, { status: 'active' });
     }
+
+    if (tenantId && siteId && productId) {
+      enqueueRecommendationJob({
+        tenantId,
+        siteId,
+        triggerType: 'PLANNING_RULE_CHANGE',
+        triggerReferenceId: id,
+        productIds: [productId]
+      }).catch(err => console.error('Recommendation trigger error on status change:', err));
+    }
+
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
