@@ -342,7 +342,7 @@ service cloud.firestore {
     }
 
     match /currentRecommendations/{id} {
-      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
+      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
       allow create, update, delete: if false;
     }
 
@@ -355,8 +355,7 @@ service cloud.firestore {
     }
     match /inventorySnapshots/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create: if (isTenantAdmin(request.resource.data.tenantId) || isWarehouseOperator(request.resource.data.tenantId))
-                       && isAssignedToSite(getSiteId(request.resource));
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update, delete: if false;
     }
     match /priorities/{id} {

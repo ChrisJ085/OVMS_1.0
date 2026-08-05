@@ -7,6 +7,13 @@ import { RecommendationBackendService } from "./src/server/recommendationBackend
 import { CANONICAL_TRIGGER_TYPES } from "./src/types/recommendation";
 import crypto from "crypto";
 
+import { enqueueRecommendationJobServer } from "./src/server/jobQueue";
+import { getCurrentRecommendationId, getEffectivePriorityId, buildDisplayPriorityDoc } from "./src/shared/recommendationIdentifiers";
+
+
+
+
+
 const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBi4tywQk5WaNIvalD3uSrz4Au7WxolJlM";
 const FIREBASE_PROJECT_ID = resolvedAdminProjectId || "ovms-ad209";
 
@@ -61,37 +68,6 @@ function firestoreValueToJs(val: any): any {
   return null;
 }
 
-function buildDisplayPriorityDoc(p: any, priorityId?: string) {
-  const docId = priorityId || p.id || '';
-  return {
-    tenantId: p.tenantId || '',
-    siteId: p.siteId || '',
-    sourcePriorityId: docId,
-    priorityCode: p.productCodeSnapshot || p.productId || '',
-    productCodeSnapshot: p.productCodeSnapshot || '',
-    descriptionSnapshot: p.descriptionSnapshot || '',
-    title: p.descriptionSnapshot || p.instruction || '',
-    instruction: p.instruction || '',
-    priorityStatus: p.priorityStatus || 'ACTIVE',
-    priorityLevelId: p.priorityLevelId || 'NORMAL',
-    priorityLevelLabel: p.priorityLevelLabel || p.priorityLevelId || 'NORMAL',
-    actionTypeId: p.actionTypeId || '',
-    actionTypeLabel: p.actionTypeLabel || '',
-    requestedQuantity: p.requestedQuantity ?? null,
-    progressQuantity: p.progressQuantity ?? 0,
-    progressPercent: p.progressPercent ?? 0,
-    destinationId: p.destinationId ?? null,
-    destinationLabel: p.destinationLabel || '',
-    overflowDestinationId: p.overflowDestinationId ?? null,
-    overflowDestinationLabel: p.overflowDestinationLabel || '',
-    startAt: p.startAt || null,
-    createdDate: p.createdDate || null,
-    completedAt: p.completedAt || null,
-    expireAt: p.expireAt || null,
-    untilSwitchedOff: p.untilSwitchedOff || false,
-    modifiedDate: p.modifiedDate || FieldValue.serverTimestamp()
-  };
-}
 
 async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ exists: boolean; data?: any }> {
   try {
@@ -277,104 +253,6 @@ async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Prom
   }
 }
 
-
-async function enqueueRecommendationJobServer(
-  tenantId: string,
-  siteId: string,
-  triggerType: string,
-  productIds: string[],
-  uid: string,
-  triggerReferenceId: string | null = null,
-  sourceInventorySnapshotId: string | null = null,
-  sourceProductionPlanImportId: string | null = null,
-  idempotencyKey: string | null = null
-) {
-  const sortedProductIds = [...productIds].sort();
-  const rawKeyData = {
-    tenantId,
-    siteId,
-    triggerType,
-    triggerReferenceId,
-    productIds: sortedProductIds,
-    sourceInventorySnapshotId,
-    sourceProductionPlanImportId
-  };
-  const stableKeyString = JSON.stringify(rawKeyData);
-  const crypto = require("crypto");
-  const serverIdempotencyHash = crypto.createHash("sha256").update(stableKeyString).digest("hex");
-  const idempotencyRef = db.collection("recommendationIdempotencyKeys").doc(serverIdempotencyHash);
-  
-  const txResult = await db.runTransaction(async (transaction) => {
-    const idempotencySnap = await transaction.get(idempotencyRef);
-    if (idempotencySnap.exists) {
-      const existingJobId = idempotencySnap.data()?.jobId;
-      if (existingJobId) {
-        const jobRef = db.collection("recommendationGenerationJobs").doc(existingJobId);
-        const jobSnap = await transaction.get(jobRef);
-        if (jobSnap.exists) {
-          const jobData = jobSnap.data();
-          const activeStatuses = ["QUEUED", "IN_PROGRESS", "COMPLETED", "COMPLETED_WITH_WARNINGS"];
-          if (jobData && activeStatuses.includes(jobData.status)) {
-            return { jobId: existingJobId, isDuplicate: true };
-          }
-        }
-      }
-    }
-
-    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const now = require("firebase-admin").firestore.FieldValue.serverTimestamp();
-    const jobDoc = {
-      id: jobId,
-      jobId,
-      tenantId,
-      siteId,
-      status: "QUEUED",
-      triggerType,
-      triggerReferenceId,
-      sourceInventorySnapshotId,
-      sourceProductionPlanImportId,
-      idempotencyKey: idempotencyKey || jobId,
-      serverIdempotencyHash,
-      requestedBy: uid,
-      requestedAt: now,
-      startedAt: null,
-      completedAt: null,
-      leaseExpiresAt: null,
-      workerId: null,
-      attemptCount: 0,
-      maxAttempts: 3,
-      productCount: productIds.length,
-      processedCount: 0,
-      createdCount: 0,
-      updatedCount: 0,
-      unchangedCount: 0,
-      supersededCount: 0,
-      withdrawnCount: 0,
-      failedCount: 0,
-      errors: [],
-      productIds: sortedProductIds,
-      engineVersion: "2.0.0",
-      createdDate: now,
-      modifiedDate: now,
-      createdBy: uid,
-      modifiedBy: uid
-    };
-
-    transaction.set(db.collection("recommendationGenerationJobs").doc(jobId), jobDoc);
-    transaction.set(idempotencyRef, {
-      idempotencyKey: idempotencyKey || jobId,
-      serverIdempotencyHash,
-      jobId,
-      createdAt: now,
-      tenantId,
-      siteId
-    });
-
-    return { jobId, isDuplicate: false, jobDoc };
-  });
-
-  return txResult;
-}
 
 export async function createApp() {
   const app = express();
@@ -929,6 +807,7 @@ export async function createApp() {
   // ------------------------------------------------------------------------
 
   // POST /api/recommendations/:id/override
+  
   app.post("/api/recommendations/:id/override", async (req, res) => {
     try {
       const authHeader = req.headers.authorization;
@@ -968,7 +847,7 @@ export async function createApp() {
 
       const recRef = db.collection("recommendations").doc(recommendationId);
 
-      const result = await db.runTransaction(async (transaction) => {
+      const result = await db.runTransaction(async (transaction: any) => {
         const recSnap = await transaction.get(recRef);
         if (!recSnap.exists) {
           return { status: 404, data: { success: false, error: "Recommendation not found" } };
@@ -992,7 +871,7 @@ export async function createApp() {
           }
         }
 
-        const currentRecId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const currentRecId = getCurrentRecommendationId(rec.tenantId, rec.siteId, rec.productId);
         const currentRecRef = db.collection("currentRecommendations").doc(currentRecId);
         const currentSnap = await transaction.get(currentRecRef);
         
@@ -1005,25 +884,46 @@ export async function createApp() {
            return { status: 400, data: { success: false, error: "Recommendation data mismatch" } };
         }
 
-        const effectivePriorityId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const effectivePriorityId = getEffectivePriorityId(rec.tenantId, rec.siteId, rec.productId);
         const priorityRef = db.collection("priorities").doc(effectivePriorityId);
         const displayPriorityRef = db.collection("displayPriorities").doc(`disp_${effectivePriorityId}`);
+
+        const systemAction = currentRecData.recommendedActionTypeId;
+        const systemQuantity = currentRecData.recommendedQuantity;
+        const systemDestination = currentRecData.recommendedDestinationId;
+        const systemPriority = currentRecData.recommendedPriorityLevelId;
+
+        if (systemAction === undefined || systemQuantity === undefined) {
+           return { status: 400, data: { success: false, error: "Cannot override: missing system recommendation values" } };
+        }
 
         const activeOverride = {
           status: "ACTIVE",
           overriddenBy: uid,
           overriddenAt: FieldValue.serverTimestamp(),
           reason: overrideData.reason,
-          actionTypeId: overrideData.actionTypeId || currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedActionTypeId || "RELEASE",
-          quantity: overrideData.quantity !== undefined ? overrideData.quantity : (currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedQuantity || 0),
-          destinationId: overrideData.destinationId || currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedDestinationId || null,
-          priorityLevelId: overrideData.priorityLevelId || currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedPriorityLevelId || "NORMAL",
+          actionTypeId: overrideData.actionTypeId !== undefined ? overrideData.actionTypeId : systemAction,
+          quantity: overrideData.quantity !== undefined ? overrideData.quantity : systemQuantity,
+          destinationId: overrideData.destinationId !== undefined ? overrideData.destinationId : systemDestination,
+          priorityLevelId: overrideData.priorityLevelId !== undefined ? overrideData.priorityLevelId : systemPriority,
           instruction: overrideData.instruction || `Planner override for ${currentRecData.productCodeSnapshot || currentRecData.productId}`,
-          expireAt: null // Add expireAt if provided in overrideData
+          expireAt: overrideData.expireAt ? Timestamp.fromDate(new Date(overrideData.expireAt)) : null
         };
         
-        const effectiveInstruction = activeOverride.instruction;
-        const systemDiffersFromOverride = true; // Typically true if override is active
+        const effectiveInstruction = {
+          actionTypeId: activeOverride.actionTypeId,
+          quantity: activeOverride.quantity,
+          destinationId: activeOverride.destinationId,
+          priorityLevelId: activeOverride.priorityLevelId,
+          isOverride: true,
+          overrideReason: activeOverride.reason
+        };
+
+        const systemDiffersFromOverride = 
+           activeOverride.actionTypeId !== systemAction ||
+           activeOverride.quantity !== systemQuantity ||
+           activeOverride.destinationId !== systemDestination ||
+           activeOverride.priorityLevelId !== systemPriority;
 
         transaction.update(currentRecRef, {
           activeOverride,
@@ -1040,7 +940,7 @@ export async function createApp() {
           id: effectivePriorityId,
           tenantId: rec.tenantId,
           siteId: rec.siteId,
-          status: "active", // lowercase active based on old code
+          status: "active",
           sourceType: "MANUAL_OVERRIDE",
           sourceCurrentRecommendationId: currentRecId,
           sourceSystemRecommendationId: recommendationId,
@@ -1052,25 +952,16 @@ export async function createApp() {
           destinationId: activeOverride.destinationId,
           priorityLevelId: activeOverride.priorityLevelId,
           instruction: activeOverride.instruction,
-          plannerReason: activeOverride.reason,
-          priorityStatus: "ACTIVE", // UPPERCASE ACTIVE based on old code
+          priorityStatus: "ACTIVE",
           modifiedBy: uid,
           modifiedDate: FieldValue.serverTimestamp()
         };
         transaction.set(priorityRef, priorityDoc, { merge: true });
 
         // Upsert display priority
-        const displayPriorityDoc = {
-          ...priorityDoc,
-          id: `disp_${effectivePriorityId}`,
-          tenantId: rec.tenantId,
-          siteId: rec.siteId,
-          productCode: priorityDoc.productCodeSnapshot,
-          priorityStatus: "ACTIVE",
-          actionType: priorityDoc.actionTypeId,
-          priorityLevel: priorityDoc.priorityLevelId,
-          _tags: [`site_${rec.siteId}`, `tenant_${rec.tenantId}`]
-        };
+        const displayPriorityDoc = buildDisplayPriorityDoc(priorityDoc, effectivePriorityId);
+        (displayPriorityDoc as any).id = `disp_${effectivePriorityId}`;
+        (displayPriorityDoc as any)._tags = [`site_${rec.siteId}`, `tenant_${rec.tenantId}`];
         transaction.set(displayPriorityRef, displayPriorityDoc, { merge: true });
 
         // Audit log
@@ -1078,26 +969,24 @@ export async function createApp() {
         transaction.set(auditRef, {
           tenantId: rec.tenantId,
           siteId: rec.siteId,
-          eventType: "RECOMMENDATION_OVERRIDE",
-          entityType: "Recommendation",
-          entityId: currentRecId,
-          summary: `Planner override applied to recommendation ${recommendationId}`,
-          performedBy: uid,
-          createdDate: FieldValue.serverTimestamp(),
+          auditType: "RECOMMENDATION_OVERRIDE",
+          userId: uid,
+          referenceId: recommendationId,
+          details: { productId: rec.productId, activeOverride },
           timestamp: FieldValue.serverTimestamp()
         });
 
-        return { status: 200, data: { success: true } };
+        return { status: 200, data: { success: true, message: "Recommendation overridden successfully." } };
       });
 
       return res.status(result.status).json(result.data);
     } catch (error: any) {
-      console.error("Override endpoint error:", error);
+      console.error("[POST /api/recommendations/:id/override] Error:", error);
       return res.status(500).json({ success: false, error: error.message || "Internal server error" });
     }
   });
 
-  // POST /api/recommendations/:id/suppress
+
   app.post("/api/recommendations/:id/suppress", async (req, res) => {
     try {
       const authHeader = req.headers.authorization;
@@ -1128,31 +1017,21 @@ export async function createApp() {
         return res.status(403).json({ success: false, error: "Forbidden: Insufficient role permissions" });
       }
 
-      const recommendationId = req.params.id;
-      const { suppressionData } = req.body;
+      const recommendationId = req.params.id; // actually history ID
+      const { suppressData } = req.body;
 
-      if (!suppressionData || typeof suppressionData.reason !== "string" || suppressionData.reason.trim() === "") {
-        return res.status(400).json({ success: false, error: "Bad Request: suppression reason is required" });
+      if (!suppressData || typeof suppressData.reason !== "string" || suppressData.reason.trim() === "") {
+        return res.status(400).json({ success: false, error: "Bad Request: suppress reason is required" });
       }
-      
-      const allowedScopes = ["UNTIL_NEXT_SNAPSHOT", "UNTIL_DATE", "PERMANENT"];
-      const scope = suppressionData.scope || "UNTIL_NEXT_SNAPSHOT";
-      if (!allowedScopes.includes(scope)) {
+
+      const validScopes = ["UNTIL_NEXT_SNAPSHOT", "UNTIL_DATE", "PERMANENT"];
+      if (!validScopes.includes(suppressData.scope)) {
         return res.status(400).json({ success: false, error: "Bad Request: invalid suppression scope" });
-      }
-      
-      if (scope === "UNTIL_DATE") {
-        if (!suppressionData.expireAt || isNaN(new Date(suppressionData.expireAt).getTime())) {
-          return res.status(400).json({ success: false, error: "Bad Request: valid expireAt is required for UNTIL_DATE" });
-        }
-        if (new Date(suppressionData.expireAt).getTime() < Date.now()) {
-          return res.status(400).json({ success: false, error: "Bad Request: expireAt must be in the future" });
-        }
       }
 
       const recRef = db.collection("recommendations").doc(recommendationId);
 
-      const result = await db.runTransaction(async (transaction) => {
+      const result = await db.runTransaction(async (transaction: any) => {
         const recSnap = await transaction.get(recRef);
         if (!recSnap.exists) {
           return { status: 404, data: { success: false, error: "Recommendation not found" } };
@@ -1160,7 +1039,8 @@ export async function createApp() {
 
         const rec = recSnap.data()!;
 
-        const allowedStatuses = ["AUTO_PUBLISHED", "OVERRIDDEN", "SUPPRESSED"];
+        // Allowed statuses
+        const allowedStatuses = ["AUTO_PUBLISHED", "OVERRIDDEN"];
         if (!allowedStatuses.includes(rec.recommendationStatus)) {
           return { status: 400, data: { success: false, error: "Recommendation cannot be suppressed" } };
         }
@@ -1175,7 +1055,7 @@ export async function createApp() {
           }
         }
 
-        const currentRecId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const currentRecId = getCurrentRecommendationId(rec.tenantId, rec.siteId, rec.productId);
         const currentRecRef = db.collection("currentRecommendations").doc(currentRecId);
         const currentSnap = await transaction.get(currentRecRef);
         
@@ -1188,66 +1068,83 @@ export async function createApp() {
            return { status: 400, data: { success: false, error: "Recommendation data mismatch" } };
         }
 
-        const effectivePriorityId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const effectivePriorityId = getEffectivePriorityId(rec.tenantId, rec.siteId, rec.productId);
         const priorityRef = db.collection("priorities").doc(effectivePriorityId);
         const displayPriorityRef = db.collection("displayPriorities").doc(`disp_${effectivePriorityId}`);
+
+        let expireAtTimestamp = null;
+        if (suppressData.scope === "UNTIL_DATE") {
+           if (!suppressData.expireAt) {
+               return { status: 400, data: { success: false, error: "expireAt is required for UNTIL_DATE scope" } };
+           }
+           const expireDate = new Date(suppressData.expireAt);
+           if (expireDate.getTime() < Date.now()) {
+               return { status: 400, data: { success: false, error: "expireAt must be in the future" } };
+           }
+           expireAtTimestamp = Timestamp.fromDate(expireDate);
+        }
 
         const suppressionContext = {
           suppressedBy: uid,
           suppressedAt: FieldValue.serverTimestamp(),
-          reason: suppressionData.reason,
-          scope,
-          expireAt: suppressionData.expireAt ? Timestamp.fromDate(new Date(suppressionData.expireAt)) : null
+          reason: suppressData.reason,
+          scope: suppressData.scope,
+          expireAt: expireAtTimestamp,
+          inventorySnapshotId: currentRecData.inventorySnapshotId || null
+        };
+        
+        const effectiveInstruction = {
+          actionTypeId: null,
+          quantity: 0,
+          destinationId: null,
+          priorityLevelId: null,
+          isOverride: false,
+          overrideReason: suppressData.reason
         };
 
         transaction.update(currentRecRef, {
-          recommendationStatus: "SUPPRESSED",
           suppressionContext,
+          activeOverride: FieldValue.delete(),
           hasActiveOverride: false,
-          activeOverride: null, // clear override if suppressed
-          effectiveInstruction: null, // suppressed means no effective instruction
+          systemDiffersFromOverride: false,
+          effectiveInstruction,
+          recommendationStatus: "SUPPRESSED",
           modifiedBy: uid,
           modifiedDate: FieldValue.serverTimestamp()
         });
 
         // Withdraw priority
-        const prioSnap = await transaction.get(priorityRef);
-        if (prioSnap.exists) {
-          transaction.update(priorityRef, {
-            priorityStatus: "WITHDRAWN",
-            modifiedBy: uid,
-            modifiedDate: FieldValue.serverTimestamp()
-          });
-        }
-        
-        // Delete display priority
+        transaction.update(priorityRef, {
+          priorityStatus: "WITHDRAWN",
+          status: "withdrawn",
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp()
+        });
         transaction.delete(displayPriorityRef);
 
+        // Audit log
         const auditRef = db.collection("auditLogs").doc();
         transaction.set(auditRef, {
           tenantId: rec.tenantId,
           siteId: rec.siteId,
-          eventType: "RECOMMENDATION_SUPPRESSION",
-          entityType: "Recommendation",
-          entityId: currentRecId,
-          summary: `Recommendation ${recommendationId} suppressed`,
-          performedBy: uid,
-          createdDate: FieldValue.serverTimestamp(),
+          auditType: "RECOMMENDATION_SUPPRESS",
+          userId: uid,
+          referenceId: recommendationId,
+          details: { productId: rec.productId, suppressionContext },
           timestamp: FieldValue.serverTimestamp()
         });
 
-        return { status: 200, data: { success: true } };
+        return { status: 200, data: { success: true, message: "Recommendation suppressed successfully." } };
       });
 
       return res.status(result.status).json(result.data);
     } catch (error: any) {
-      console.error("Suppression endpoint error:", error);
+      console.error("[POST /api/recommendations/:id/suppress] Error:", error);
       return res.status(500).json({ success: false, error: error.message || "Internal server error" });
     }
   });
 
-  // POST /api/recommendations/:id/restore-automatic
-  app.post("/api/recommendations/:id/restore-automatic", async (req, res) => {
+app.post("/api/recommendations/:id/restore-automatic", async (req, res) => {
     try {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -1352,13 +1249,18 @@ export async function createApp() {
         const rec = result.data.rec;
 
         // Use shared job enqueue logic
-        await enqueueRecommendationJobServer(
-          rec.tenantId,
-          rec.siteId,
-          "MANUAL_RECALCULATION",
-          [rec.productId],
-          uid
-        );
+        await db.runTransaction(async (tx: any) => {
+          return await enqueueRecommendationJobServer(tx, db, {
+              tenantId: rec.tenantId,
+              siteId: rec.siteId,
+              triggerType: "MANUAL_RECALCULATION",
+              triggerReferenceId: null,
+              productIds: [rec.productId],
+              sourceInventorySnapshotId: null,
+              sourceProductionPlanImportId: null,
+              uid
+            });
+        });
 
         setTimeout(() => {
           RecommendationBackendService.claimAndProcessNextJob().catch(err =>

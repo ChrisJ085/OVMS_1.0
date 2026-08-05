@@ -31,6 +31,28 @@ export interface OverrideFlags {
 
 export type ManualOverrideStatus = 'OVERRIDE_ACTIVE' | 'OVERRIDE_EXPIRED' | 'OVERRIDE_REPLACED' | 'OVERRIDE_CANCELLED';
 
+export interface ActiveRecommendationOverride {
+  status: "ACTIVE";
+  overriddenBy: string;
+  overriddenAt: Timestamp;
+  reason: string;
+  actionTypeId: string | null;
+  quantity: number;
+  destinationId: string | null;
+  priorityLevelId: string | null;
+  instruction: string;
+  expireAt: Timestamp | null;
+}
+
+export interface EffectiveInstruction {
+  actionTypeId: string | null;
+  quantity: number;
+  destinationId: string | null;
+  priorityLevelId: string | null;
+  isOverride: boolean;
+  overrideReason?: string;
+}
+
 export interface OverrideContext {
   overriddenBy: string;
   overriddenAt: Timestamp;
