@@ -1,4 +1,5 @@
-import { collection, query, where, getDocs, Timestamp, writeBatch, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { Timestamp } from 'firebase/firestore';
+import { ENGINE_VERSION } from './decisionEngine';
 import { db, auth } from '../../../config/firebase';
 import { DecisionInputSnapshot, DecisionOutput } from '../../../types/decision';
 import { 
@@ -12,22 +13,9 @@ import {
   SuppressionContext
 } from '../../../types/recommendation';
 import { Priority, PriorityStatus } from '../../../types/priority';
-import { evaluateDecision, ENGINE_VERSION } from './decisionEngine';
-import { getProductInventory } from '../../inventory/services/inventoryService';
-import { getProductPlanningRule } from './planningRuleService';
-import { getProductProductionContext } from './productionService';
-import { withPhase } from './promotionService';
-import { PromotionProductRule, Promotion } from '../../../types/promotion';
 import { ServiceResult } from '../../../types/common';
-import { getProduct, getAllProducts } from '../../inventory/services/productService';
-import { getDecisionConfiguration } from './decisionConfigurationService';
-import { buildDisplayPriorityDoc } from '../../operations/services/priorityService';
 import { enqueueRecommendationJob, subscribeToJobProgress } from './jobRequestService';
 
-const RECOMMENDATIONS_COLLECTION = 'recommendations';
-const JOBS_COLLECTION = 'recommendationGenerationJobs';
-const PRIORITIES_COLLECTION = 'priorities';
-const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';
 const PROMOTIONS_COLLECTION = 'promotions';
 const PROMOTION_RULES_COLLECTION = 'promotionProductRules';
 const EXCEPTIONS_COLLECTION = 'exceptions';
@@ -162,8 +150,7 @@ export const overrideRecommendation = async (
     priorityLevelId?: string;
     instruction?: string;
     reason: string;
-  },
-  userId: string = 'planner-user'
+  }
 ): Promise<ServiceResult<void>> => {
   try {
     const user = auth?.currentUser;
@@ -208,8 +195,7 @@ export const suppressRecommendation = async (
     reason: string;
     scope: 'UNTIL_NEXT_SNAPSHOT' | 'UNTIL_DATE' | 'PERMANENT';
     expireAt?: Date;
-  },
-  userId: string = 'planner-user'
+  }
 ): Promise<ServiceResult<void>> => {
   try {
     const user = auth?.currentUser;
@@ -255,8 +241,7 @@ export const suppressRecommendation = async (
  * Restore Automatic Recommendation (Clear Override/Suppression and Re-evaluate)
  */
 export const restoreAutomaticRecommendation = async (
-  recommendationId: string,
-  userId: string = 'planner-user'
+  recommendationId: string
 ): Promise<ServiceResult<void>> => {
   try {
     const user = auth?.currentUser;

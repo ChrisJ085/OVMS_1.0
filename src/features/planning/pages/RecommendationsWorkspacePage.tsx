@@ -147,8 +147,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
         priorityLevelId: overrideForm.priorityLevelId || undefined,
         instruction: overrideForm.instruction || undefined,
         reason: overrideForm.reason.trim()
-      },
-      userProfile?.displayName || userProfile?.email || 'Planner'
+      }
     );
 
     if (res.success) {
@@ -169,8 +168,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
         reason: suppressForm.reason.trim(),
         scope: suppressForm.scope,
         expireAt: suppressForm.expireAt ? new Date(suppressForm.expireAt) : undefined
-      },
-      userProfile?.displayName || userProfile?.email || 'Planner'
+      }
     );
 
     if (res.success) {
@@ -183,7 +181,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
 
   const handleRestoreAutomatic = async (recId: string) => {
     if (!confirm('Are you sure you want to restore automatic instruction generation for this product?')) return;
-    const res = await restoreAutomaticRecommendation(recId, userProfile?.displayName || userProfile?.email || 'Planner');
+    const res = await restoreAutomaticRecommendation(recId);
     if (!res.success) {
       alert(`Failed to restore automatic instruction: ${res.error}`);
     }

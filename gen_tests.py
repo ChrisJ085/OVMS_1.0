@@ -1,5 +1,5 @@
-// @vitest-environment node
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+with open("src/tests/apiIntegration.test.ts", "w") as f:
+    f.write("""import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../server';
 import { adminAuth, adminDb } from '../config/firebaseAdmin';
@@ -230,3 +230,4 @@ describe('API Integration Tests', () => {
     });
   });
 });
+""")

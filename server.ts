@@ -277,6 +277,105 @@ async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Prom
   }
 }
 
+
+async function enqueueRecommendationJobServer(
+  tenantId: string,
+  siteId: string,
+  triggerType: string,
+  productIds: string[],
+  uid: string,
+  triggerReferenceId: string | null = null,
+  sourceInventorySnapshotId: string | null = null,
+  sourceProductionPlanImportId: string | null = null,
+  idempotencyKey: string | null = null
+) {
+  const sortedProductIds = [...productIds].sort();
+  const rawKeyData = {
+    tenantId,
+    siteId,
+    triggerType,
+    triggerReferenceId,
+    productIds: sortedProductIds,
+    sourceInventorySnapshotId,
+    sourceProductionPlanImportId
+  };
+  const stableKeyString = JSON.stringify(rawKeyData);
+  const crypto = require("crypto");
+  const serverIdempotencyHash = crypto.createHash("sha256").update(stableKeyString).digest("hex");
+  const idempotencyRef = db.collection("recommendationIdempotencyKeys").doc(serverIdempotencyHash);
+  
+  const txResult = await db.runTransaction(async (transaction) => {
+    const idempotencySnap = await transaction.get(idempotencyRef);
+    if (idempotencySnap.exists) {
+      const existingJobId = idempotencySnap.data()?.jobId;
+      if (existingJobId) {
+        const jobRef = db.collection("recommendationGenerationJobs").doc(existingJobId);
+        const jobSnap = await transaction.get(jobRef);
+        if (jobSnap.exists) {
+          const jobData = jobSnap.data();
+          const activeStatuses = ["QUEUED", "IN_PROGRESS", "COMPLETED", "COMPLETED_WITH_WARNINGS"];
+          if (jobData && activeStatuses.includes(jobData.status)) {
+            return { jobId: existingJobId, isDuplicate: true };
+          }
+        }
+      }
+    }
+
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = require("firebase-admin").firestore.FieldValue.serverTimestamp();
+    const jobDoc = {
+      id: jobId,
+      jobId,
+      tenantId,
+      siteId,
+      status: "QUEUED",
+      triggerType,
+      triggerReferenceId,
+      sourceInventorySnapshotId,
+      sourceProductionPlanImportId,
+      idempotencyKey: idempotencyKey || jobId,
+      serverIdempotencyHash,
+      requestedBy: uid,
+      requestedAt: now,
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      workerId: null,
+      attemptCount: 0,
+      maxAttempts: 3,
+      productCount: productIds.length,
+      processedCount: 0,
+      createdCount: 0,
+      updatedCount: 0,
+      unchangedCount: 0,
+      supersededCount: 0,
+      withdrawnCount: 0,
+      failedCount: 0,
+      errors: [],
+      productIds: sortedProductIds,
+      engineVersion: "2.0.0",
+      createdDate: now,
+      modifiedDate: now,
+      createdBy: uid,
+      modifiedBy: uid
+    };
+
+    transaction.set(db.collection("recommendationGenerationJobs").doc(jobId), jobDoc);
+    transaction.set(idempotencyRef, {
+      idempotencyKey: idempotencyKey || jobId,
+      serverIdempotencyHash,
+      jobId,
+      createdAt: now,
+      tenantId,
+      siteId
+    });
+
+    return { jobId, isDuplicate: false, jobDoc };
+  });
+
+  return txResult;
+}
+
 export async function createApp() {
   const app = express();
 
@@ -860,7 +959,7 @@ export async function createApp() {
         return res.status(403).json({ success: false, error: "Forbidden: Insufficient role permissions" });
       }
 
-      const recommendationId = req.params.id;
+      const recommendationId = req.params.id; // actually history ID
       const { overrideData } = req.body;
 
       if (!overrideData || typeof overrideData.reason !== "string" || overrideData.reason.trim() === "") {
@@ -868,7 +967,6 @@ export async function createApp() {
       }
 
       const recRef = db.collection("recommendations").doc(recommendationId);
-      const currentRecRef = db.collection("currentRecommendations").doc(recommendationId);
 
       const result = await db.runTransaction(async (transaction) => {
         const recSnap = await transaction.get(recRef);
@@ -878,93 +976,111 @@ export async function createApp() {
 
         const rec = recSnap.data()!;
 
-        // Check target recommendation status is ACTIVE
-        if (rec.recommendationStatus !== "ACTIVE") {
-          return { status: 400, data: { success: false, error: "Recommendation is not active" } };
+        // Allowed statuses
+        const allowedStatuses = ["AUTO_PUBLISHED", "OVERRIDDEN"];
+        if (!allowedStatuses.includes(rec.recommendationStatus)) {
+          return { status: 400, data: { success: false, error: "Recommendation cannot be overridden" } };
         }
 
-        // Apply strict Tenant Isolation
         if (profile.role !== "PLATFORM_SUPERUSER" && rec.tenantId !== profile.tenantId) {
           return { status: 403, data: { success: false, error: "Forbidden: Tenant isolation violation" } };
         }
 
-        // Apply strict Site Assignment
         if (profile.role === "PLANNER") {
           if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(rec.siteId)) {
             return { status: 403, data: { success: false, error: "Forbidden: Site assignment isolation violation" } };
           }
         }
 
-        const overrideContext = {
+        const currentRecId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const currentRecRef = db.collection("currentRecommendations").doc(currentRecId);
+        const currentSnap = await transaction.get(currentRecRef);
+        
+        if (!currentSnap.exists) {
+           return { status: 404, data: { success: false, error: "Current recommendation not found" } };
+        }
+        
+        const currentRecData = currentSnap.data()!;
+        if (currentRecData.tenantId !== rec.tenantId || currentRecData.siteId !== rec.siteId || currentRecData.productId !== rec.productId) {
+           return { status: 400, data: { success: false, error: "Recommendation data mismatch" } };
+        }
+
+        const effectivePriorityId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const priorityRef = db.collection("priorities").doc(effectivePriorityId);
+        const displayPriorityRef = db.collection("displayPriorities").doc(`disp_${effectivePriorityId}`);
+
+        const activeOverride = {
+          status: "ACTIVE",
           overriddenBy: uid,
           overriddenAt: FieldValue.serverTimestamp(),
           reason: overrideData.reason,
-          overrideStatus: "OVERRIDE_ACTIVE",
-          actionTypeId: overrideData.actionTypeId || rec.decisionOutput?.recommendedActionTypeId || "RELEASE",
-          quantity: overrideData.quantity !== undefined ? overrideData.quantity : (rec.decisionOutput?.recommendedQuantity || 0),
-          destinationId: overrideData.destinationId || rec.decisionOutput?.recommendedDestinationId || null,
-          priorityLevelId: overrideData.priorityLevelId || rec.decisionOutput?.recommendedPriorityLevelId || "NORMAL",
-          instruction: overrideData.instruction || `Planner override for ${rec.productCodeSnapshot}`
+          actionTypeId: overrideData.actionTypeId || currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedActionTypeId || "RELEASE",
+          quantity: overrideData.quantity !== undefined ? overrideData.quantity : (currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedQuantity || 0),
+          destinationId: overrideData.destinationId || currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedDestinationId || null,
+          priorityLevelId: overrideData.priorityLevelId || currentRecData.currentSystemRecommendation?.decisionOutput?.recommendedPriorityLevelId || "NORMAL",
+          instruction: overrideData.instruction || `Planner override for ${currentRecData.productCodeSnapshot || currentRecData.productId}`,
+          expireAt: null // Add expireAt if provided in overrideData
         };
+        
+        const effectiveInstruction = activeOverride.instruction;
+        const systemDiffersFromOverride = true; // Typically true if override is active
 
-        // Write priority document deterministically
-        const priorityId = 'priority_' + recommendationId;
-        const priorityRef = db.collection("priorities").doc(priorityId);
-        const displayPriorityRef = db.collection("displayPriorities").doc(priorityId);
-
-        const priorityDoc = {
-          id: priorityId,
-          tenantId: rec.tenantId,
-          siteId: rec.siteId,
-          sourceType: "SYSTEM_RECOMMENDATION",
-          sourceRecommendationId: recommendationId,
-          productId: rec.productId,
-          productCodeSnapshot: rec.productCodeSnapshot,
-          descriptionSnapshot: rec.descriptionSnapshot,
-          actionTypeId: overrideContext.actionTypeId,
-          requestedQuantity: overrideContext.quantity,
-          destinationId: overrideContext.destinationId,
-          priorityLevelId: overrideContext.priorityLevelId,
-          instruction: overrideContext.instruction,
-          plannerReason: overrideData.reason,
-          priorityStatus: "ACTIVE",
-          modifiedBy: uid,
-          modifiedDate: FieldValue.serverTimestamp(),
-          createdDate: FieldValue.serverTimestamp()
-        };
-
-        const displayPriorityDoc = buildDisplayPriorityDoc(priorityDoc, priorityId);
-
-        // Perform updates in transaction
-        transaction.update(recRef, {
+        transaction.update(currentRecRef, {
+          activeOverride,
+          hasActiveOverride: true,
+          systemDiffersFromOverride,
+          effectiveInstruction,
           recommendationStatus: "OVERRIDDEN",
-          overrideContext,
           modifiedBy: uid,
           modifiedDate: FieldValue.serverTimestamp()
         });
 
-        // Also update currentRecommendations if exists
-        const currentSnap = await transaction.get(currentRecRef);
-        if (currentSnap.exists) {
-          transaction.update(currentRecRef, {
-            recommendationStatus: "OVERRIDDEN",
-            overrideContext,
-            modifiedBy: uid,
-            modifiedDate: FieldValue.serverTimestamp()
-          });
-        }
-
+        // Upsert priority
+        const priorityDoc = {
+          id: effectivePriorityId,
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          status: "active", // lowercase active based on old code
+          sourceType: "MANUAL_OVERRIDE",
+          sourceCurrentRecommendationId: currentRecId,
+          sourceSystemRecommendationId: recommendationId,
+          productId: rec.productId,
+          productCodeSnapshot: currentRecData.productCodeSnapshot || rec.productCodeSnapshot || "",
+          descriptionSnapshot: currentRecData.descriptionSnapshot || rec.descriptionSnapshot || "",
+          actionTypeId: activeOverride.actionTypeId,
+          requestedQuantity: activeOverride.quantity,
+          destinationId: activeOverride.destinationId,
+          priorityLevelId: activeOverride.priorityLevelId,
+          instruction: activeOverride.instruction,
+          plannerReason: activeOverride.reason,
+          priorityStatus: "ACTIVE", // UPPERCASE ACTIVE based on old code
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp()
+        };
         transaction.set(priorityRef, priorityDoc, { merge: true });
+
+        // Upsert display priority
+        const displayPriorityDoc = {
+          ...priorityDoc,
+          id: `disp_${effectivePriorityId}`,
+          tenantId: rec.tenantId,
+          siteId: rec.siteId,
+          productCode: priorityDoc.productCodeSnapshot,
+          priorityStatus: "ACTIVE",
+          actionType: priorityDoc.actionTypeId,
+          priorityLevel: priorityDoc.priorityLevelId,
+          _tags: [`site_${rec.siteId}`, `tenant_${rec.tenantId}`]
+        };
         transaction.set(displayPriorityRef, displayPriorityDoc, { merge: true });
 
-        // Audit Log entry in transaction
+        // Audit log
         const auditRef = db.collection("auditLogs").doc();
         transaction.set(auditRef, {
           tenantId: rec.tenantId,
           siteId: rec.siteId,
           eventType: "RECOMMENDATION_OVERRIDE",
           entityType: "Recommendation",
-          entityId: recommendationId,
+          entityId: currentRecId,
           summary: `Planner override applied to recommendation ${recommendationId}`,
           performedBy: uid,
           createdDate: FieldValue.serverTimestamp(),
@@ -1018,9 +1134,23 @@ export async function createApp() {
       if (!suppressionData || typeof suppressionData.reason !== "string" || suppressionData.reason.trim() === "") {
         return res.status(400).json({ success: false, error: "Bad Request: suppression reason is required" });
       }
+      
+      const allowedScopes = ["UNTIL_NEXT_SNAPSHOT", "UNTIL_DATE", "PERMANENT"];
+      const scope = suppressionData.scope || "UNTIL_NEXT_SNAPSHOT";
+      if (!allowedScopes.includes(scope)) {
+        return res.status(400).json({ success: false, error: "Bad Request: invalid suppression scope" });
+      }
+      
+      if (scope === "UNTIL_DATE") {
+        if (!suppressionData.expireAt || isNaN(new Date(suppressionData.expireAt).getTime())) {
+          return res.status(400).json({ success: false, error: "Bad Request: valid expireAt is required for UNTIL_DATE" });
+        }
+        if (new Date(suppressionData.expireAt).getTime() < Date.now()) {
+          return res.status(400).json({ success: false, error: "Bad Request: expireAt must be in the future" });
+        }
+      }
 
       const recRef = db.collection("recommendations").doc(recommendationId);
-      const currentRecRef = db.collection("currentRecommendations").doc(recommendationId);
 
       const result = await db.runTransaction(async (transaction) => {
         const recSnap = await transaction.get(recRef);
@@ -1030,55 +1160,57 @@ export async function createApp() {
 
         const rec = recSnap.data()!;
 
-        // Check target recommendation status is ACTIVE
-        if (rec.recommendationStatus !== "ACTIVE") {
-          return { status: 400, data: { success: false, error: "Recommendation is not active" } };
+        const allowedStatuses = ["AUTO_PUBLISHED", "OVERRIDDEN", "SUPPRESSED"];
+        if (!allowedStatuses.includes(rec.recommendationStatus)) {
+          return { status: 400, data: { success: false, error: "Recommendation cannot be suppressed" } };
         }
 
-        // Apply strict Tenant Isolation
         if (profile.role !== "PLATFORM_SUPERUSER" && rec.tenantId !== profile.tenantId) {
           return { status: 403, data: { success: false, error: "Forbidden: Tenant isolation violation" } };
         }
 
-        // Apply strict Site Assignment
         if (profile.role === "PLANNER") {
           if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(rec.siteId)) {
             return { status: 403, data: { success: false, error: "Forbidden: Site assignment isolation violation" } };
           }
         }
 
+        const currentRecId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const currentRecRef = db.collection("currentRecommendations").doc(currentRecId);
+        const currentSnap = await transaction.get(currentRecRef);
+        
+        if (!currentSnap.exists) {
+           return { status: 404, data: { success: false, error: "Current recommendation not found" } };
+        }
+        
+        const currentRecData = currentSnap.data()!;
+        if (currentRecData.tenantId !== rec.tenantId || currentRecData.siteId !== rec.siteId || currentRecData.productId !== rec.productId) {
+           return { status: 400, data: { success: false, error: "Recommendation data mismatch" } };
+        }
+
+        const effectivePriorityId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const priorityRef = db.collection("priorities").doc(effectivePriorityId);
+        const displayPriorityRef = db.collection("displayPriorities").doc(`disp_${effectivePriorityId}`);
+
         const suppressionContext = {
           suppressedBy: uid,
           suppressedAt: FieldValue.serverTimestamp(),
           reason: suppressionData.reason,
-          scope: suppressionData.scope || "UNTIL_NEXT_SNAPSHOT",
+          scope,
           expireAt: suppressionData.expireAt ? Timestamp.fromDate(new Date(suppressionData.expireAt)) : null
         };
 
-        // Perform updates in transaction
-        transaction.update(recRef, {
+        transaction.update(currentRecRef, {
           recommendationStatus: "SUPPRESSED",
           suppressionContext,
+          hasActiveOverride: false,
+          activeOverride: null, // clear override if suppressed
+          effectiveInstruction: null, // suppressed means no effective instruction
           modifiedBy: uid,
           modifiedDate: FieldValue.serverTimestamp()
         });
 
-        // Also update currentRecommendations if exists
-        const currentSnap = await transaction.get(currentRecRef);
-        if (currentSnap.exists) {
-          transaction.update(currentRecRef, {
-            recommendationStatus: "SUPPRESSED",
-            suppressionContext,
-            modifiedBy: uid,
-            modifiedDate: FieldValue.serverTimestamp()
-          });
-        }
-
-        // Withdraw any matching priority
-        const priorityId = rec.linkedPriorityId || ('priority_' + recommendationId);
-        const priorityRef = db.collection("priorities").doc(priorityId);
-        const displayPriorityRef = db.collection("displayPriorities").doc(priorityId);
-
+        // Withdraw priority
         const prioSnap = await transaction.get(priorityRef);
         if (prioSnap.exists) {
           transaction.update(priorityRef, {
@@ -1086,17 +1218,18 @@ export async function createApp() {
             modifiedBy: uid,
             modifiedDate: FieldValue.serverTimestamp()
           });
-          transaction.delete(displayPriorityRef);
         }
+        
+        // Delete display priority
+        transaction.delete(displayPriorityRef);
 
-        // Audit Log entry in transaction
         const auditRef = db.collection("auditLogs").doc();
         transaction.set(auditRef, {
           tenantId: rec.tenantId,
           siteId: rec.siteId,
           eventType: "RECOMMENDATION_SUPPRESSION",
           entityType: "Recommendation",
-          entityId: recommendationId,
+          entityId: currentRecId,
           summary: `Recommendation ${recommendationId} suppressed`,
           performedBy: uid,
           createdDate: FieldValue.serverTimestamp(),
@@ -1147,7 +1280,6 @@ export async function createApp() {
       const recommendationId = req.params.id;
 
       const recRef = db.collection("recommendations").doc(recommendationId);
-      const currentRecRef = db.collection("currentRecommendations").doc(recommendationId);
 
       const result = await db.runTransaction(async (transaction) => {
         const recSnap = await transaction.get(recRef);
@@ -1157,53 +1289,56 @@ export async function createApp() {
 
         const rec = recSnap.data()!;
 
-        // Check target recommendation status is OVERRIDDEN or SUPPRESSED (or ACTIVE)
-        const allowedStatuses = ["OVERRIDDEN", "SUPPRESSED", "ACTIVE"];
+        // Allowed statuses for restore: OVERRIDDEN, SUPPRESSED
+        const allowedStatuses = ["OVERRIDDEN", "SUPPRESSED", "AUTO_PUBLISHED"]; // Let's allow AUTO_PUBLISHED if it was already restored or out of sync
         if (!allowedStatuses.includes(rec.recommendationStatus)) {
           return { status: 400, data: { success: false, error: "Recommendation cannot be restored" } };
         }
 
-        // Apply strict Tenant Isolation
         if (profile.role !== "PLATFORM_SUPERUSER" && rec.tenantId !== profile.tenantId) {
           return { status: 403, data: { success: false, error: "Forbidden: Tenant isolation violation" } };
         }
 
-        // Apply strict Site Assignment
         if (profile.role === "PLANNER") {
           if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(rec.siteId)) {
             return { status: 403, data: { success: false, error: "Forbidden: Site assignment isolation violation" } };
           }
         }
 
-        // Perform updates in transaction
-        transaction.update(recRef, {
-          recommendationStatus: "SUPERSEDED",
-          overrideContext: null,
-          suppressionContext: null,
-          modifiedBy: uid,
-          modifiedDate: FieldValue.serverTimestamp()
-        });
-
-        // Also update currentRecommendations if exists
+        const currentRecId = `${rec.tenantId}_${rec.siteId}_${rec.productId}`;
+        const currentRecRef = db.collection("currentRecommendations").doc(currentRecId);
         const currentSnap = await transaction.get(currentRecRef);
-        if (currentSnap.exists) {
-          transaction.update(currentRecRef, {
-            recommendationStatus: "SUPERSEDED",
-            overrideContext: null,
-            suppressionContext: null,
-            modifiedBy: uid,
-            modifiedDate: FieldValue.serverTimestamp()
-          });
+        
+        if (!currentSnap.exists) {
+           return { status: 404, data: { success: false, error: "Current recommendation not found" } };
+        }
+        
+        const currentRecData = currentSnap.data()!;
+        if (currentRecData.tenantId !== rec.tenantId || currentRecData.siteId !== rec.siteId || currentRecData.productId !== rec.productId) {
+           return { status: 400, data: { success: false, error: "Recommendation data mismatch" } };
+        }
+        
+        if (!currentRecData.hasActiveOverride && !currentRecData.suppressionContext) {
+           return { status: 400, data: { success: false, error: "Recommendation does not have an active override or suppression to restore" } };
         }
 
-        // Audit Log entry in transaction
+        transaction.update(currentRecRef, {
+          activeOverride: null,
+          suppressionContext: null,
+          hasActiveOverride: false,
+          systemDiffersFromOverride: false,
+          modifiedBy: uid,
+          modifiedDate: FieldValue.serverTimestamp()
+          // Do not set recommendationStatus to SUPERSEDED, let the engine handle the new state
+        });
+
         const auditRef = db.collection("auditLogs").doc();
         transaction.set(auditRef, {
           tenantId: rec.tenantId,
           siteId: rec.siteId,
           eventType: "RECOMMENDATION_RESTORE",
           entityType: "Recommendation",
-          entityId: recommendationId,
+          entityId: currentRecId,
           summary: `Recommendation ${recommendationId} restored to automatic`,
           performedBy: uid,
           createdDate: FieldValue.serverTimestamp(),
@@ -1214,58 +1349,16 @@ export async function createApp() {
       });
 
       if (result.status === 200 && result.data?.rec) {
-        // Trigger a background recalculation job
         const rec = result.data.rec;
 
-        // Create a job directly in Firebase Firestore as done by the API
-        const serverIdempotencyHash = crypto.createHash("sha256").update(JSON.stringify({
-          tenantId: rec.tenantId,
-          siteId: rec.siteId,
-          triggerType: "MANUAL_RECALCULATION",
-          productIds: [rec.productId]
-        })).digest("hex");
-
-        const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        const now = FieldValue.serverTimestamp();
-
-        const jobDoc = {
-          id: jobId,
-          jobId,
-          tenantId: rec.tenantId,
-          siteId: rec.siteId,
-          status: "QUEUED",
-          triggerType: "MANUAL_RECALCULATION",
-          triggerReferenceId: null,
-          sourceInventorySnapshotId: null,
-          sourceProductionPlanImportId: null,
-          idempotencyKey: jobId,
-          serverIdempotencyHash,
-          requestedBy: uid,
-          requestedAt: now,
-          startedAt: null,
-          completedAt: null,
-          leaseExpiresAt: null,
-          workerId: null,
-          attemptCount: 0,
-          maxAttempts: 3,
-          productCount: 1,
-          processedCount: 0,
-          createdCount: 0,
-          updatedCount: 0,
-          unchangedCount: 0,
-          supersededCount: 0,
-          withdrawnCount: 0,
-          failedCount: 0,
-          errors: [],
-          productIds: [rec.productId],
-          engineVersion: "2.0.0",
-          createdDate: now,
-          modifiedDate: now,
-          createdBy: uid,
-          modifiedBy: uid
-        };
-
-        await db.collection("recommendationGenerationJobs").doc(jobId).set(jobDoc);
+        // Use shared job enqueue logic
+        await enqueueRecommendationJobServer(
+          rec.tenantId,
+          rec.siteId,
+          "MANUAL_RECALCULATION",
+          [rec.productId],
+          uid
+        );
 
         setTimeout(() => {
           RecommendationBackendService.claimAndProcessNextJob().catch(err =>
@@ -1296,7 +1389,7 @@ export async function startServer() {
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1479,4 +1572,4 @@ async function processDeletion(jobId: string) {
   }
 }
 
-startServer();
+if (process.env.NODE_ENV !== "test") { startServer(); }

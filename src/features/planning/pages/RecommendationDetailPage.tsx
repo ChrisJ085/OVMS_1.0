@@ -139,8 +139,7 @@ export const RecommendationDetailPage: React.FC = () => {
           destinationId: overrideDestination || undefined,
           priorityLevelId: overridePriority || undefined,
           reason: overrideReason.trim()
-        },
-        userProfile?.displayName || userProfile?.email || 'Planner'
+        }
       );
       if (res.success) {
         setIsOverriding(false);
@@ -162,8 +161,7 @@ export const RecommendationDetailPage: React.FC = () => {
         {
           reason: suppressReason.trim(),
           scope: suppressScope
-        },
-        userProfile?.displayName || userProfile?.email || 'Planner'
+        }
       );
       if (res.success) {
         setIsSuppressing(false);
@@ -180,7 +178,7 @@ export const RecommendationDetailPage: React.FC = () => {
     if (!rec) return;
     setActionLoading(true);
     try {
-      const res = await restoreAutomaticRecommendation(rec.id, userProfile?.displayName || userProfile?.email || 'Planner');
+      const res = await restoreAutomaticRecommendation(rec.id);
       if (res.success) {
         await fetchRec();
       } else {
