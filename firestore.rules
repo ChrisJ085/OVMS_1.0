@@ -349,13 +349,22 @@ service cloud.firestore {
     // ------------------------------------------------------------------------
     // Operational Data
     // ------------------------------------------------------------------------
+    match /recommendationGenerationJobs/{id} {
+      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
+      allow create, update: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
+      allow delete: if isSuperuser();
+    }
+    match /inventorySnapshots/{id} {
+      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))) || (isWarehouseOperator(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
+      allow update, delete: if isSuperuser();
+    }
     match /priorities/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
       allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
-                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields()) ||
-                       (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseFields());
+                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields());
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     function isDisplaySafeProjection() {

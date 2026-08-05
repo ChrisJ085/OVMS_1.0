@@ -9,6 +9,8 @@ import { collection, query, where, getDocs, Timestamp, serverTimestamp } from 'f
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
 
+import { runSiteRecommendationJob } from './recommendationService';
+
 const COLLECTION_NAME = 'planningRules';
 
 export const validateRule = (data: Partial<ProductPlanningRule>): string | null => {
@@ -110,6 +112,12 @@ export const createPlanningRule = async (
       ...data,
       status: 'active'
     });
+
+    runSiteRecommendationJob(data.tenantId, data.siteId || '', {
+      triggerType: 'PLANNING_RULE_CHANGE',
+      productIds: [data.productId]
+    }).catch(err => console.error('Recommendation trigger error:', err));
+
     return { success: true, data: id };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };

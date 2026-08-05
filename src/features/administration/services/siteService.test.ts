@@ -238,6 +238,9 @@ describe('siteService - fetchUserPermittedSites', () => {
           data: () => ({ tenantId: 'tenant-OTHER', siteName: 'Other Tenant Site', active: true }),
         },
       ],
+      forEach(cb: any) {
+        this.docs.forEach(cb);
+      }
     } as any);
 
     const sites = await fetchUserPermittedSites(profile);
@@ -253,7 +256,7 @@ describe('siteService - fetchUserPermittedSites', () => {
       siteIds: ['site-secured'],
     } as unknown as UserProfile;
 
-    const permErr: any = new Error('Missing or insufficient permissions');
+    const permErr: any = new Error('permission-denied');
     permErr.code = 'permission-denied';
 
     vi.mocked(getDoc).mockRejectedValueOnce(permErr);

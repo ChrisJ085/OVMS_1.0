@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, where } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { Recommendation } from '../../../types/recommendation';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { ArrowLeft, AlertTriangle, CheckCircle, Info, Calculator, Clock, PlayCircle, Settings, Box, RefreshCw } from 'lucide-react';
-import { generateRecommendationForProduct, updateRecommendationStatus } from '../services/recommendationService';
-import { PlannerDecision, OverrideFlags } from '../../../types/recommendation';
+import { ArrowLeft, AlertTriangle, CheckCircle, Info, Calculator, Box, RefreshCw, SlidersHorizontal, EyeOff, RotateCcw } from 'lucide-react';
+import { 
+  runSiteRecommendationJob, 
+  overrideRecommendation, 
+  suppressRecommendation, 
+  restoreAutomaticRecommendation 
+} from '../services/recommendationService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { subscribeToLocations } from '../../inventory/services/locationService';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
-import { where } from 'firebase/firestore';
 import { Location } from '../../../types/inventory';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
@@ -36,9 +39,10 @@ export const RecommendationDetailPage: React.FC = () => {
   const [overrideDestination, setOverrideDestination] = useState('');
   const [overridePriority, setOverridePriority] = useState('');
 
-  // Dismiss states
-  const [isDismissing, setIsDismissing] = useState(false);
-  const [dismissReason, setDismissReason] = useState('');
+  // Suppress states
+  const [isSuppressing, setIsSuppressing] = useState(false);
+  const [suppressReason, setSuppressReason] = useState('');
+  const [suppressScope, setSuppressScope] = useState<'UNTIL_NEXT_SNAPSHOT' | 'UNTIL_DATE' | 'PERMANENT'>('UNTIL_NEXT_SNAPSHOT');
 
   // Dynamic collections loaded from database for label mapping
   const [locations, setLocations] = useState<Location[]>([]);
@@ -97,7 +101,7 @@ export const RecommendationDetailPage: React.FC = () => {
       if (snap.exists()) {
         const data = { id: snap.id, ...snap.data() } as Recommendation;
         setRec(data);
-        if (data.decisionOutput.recommendedActionTypeId) {
+        if (data.decisionOutput?.recommendedActionTypeId) {
           setOverrideActionType(data.decisionOutput.recommendedActionTypeId);
           setOverrideQuantity(data.decisionOutput.recommendedQuantity || 0);
           setOverrideDestination(data.decisionOutput.recommendedDestinationId || '');
@@ -123,65 +127,65 @@ export const RecommendationDetailPage: React.FC = () => {
     return <div className="p-8 text-center text-red-500">Recommendation not found.</div>;
   }
 
-  const handleApprove = async () => {
-    if (!rec || !rec.decisionOutput.recommendedActionTypeId) return;
-    setActionLoading(true);
-    try {
-      const decision: PlannerDecision = {
-        actionTypeId: rec.decisionOutput.recommendedActionTypeId,
-        quantity: rec.decisionOutput.recommendedQuantity || 0,
-        destinationId: rec.decisionOutput.recommendedDestinationId || null,
-        priorityLevelId: rec.decisionOutput.recommendedPriorityLevelId || null,
-        notes: 'Approved without overrides'
-      };
-      await updateRecommendationStatus(rec.id, 'APPROVED', decision);
-      await fetchRec();
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   const handleOverrideSubmit = async () => {
     if (!rec || !overrideReason.trim()) return;
-    
-    // Basic validation
-    if (overrideQuantity < 0) {
-      alert("Quantity cannot be less than zero");
-      return;
-    }
-
     setActionLoading(true);
     try {
-      const decision: PlannerDecision = {
-        actionTypeId: overrideActionType || null,
-        quantity: overrideQuantity,
-        destinationId: overrideDestination || null,
-        priorityLevelId: overridePriority || null,
-        notes: overrideReason
-      };
-      
-      const flags: OverrideFlags = {
-        actionOverridden: overrideActionType !== rec.decisionOutput.recommendedActionTypeId,
-        quantityOverridden: overrideQuantity !== (rec.decisionOutput.recommendedQuantity || 0),
-        destinationOverridden: overrideDestination !== rec.decisionOutput.recommendedDestinationId,
-        priorityOverridden: overridePriority !== rec.decisionOutput.recommendedPriorityLevelId
-      };
-
-      await updateRecommendationStatus(rec.id, 'OVERRIDDEN', decision, flags, overrideReason);
-      setIsOverriding(false);
-      await fetchRec();
+      const res = await overrideRecommendation(
+        rec.id,
+        {
+          actionTypeId: overrideActionType || undefined,
+          quantity: overrideQuantity,
+          destinationId: overrideDestination || undefined,
+          priorityLevelId: overridePriority || undefined,
+          reason: overrideReason.trim()
+        },
+        userProfile?.displayName || userProfile?.email || 'Planner'
+      );
+      if (res.success) {
+        setIsOverriding(false);
+        await fetchRec();
+      } else {
+        alert(`Override failed: ${res.error}`);
+      }
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleDismissSubmit = async () => {
-    if (!rec || !dismissReason.trim()) return;
+  const handleSuppressSubmit = async () => {
+    if (!rec || !suppressReason.trim()) return;
     setActionLoading(true);
     try {
-      await updateRecommendationStatus(rec.id, 'DISMISSED', undefined, undefined, dismissReason);
-      setIsDismissing(false);
-      await fetchRec();
+      const res = await suppressRecommendation(
+        rec.id,
+        {
+          reason: suppressReason.trim(),
+          scope: suppressScope
+        },
+        userProfile?.displayName || userProfile?.email || 'Planner'
+      );
+      if (res.success) {
+        setIsSuppressing(false);
+        await fetchRec();
+      } else {
+        alert(`Suppression failed: ${res.error}`);
+      }
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRestoreAutomatic = async () => {
+    if (!rec) return;
+    setActionLoading(true);
+    try {
+      const res = await restoreAutomaticRecommendation(rec.id, userProfile?.displayName || userProfile?.email || 'Planner');
+      if (res.success) {
+        await fetchRec();
+      } else {
+        alert(`Restore failed: ${res.error}`);
+      }
     } finally {
       setActionLoading(false);
     }
@@ -191,11 +195,13 @@ export const RecommendationDetailPage: React.FC = () => {
     if (!rec || !tenantId || !siteId) return;
     setActionLoading(true);
     try {
-      const result = await generateRecommendationForProduct(tenantId, siteId, rec.productId);
-      if (result.success && result.data && result.data !== rec.id) {
-        navigate(`/planning/recommendations/${result.data}`);
-      } else {
-        alert("No changes detected in inputs. Fingerprint matched.");
+      const result = await runSiteRecommendationJob(tenantId, siteId, {
+        triggerType: 'MANUAL_RECALCULATION',
+        productIds: [rec.productId],
+        requestedBy: userProfile?.displayName || userProfile?.email || 'Planner',
+        forceRecalculate: true
+      });
+      if (result.success) {
         await fetchRec();
       }
     } finally {
@@ -203,10 +209,40 @@ export const RecommendationDetailPage: React.FC = () => {
     }
   };
 
-  const isEditable = rec.recommendationStatus === 'AWAITING_REVIEW';
   const out = rec.decisionOutput;
   const snap = rec.sourceSnapshot;
-  const rule = snap.planningRule;
+  const rule = snap?.planningRule;
+
+  // Sanitize explanation lines to format IDs into human-readable labels
+  const formatExplanationLine = (line: string): string => {
+    let renderedLine = line;
+
+    actionTypes.forEach(act => {
+      if (act.id && renderedLine.includes(act.id)) {
+        renderedLine = renderedLine.replaceAll(act.id, act.label || act.name || act.code);
+      }
+    });
+
+    destinations.forEach(dest => {
+      if (dest.id && renderedLine.includes(dest.id)) {
+        const label = dest.destinationName ? `${dest.destinationName} (${dest.destinationCode})` : dest.destinationCode;
+        renderedLine = renderedLine.replaceAll(dest.id, label);
+      }
+    });
+
+    priorityLevels.forEach(pl => {
+      if (pl.id && renderedLine.includes(pl.id)) {
+        renderedLine = renderedLine.replaceAll(pl.id, pl.label || pl.name || pl.code);
+      }
+    });
+
+    // Clean any remaining raw collection ID substrings if match pattern
+    renderedLine = renderedLine.replace(/\b(act_|dest_|prio_|prod_|rule_)[a-zA-Z0-9_-]+\b/g, (match) => {
+      return match.toUpperCase();
+    });
+
+    return renderedLine;
+  };
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">
@@ -224,18 +260,19 @@ export const RecommendationDetailPage: React.FC = () => {
             <p className="text-sm text-slate-400">{rec.descriptionSnapshot}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          {rec.recommendationStatus === 'AWAITING_REVIEW' 
-            ? <StatusBadge variant="in-progress" label={rec.recommendationStatus.replace(/_/g, ' ')} />
-            : <StatusBadge variant={rec.recommendationStatus === 'APPROVED' ? 'completed' : 'blocked'} label={rec.recommendationStatus.replace(/_/g, ' ')} />
-          }
+        <div className="flex items-center gap-3">
+          {rec.recommendationStatus === 'AUTO_PUBLISHED' && <StatusBadge variant="completed" label="Published (Auto)" />}
+          {rec.recommendationStatus === 'OVERRIDDEN' && <StatusBadge variant="warning" label="Planner Override" />}
+          {rec.recommendationStatus === 'SUPPRESSED' && <StatusBadge variant="inactive" label="Suppressed" />}
+          {rec.recommendationStatus === 'FAILED_VALIDATION' && <StatusBadge variant="blocked" label="Validation Exception" />}
+          
           <button 
             className="flex items-center px-3 py-1.5 border border-slate-700 rounded-md text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-50"
             onClick={handleRecalculate} 
             disabled={actionLoading}
           >
             <RefreshCw className={`w-4 h-4 mr-2 ${actionLoading ? 'animate-spin' : ''}`} />
-            Recalculate
+            Re-evaluate Engine
           </button>
         </div>
       </div>
@@ -253,19 +290,19 @@ export const RecommendationDetailPage: React.FC = () => {
               <div className="flex justify-between items-end">
                 <div>
                   <div className="text-xs text-slate-500">Total Quantity</div>
-                  <div className="text-2xl font-bold text-slate-100 font-mono">{snap.inventoryTotal}</div>
+                  <div className="text-2xl font-bold text-slate-100 font-mono">{snap?.inventoryTotal ?? 0}</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-slate-500">Updated</div>
-                  <div className="text-sm font-medium text-slate-300">
-                    {new Date(snap.inventoryUpdatedAt).toLocaleString()}
+                  <div className="text-xs text-slate-500">Snapshot Time</div>
+                  <div className="text-xs font-medium text-slate-300">
+                    {snap?.inventoryUpdatedAt ? new Date(snap.inventoryUpdatedAt).toLocaleString() : 'N/A'}
                   </div>
                 </div>
               </div>
               
-              {(snap.inventoryByLocation || []).length > 0 && (
+              {(snap?.inventoryByLocation || []).length > 0 && (
                 <div className="space-y-2 mt-4 pt-4 border-t border-slate-800">
-                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">By Location</div>
+                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Balances by Location</div>
                   {(snap.inventoryByLocation || []).map((loc, idx) => {
                     const matchLoc = locations.find(l => l.id === loc.locationId || l.locationCode === loc.locationId);
                     const locLabel = matchLoc 
@@ -285,85 +322,58 @@ export const RecommendationDetailPage: React.FC = () => {
             </div>
           </SectionCard>
 
-          <SectionCard title={
-            <div className="flex items-center">
-              <Settings className="w-4 h-4 mr-2" /> Planning Rule Config
-            </div>
-          }>
-            <div className="space-y-3">
+          <SectionCard title="Planning Rule Configuration">
+            <div className="space-y-3 text-sm">
               {rule ? (
                 <>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Minimum:</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Minimum Quantity:</span>
                     <span className="font-medium text-slate-200 font-mono">{rule.minimumQuantity}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Target:</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Target Quantity:</span>
                     <span className="font-medium text-slate-200 font-mono">{rule.targetQuantity}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Maximum:</span>
-                    <span className="font-medium text-slate-200 font-mono">{rule.maximumQuantity ?? 'None'}</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Maximum Quantity:</span>
+                    <span className="font-medium text-slate-200 font-mono">{rule.maximumQuantity ?? 'Unlimited'}</span>
                   </div>
-                  <div className="flex justify-between text-sm border-t border-slate-800 pt-2">
-                    <span className="text-slate-500">DDXM:</span>
+                  <div className="flex justify-between border-t border-slate-800 pt-2">
+                    <span className="text-slate-500">Controlling Retention:</span>
                     <span className="font-medium text-slate-200 font-mono">{rule.controllingRetentionQuantity}</span>
                   </div>
                 </>
               ) : (
-                <div className="text-sm text-orange-400 italic">No planning rule configured</div>
+                <div className="text-sm text-rose-400 italic">No planning rule configured</div>
               )}
             </div>
           </SectionCard>
-
-          {snap.productionContext && (
-            <SectionCard title={
-              <div className="flex items-center">
-                <PlayCircle className="w-4 h-4 mr-2" /> Production Context
-              </div>
-            }>
-              <div className="space-y-3">
-                <div className="flex justify-between text-sm items-center">
-                  <span className="text-slate-500">Status:</span>
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${snap.productionContext.isCurrentlyInProduction ? 'bg-brand-500/20 text-brand-400' : 'bg-slate-800 text-slate-400'}`}>
-                    {snap.productionContext.isCurrentlyInProduction ? 'Running' : 'Not Running'}
-                  </span>
-                </div>
-                {snap.productionContext.hoursUntilNextProduction !== null && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Next Run:</span>
-                    <span className="font-medium text-slate-200 font-mono">{snap.productionContext.hoursUntilNextProduction}h</span>
-                  </div>
-                )}
-              </div>
-            </SectionCard>
-          )}
         </div>
 
-        {/* Right Column: Engine Output & Actions */}
+        {/* Right Column: Engine Output & Explanation Log */}
         <div className="md:col-span-2 space-y-6">
           <SectionCard title={
             <div className="flex items-center text-brand-400">
               <Calculator className="w-5 h-5 mr-2" />
-              Engine Evaluation
+              Decision Engine Output
             </div>
           }>
             <div className="space-y-6">
               
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch gap-4">
                 <div className="flex-1 p-4 bg-slate-800 rounded-lg border border-slate-700">
-                  <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Band Status</div>
-                  <div className="text-lg font-bold text-slate-100">{out?.planningBand?.status ? out.planningBand.status.replace(/_/g, ' ') : 'N/A'}</div>
-                  <div className="text-xs text-slate-400 mt-1">Deficit: <span className="font-mono text-slate-300">{out?.planningBand?.deficitQuantity ?? 0}</span>, Excess: <span className="font-mono text-slate-300">{out?.planningBand?.excessQuantity ?? 0}</span></div>
+                  <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Planning Band</div>
+                  <div className="text-lg font-bold text-slate-100">{out?.planningBandStatus ? out.planningBandStatus.replace(/_/g, ' ') : 'NORMAL'}</div>
+                  <div className="text-xs text-slate-400 mt-1">Shortfall: <span className="font-mono text-slate-300">{out?.shortfallQuantity ?? 0}</span></div>
                 </div>
                 
                 {out?.recommendedActionTypeId && (() => {
                   const labelStr = getActionTypeLabel(out.recommendedActionTypeId, actionTypes);
                   return (
                     <div className="flex-1 p-4 bg-brand-500/10 rounded-lg border border-brand-500/20">
-                      <div className="text-xs text-brand-400/70 uppercase tracking-wider mb-1">Recommended Action</div>
+                      <div className="text-xs text-brand-400/70 uppercase tracking-wider mb-1">Instruction Type</div>
                       <div className="text-lg font-bold text-brand-300">{labelStr}</div>
-                      <div className="text-sm font-medium text-brand-400 mt-1">Quantity: <span className="font-mono">{out.recommendedQuantity}</span></div>
+                      <div className="text-sm font-medium text-brand-400 mt-1">Recommended Qty: <span className="font-mono">{out.recommendedQuantity}</span></div>
                     </div>
                   );
                 })()}
@@ -374,35 +384,16 @@ export const RecommendationDetailPage: React.FC = () => {
                   <Info className="w-4 h-4 mr-2 text-slate-400" />
                   Explanation Log
                 </h4>
-                <div className="bg-black/40 text-slate-300 rounded-lg p-4 font-mono text-xs space-y-2 overflow-x-auto border border-slate-800">
-                  {(out?.explanationLines || []).map((line, idx) => {
-                    let renderedLine = line;
-                    actionTypes.forEach(act => {
-                      if (act.id && renderedLine.includes(act.id)) {
-                        renderedLine = renderedLine.replaceAll(act.id, act.label || act.code);
-                      }
-                    });
-                    destinations.forEach(dest => {
-                      if (dest.id && renderedLine.includes(dest.id)) {
-                        const label = dest.destinationName ? `${dest.destinationName} (${dest.destinationCode})` : dest.destinationCode;
-                        renderedLine = renderedLine.replaceAll(dest.id, label);
-                      }
-                    });
-                    priorityLevels.forEach(pl => {
-                      if (pl.id && renderedLine.includes(pl.id)) {
-                        renderedLine = renderedLine.replaceAll(pl.id, pl.label || pl.code);
-                      }
-                    });
-                    return (
-                      <div key={idx} className="flex">
-                        <span className="text-slate-600 mr-4">{(idx+1).toString().padStart(2, '0')}</span>
-                        <span>{renderedLine}</span>
-                      </div>
-                    );
-                  })}
+                <div className="bg-black/50 text-slate-300 rounded-lg p-4 font-mono text-xs space-y-2 overflow-x-auto border border-slate-800">
+                  {(out?.explanationLines || []).map((line, idx) => (
+                    <div key={idx} className="flex">
+                      <span className="text-slate-600 mr-4 flex-shrink-0">{(idx+1).toString().padStart(2, '0')}</span>
+                      <span>{formatExplanationLine(line)}</span>
+                    </div>
+                  ))}
                   <div className="flex pt-2 mt-2 border-t border-slate-800">
                     <span className="text-slate-600 mr-4">--</span>
-                    <span className="text-brand-400">EVALUATION COMPLETE</span>
+                    <span className="text-brand-400">EVALUATION COMPLETE — AUTOMATICALLY PUBLISHED</span>
                   </div>
                 </div>
               </div>
@@ -411,7 +402,7 @@ export const RecommendationDetailPage: React.FC = () => {
                 <div className="bg-amber-900/20 border border-amber-900/50 rounded-lg p-4">
                   <h4 className="text-sm font-semibold text-amber-500 mb-2 flex items-center">
                     <AlertTriangle className="w-4 h-4 mr-2" />
-                    Data Quality Warnings
+                    Data Quality & Validation Warnings
                   </h4>
                   <ul className="list-disc list-inside text-sm text-amber-400/80 space-y-1">
                     {(out?.dataQualityIssues || []).map((issue, idx) => (
@@ -424,263 +415,150 @@ export const RecommendationDetailPage: React.FC = () => {
             </div>
           </SectionCard>
 
-          {/* Action Area */}
-          {isEditable ? (
-            <SectionCard title="Planner Decision">
-              <div className="space-y-4">
-                {(() => {
-                  const configIssues = (out?.dataQualityIssues || []).filter(i => i.code === 'CONFIGURATION_MISSING');
-                  const hasConfigIssues = configIssues.length > 0;
-                  const isAuthorizedToEditSettings = userProfile && (userProfile.role === 'PLATFORM_SUPERUSER' || userProfile.role === 'TENANT_ADMIN');
-
-                  return (
-                    <>
-                      {hasConfigIssues && (
-                        <div className="p-4 bg-red-950/40 border border-red-800 rounded-lg space-y-3">
-                          <div className="flex items-start gap-3 justify-between">
-                            <div className="flex items-start gap-3">
-                              <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <h3 className="text-sm font-semibold text-red-200">Decision Engine Configuration Incomplete</h3>
-                                <p className="text-xs text-red-400 mt-1">
-                                  The decision engine was evaluated without a complete or valid site-specific configuration. 
-                                  Approval is blocked until these settings are resolved.
-                                </p>
-                                <ul className="list-disc list-inside text-xs text-red-400/80 mt-2 space-y-1">
-                                  {configIssues.map((issue, idx) => (
-                                    <li key={idx}>{issue.message}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-                            {isAuthorizedToEditSettings && (
-                              <button
-                                onClick={() => navigate('/admin/decision-settings')}
-                                className="px-3 py-1.5 bg-red-900/60 hover:bg-red-900 text-red-200 rounded text-xs font-semibold transition-colors flex-shrink-0"
-                              >
-                                Go to Settings
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {!isOverriding && !isDismissing ? (
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm text-slate-400">
-                              {hasConfigIssues 
-                                ? "Recommendation evaluation is incomplete due to missing configuration." 
-                                : "Please review the recommendation and choose an action."}
-                            </p>
-                          </div>
-                          <div className="flex gap-3">
-                            <button 
-                              onClick={() => setIsDismissing(true)} 
-                              className="px-4 py-2 border border-slate-700 rounded-md text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors"
-                            >
-                              Dismiss
-                            </button>
-                            <button 
-                              onClick={() => setIsOverriding(true)} 
-                              disabled={hasConfigIssues}
-                              className="px-4 py-2 border border-brand-500/30 rounded-md text-sm font-medium text-brand-400 hover:bg-brand-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                            >
-                              Override
-                            </button>
-                            <button 
-                              onClick={handleApprove} 
-                              disabled={actionLoading || !out.recommendedActionTypeId || hasConfigIssues} 
-                              className="px-4 py-2 bg-brand-500 rounded-md text-sm font-medium text-slate-900 hover:bg-brand-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                            >
-                              Approve
-                            </button>
-                          </div>
-                        </div>
-                      ) : isOverriding ? (
-                        <div className="space-y-4 bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                          <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-medium text-slate-200">Override Recommendation</h3>
-                            <button className="text-sm text-slate-400 hover:text-slate-200" onClick={() => setIsOverriding(false)}>Cancel</button>
-                          </div>
-                          
-                           <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-sm font-medium text-slate-400 mb-1">Action Type</label>
-                              <select 
-                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                                value={overrideActionType}
-                                onChange={(e) => setOverrideActionType(e.target.value)}
-                              >
-                                <option value="">None</option>
-                                {actionTypes.length === 0 ? (
-                                  <>
-                                    <option value="RELEASE_TO_DESPATCH">Release to Despatch</option>
-                                    <option value="REQUEST_PRODUCTION">Request Production</option>
-                                    <option value="HOLD_INVENTORY">Hold Inventory</option>
-                                  </>
-                                ) : (
-                                  actionTypes.filter(act => act.status === 'active' || act.id === overrideActionType || act.code === overrideActionType).map(act => (
-                                    <option key={act.id} value={act.id}>{act.label}</option>
-                                  ))
-                                )}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-slate-400 mb-1">Quantity</label>
-                              <input 
-                                type="number"
-                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                                value={overrideQuantity}
-                                onChange={(e) => setOverrideQuantity(Number(e.target.value))}
-                                min="0"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-slate-400 mb-1">Destination</label>
-                              <select 
-                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                                value={overrideDestination}
-                                onChange={(e) => setOverrideDestination(e.target.value)}
-                              >
-                                <option value="">None</option>
-                                {destinations.map(dest => (
-                                  <option key={dest.id} value={dest.id}>
-                                    {dest.destinationName ? `${dest.destinationName} (${dest.destinationCode})` : dest.destinationCode}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-slate-400 mb-1">Priority Level</label>
-                              <select 
-                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                                value={overridePriority}
-                                onChange={(e) => setOverridePriority(e.target.value)}
-                              >
-                                <option value="">Normal</option>
-                                {priorityLevels.map(pl => (
-                                  <option key={pl.id} value={pl.id}>
-                                    {pl.label || pl.code}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Override Reason <span className="text-red-500">*</span></label>
-                      <textarea 
-                        className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                        rows={3}
-                        value={overrideReason}
-                        onChange={(e) => setOverrideReason(e.target.value)}
-                        placeholder="Please explain why you are overriding this recommendation..."
-                        required
-                      />
+          {/* Planner Controls Section */}
+          <SectionCard title="Planner Controls & Override Status">
+            <div className="space-y-4">
+              {rec.recommendationStatus === 'OVERRIDDEN' ? (
+                <div className="bg-amber-950/40 border border-amber-800/60 p-4 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-amber-300 flex items-center gap-2 text-sm">
+                      <SlidersHorizontal className="w-4 h-4" />
+                      Active Manual Override
                     </div>
-
-                    <div className="flex justify-end pt-4">
-                      <button 
-                        onClick={handleOverrideSubmit} 
-                        disabled={!overrideReason.trim() || actionLoading}
-                        className="px-4 py-2 bg-brand-500 rounded-md text-sm font-medium text-slate-900 hover:bg-brand-400 transition-colors disabled:opacity-50"
-                      >
-                        Submit Override
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4 bg-slate-800/50 p-4 rounded-lg border border-slate-700">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-medium text-slate-200">Dismiss Recommendation</h3>
-                      <button className="text-sm text-slate-400 hover:text-slate-200" onClick={() => setIsDismissing(false)}>Cancel</button>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Dismiss Reason <span className="text-red-500">*</span></label>
-                      <textarea 
-                        className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                        rows={3}
-                        value={dismissReason}
-                        onChange={(e) => setDismissReason(e.target.value)}
-                        placeholder="Please explain why this is not needed..."
-                        required
-                      />
-                    </div>
-
-                    <div className="flex justify-end pt-4">
-                      <button 
-                        onClick={handleDismissSubmit} 
-                        disabled={!dismissReason.trim() || actionLoading}
-                        className="px-4 py-2 bg-red-500/20 border border-red-500/50 text-red-400 rounded-md text-sm font-medium hover:bg-red-500/30 transition-colors disabled:opacity-50"
-                      >
-                        Confirm Dismiss
-                      </button>
-                    </div>
-                  </div>
-                )}
-                </>
-                  );
-                })()}
-              </div>
-            </SectionCard>
-          ) : (
-            <SectionCard title="Planner Decision">
-              <div className="space-y-4">
-                {rec.plannerDecision ? (
-                  <div className="space-y-4">
-              <div className="flex flex-col gap-3">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div>
-                    <div className="text-xs text-slate-500 uppercase tracking-wider">Action</div>
-                    <div className="font-medium text-slate-200">{getActionTypeLabel(rec.plannerDecision.actionTypeId, actionTypes)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-500 uppercase tracking-wider">Quantity</div>
-                    <div className="font-medium text-slate-200 font-mono">{rec.plannerDecision.quantity}</div>
-                  </div>
-                  {rec.plannerDecision.destinationId && (
-                    <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wider">Destination</div>
-                      <div className="font-medium text-slate-200">{getDestinationLabel(rec.plannerDecision.destinationId, destinations)}</div>
-                    </div>
-                  )}
-                  {rec.plannerDecision.priorityLevelId && (
-                    <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wider">Priority Level</div>
-                      <div className="font-medium text-slate-200">{getPriorityLevelLabel(rec.plannerDecision.priorityLevelId, priorityLevels)}</div>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  {!rec.linkedPriorityId && (
                     <button 
-                      onClick={() => navigate(`/operations/priorities/new?recommendationId=${rec.id}`)}
-                      className="px-4 py-2 bg-brand-500/20 text-brand-400 border border-brand-500/30 rounded-md text-sm font-medium hover:bg-brand-500/30 transition-colors"
+                      onClick={handleRestoreAutomatic}
+                      disabled={actionLoading}
+                      className="px-3 py-1 bg-emerald-900 hover:bg-emerald-800 text-emerald-200 text-xs font-semibold rounded flex items-center gap-1"
                     >
-                      Create Operational Priority
+                      <RotateCcw className="w-3 h-3" />
+                      Restore Automatic Engine
                     </button>
-                  )}
-                  {rec.linkedPriorityId && (
-                    <span className="px-3 py-1 bg-green-900/30 text-green-400 text-xs border border-green-800 rounded">
-                      Priority Created
-                    </span>
-                  )}
-                  <div className="flex-1 px-4 py-2 bg-slate-800 rounded-md border border-slate-700">
-                    <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Notes / Reason</div>
-                    <div className="text-sm text-slate-300">{rec.plannerDecision.notes}</div>
+                  </div>
+                  <p className="text-xs text-amber-200/80">
+                    Reason: <em>{rec.overrideContext?.reason || rec.overrideReason || 'No reason specified'}</em>
+                  </p>
+                </div>
+              ) : rec.recommendationStatus === 'SUPPRESSED' ? (
+                <div className="bg-purple-950/40 border border-purple-800/60 p-4 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-purple-300 flex items-center gap-2 text-sm">
+                      <EyeOff className="w-4 h-4" />
+                      Recommendation Suppressed
+                    </div>
+                    <button 
+                      onClick={handleRestoreAutomatic}
+                      disabled={actionLoading}
+                      className="px-3 py-1 bg-emerald-900 hover:bg-emerald-800 text-emerald-200 text-xs font-semibold rounded flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Restore Automatic Engine
+                    </button>
+                  </div>
+                  <p className="text-xs text-purple-200/80">
+                    Scope: {rec.suppressionContext?.scope || 'UNTIL_NEXT_SNAPSHOT'}. Reason: <em>{rec.suppressionContext?.reason || 'Suppressed by planner'}</em>
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-400">
+                    This recommendation was automatically published to Warehouse Execution upon inventory evaluation.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setIsSuppressing(true)}
+                      className="px-3 py-1.5 border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded"
+                    >
+                      Suppress
+                    </button>
+                    <button
+                      onClick={() => setIsOverriding(true)}
+                      className="px-3 py-1.5 border border-amber-600 bg-amber-950/50 hover:bg-amber-900/60 text-amber-300 text-xs font-semibold rounded"
+                    >
+                      Override
+                    </button>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* Inline Override Form */}
+              {isOverriding && (
+                <div className="p-4 bg-slate-800/80 border border-slate-700 rounded-lg space-y-3 text-xs mt-3">
+                  <h4 className="font-bold text-slate-100">Apply Planner Override</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-400 mb-1">Action Type</label>
+                      <select 
+                        className="w-full bg-slate-900 border-slate-700 rounded p-2 text-slate-200"
+                        value={overrideActionType}
+                        onChange={e => setOverrideActionType(e.target.value)}
+                      >
+                        {actionTypes.map(act => (
+                          <option key={act.id} value={act.id}>{act.label || act.code}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Override Quantity</label>
+                      <input 
+                        type="number" 
+                        className="w-full bg-slate-900 border-slate-700 rounded p-2 text-slate-200"
+                        value={overrideQuantity}
+                        onChange={e => setOverrideQuantity(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
                   </div>
-                ) : (
-                  <div className="text-slate-500 italic">No decision recorded (status: {rec.recommendationStatus})</div>
-                )}
-              </div>
-            </SectionCard>
-          )}
+                  <div>
+                    <label className="block text-slate-400 mb-1">Reason for Override (Required)</label>
+                    <textarea 
+                      required
+                      rows={2}
+                      className="w-full bg-slate-900 border-slate-700 rounded p-2 text-slate-200"
+                      value={overrideReason}
+                      onChange={e => setOverrideReason(e.target.value)}
+                      placeholder="Specify business reason..."
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button onClick={() => setIsOverriding(false)} className="px-3 py-1 text-slate-400">Cancel</button>
+                    <button onClick={handleOverrideSubmit} className="px-4 py-1 bg-amber-500 text-slate-950 font-bold rounded">Apply Override</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline Suppress Form */}
+              {isSuppressing && (
+                <div className="p-4 bg-slate-800/80 border border-slate-700 rounded-lg space-y-3 text-xs mt-3">
+                  <h4 className="font-bold text-slate-100">Suppress Recommendation</h4>
+                  <div>
+                    <label className="block text-slate-400 mb-1">Scope</label>
+                    <select 
+                      className="w-full bg-slate-900 border-slate-700 rounded p-2 text-slate-200"
+                      value={suppressScope}
+                      onChange={e => setSuppressScope(e.target.value as any)}
+                    >
+                      <option value="UNTIL_NEXT_SNAPSHOT">Until Next Inventory Snapshot</option>
+                      <option value="PERMANENT">Permanent (Until Restored)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">Reason (Required)</label>
+                    <textarea 
+                      required
+                      rows={2}
+                      className="w-full bg-slate-900 border-slate-700 rounded p-2 text-slate-200"
+                      value={suppressReason}
+                      onChange={e => setSuppressReason(e.target.value)}
+                      placeholder="Specify reason for suppressing..."
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button onClick={() => setIsSuppressing(false)} className="px-3 py-1 text-slate-400">Cancel</button>
+                    <button onClick={handleSuppressSubmit} className="px-4 py-1 bg-purple-600 text-white font-bold rounded">Apply Suppression</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </SectionCard>
 
         </div>
       </div>

@@ -26,6 +26,8 @@ import {
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
 
+import { runSiteRecommendationJob } from './recommendationService';
+
 // 1. Calculate File Hash
 export const calculateFileHash = async (file: File): Promise<string> => {
   const buffer = await file.arrayBuffer();
@@ -1291,6 +1293,14 @@ export const commitProductionPlanImport = async (
   });
 
   await batch.commit();
+
+  // Trigger automatic Decision Engine reassessment across the site
+  runSiteRecommendationJob(preview.summary.tenantId, preview.summary.siteId, {
+    triggerType: 'MPPS_IMPORT',
+    triggerReferenceId: importId,
+    requestedBy: (preview.summary as any).importedBy || 'Planner'
+  }).catch(err => console.error('Background recommendation job error after MPPS commit:', err));
+
   return importId;
 };
 

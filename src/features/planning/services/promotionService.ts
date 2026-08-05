@@ -12,6 +12,8 @@ import { ServiceResult } from '../../../types/common';
 const PROMOTIONS_COLLECTION = 'promotions';
 const RULES_COLLECTION = 'promotionProductRules';
 
+import { runSiteRecommendationJob } from './recommendationService';
+
 export const calculatePromotionPhase = (
   startDate: Timestamp,
   endDate: Timestamp,
@@ -189,6 +191,14 @@ export const createPromotionRule = async (
       ...data,
       status: 'active'
     });
+
+    if (data.tenantId && data.siteId && data.productId) {
+      runSiteRecommendationJob(data.tenantId, data.siteId, {
+        triggerType: 'PROMOTION_CHANGE',
+        productIds: [data.productId]
+      }).catch(err => console.error('Recommendation trigger error:', err));
+    }
+
     return { success: true, data: id };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };

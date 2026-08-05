@@ -2,6 +2,7 @@ import { db } from '../../../config/firebase';
 import { 
   collection, 
   doc, 
+  setDoc,
   runTransaction, 
   serverTimestamp, 
   Timestamp, 
@@ -15,6 +16,7 @@ import { ServiceResult } from '../../../types/common';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { Product } from '../../../types/product';
 import { Location } from '../../../types/inventory';
+import { runSiteRecommendationJob } from '../../planning/services/recommendationService';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',
@@ -475,6 +477,33 @@ export const batchUpdateInventoryFromPastedData = async (
           totalUpdated++;
         }
       });
+    }
+
+    // Record Inventory Snapshot and trigger automatic Decision Engine reassessment
+    const snapshotId = `inv_snap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    try {
+      if (db) {
+        await setDoc(doc(db, 'inventorySnapshots', snapshotId), {
+          id: snapshotId,
+          tenantId: params.tenantId,
+          siteId: params.siteId,
+          locationId: params.locationId,
+          locationCodeSnapshot: params.locationCodeSnapshot,
+          updatedItemCount: totalUpdated,
+          performedBy: params.performedBy,
+          timestamp: serverTimestamp(),
+          createdDate: serverTimestamp()
+        });
+      }
+
+      // Trigger automatic decision engine reassessment across the site
+      runSiteRecommendationJob(params.tenantId, params.siteId, {
+        triggerType: 'INVENTORY_IMPORT',
+        triggerReferenceId: snapshotId,
+        requestedBy: params.performedBy
+      }).catch(err => console.error('Background recommendation job error:', err));
+    } catch (snapErr) {
+      console.warn('Failed to record inventory snapshot or trigger job:', snapErr);
     }
 
     return { success: true, data: { updatedCount: totalUpdated } };

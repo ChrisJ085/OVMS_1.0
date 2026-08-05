@@ -1,14 +1,19 @@
 import { BaseDocument } from './common';
 import { Timestamp } from 'firebase/firestore';
 
-export type PriorityStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'WAITING' | 'BLOCKED' | 'PARTIALLY_COMPLETE' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED' | 'ARCHIVED';
+export type PriorityStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'WAITING' | 'BLOCKED' | 'PARTIALLY_COMPLETE' | 'COMPLETED' | 'CANCELLED' | 'WITHDRAWN' | 'SUPERSEDED' | 'EXPIRED' | 'ARCHIVED';
 
-export type PrioritySourceType = 'RECOMMENDATION' | 'MANUAL';
+export type PrioritySourceType = 'SYSTEM_RECOMMENDATION' | 'RECOMMENDATION' | 'MANUAL_OVERRIDE' | 'MANUAL' | 'PLA';
 
 export interface Priority extends BaseDocument {
   siteId: string;
   sourceType: PrioritySourceType;
   sourceRecommendationId: string | null;
+  sourceInventorySnapshotId?: string | null;
+  sourceMppsImportId?: string | null;
+  engineVersion?: string | null;
+  planningRuleVersion?: string | null;
+  decisionConfigurationVersion?: string | null;
   productId: string;
   productCodeSnapshot: string;
   descriptionSnapshot: string;

@@ -43,6 +43,7 @@ let mockEntriesDocs: any[] = [];
 let mockQueryError: Error | null = null;
 
 vi.mock('firebase/firestore', () => ({
+  doc: vi.fn(),
   collection: vi.fn(),
   query: vi.fn(),
   where: vi.fn(),

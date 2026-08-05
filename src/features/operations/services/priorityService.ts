@@ -263,6 +263,8 @@ const VALID_TRANSITIONS: Record<PriorityStatus, PriorityStatus[]> = {
   'COMPLETED': ['ARCHIVED'],
   'CANCELLED': ['ARCHIVED'],
   'EXPIRED': ['ARCHIVED'],
+  'WITHDRAWN': ['ARCHIVED'],
+  'SUPERSEDED': ['ARCHIVED'],
   'ARCHIVED': []
 };
 
