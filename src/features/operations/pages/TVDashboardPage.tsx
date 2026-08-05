@@ -5,6 +5,7 @@ import { DisplayPriority } from '../../../types/priority';
 import { Announcement } from '../../../types/announcement';
 import { OperationalException } from '../../../types/exception';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { useSiteOnboarding } from '../../../hooks/useSiteOnboarding';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
@@ -12,7 +13,7 @@ import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play, 
   Package, LayoutGrid, AlertCircle, TrendingDown,
-  Wifi, WifiOff
+  Wifi, WifiOff, Settings
 } from 'lucide-react';
 
 // Constants
@@ -46,6 +47,7 @@ const STATUS_ICONS: Record<string, any> = {
 
 export const TVDashboardPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
+  const { onboarding, isComplete } = useSiteOnboarding();
   const [priorities, setPriorities] = useState<DisplayPriority[]>([]);
   const [exceptions, setExceptions] = useState<OperationalException[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -248,6 +250,37 @@ export const TVDashboardPage: React.FC = () => {
       staleInventory: exceptions.filter(e => e.exceptionType === 'INVENTORY_STALE').length
     };
   }, [priorities, exceptions]);
+
+  if (onboarding && !isComplete) {
+    return (
+      <div className="h-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-6 select-none font-sans">
+        <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/30 text-amber-500 rounded-full flex items-center justify-center animate-pulse">
+          <Settings className="w-10 h-10 animate-spin" />
+        </div>
+        
+        <div className="space-y-2 max-w-md">
+          <h2 className="text-2xl font-extrabold text-slate-100 tracking-tight">Site Configuration In Progress</h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            This display terminal will activate automatically once the guided site onboarding setup for <strong className="text-slate-300">{siteId}</strong> has been fully completed by an administrator.
+          </p>
+        </div>
+
+        <div className="p-4 bg-slate-900 border border-slate-800 rounded-lg text-left w-full max-w-sm space-y-2">
+          <div className="flex justify-between text-xs text-slate-500 font-medium">
+            <span>Onboarding Status:</span>
+            <span className="text-amber-500 uppercase font-bold">{onboarding.status}</span>
+          </div>
+          <div className="flex justify-between text-xs text-slate-500 font-medium">
+            <span>Steps Configured:</span>
+            <span className="text-slate-300 font-mono">{onboarding.completedSteps?.length || 0} / 10</span>
+          </div>
+          <div className="h-1 bg-slate-800 rounded-full overflow-hidden mt-1.5">
+            <div className="h-full bg-amber-500 transition-all duration-300" style={{ width: `${((onboarding.completedSteps?.length || 0) / 10) * 100}%` }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden flex flex-col font-sans select-none">

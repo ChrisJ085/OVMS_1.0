@@ -897,7 +897,7 @@ export const AdminOverviewPage: React.FC = () => {
                     {availableSites.length > 0 ? (
                       <div className="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950 border border-slate-800 rounded-lg">
                         {availableSites.map(site => {
-                          const siteVal = site.siteId || site.id;
+                          const siteVal = site.id || site.siteId;
                           return (
                           <label key={site.id} className="flex items-center gap-2 cursor-pointer group">
                             <input

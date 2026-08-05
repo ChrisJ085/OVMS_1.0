@@ -154,7 +154,17 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } catch (err: any) {
         console.error('Error loading permitted sites:', err);
         if (isMounted) {
-          setSiteError('Failed to load permitted sites.');
+          const errMsg = err?.message || '';
+          const userSiteIds = Array.isArray(userProfile.siteIds) ? userProfile.siteIds : [];
+          if (err?.code === 'permission-denied' || errMsg.includes('permission')) {
+            setSiteError('Your site access could not be verified.');
+          } else if (errMsg.includes('UNRESOLVED_ASSIGNMENTS')) {
+            setSiteError('Your assigned sites could not be found. Contact an administrator.');
+          } else if (userSiteIds.length === 0) {
+            setSiteError('You have no assigned operational sites.');
+          } else {
+            setSiteError('Operational sites could not be loaded.');
+          }
         }
       } finally {
         if (isMounted) {

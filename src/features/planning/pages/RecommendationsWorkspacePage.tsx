@@ -107,9 +107,9 @@ export const RecommendationsWorkspacePage: React.FC = () => {
   };
 
   const filteredRecs = recommendations.filter(r => {
-    const warnings = r.decisionOutput?.dataQualityWarnings || [];
+    const warnings = r.decisionOutput?.dataQualityIssues || [];
     const impacts = r.sourceSnapshot?.activePromotionImpacts || [];
-    const bandStatus = r.decisionOutput?.planningBand?.status;
+    const bandStatus = r.decisionOutput?.planningBandStatus;
 
     if (activeFilter === 'requires-review') return r.recommendationStatus === 'AWAITING_REVIEW';
     if (activeFilter === 'critical-exceptions') return r.recommendationStatus === 'AWAITING_REVIEW' && warnings.length > 0;
@@ -122,11 +122,11 @@ export const RecommendationsWorkspacePage: React.FC = () => {
 
   const getTileCount = (id: string) => {
     if (id === 'requires-review') return recommendations.filter(r => r.recommendationStatus === 'AWAITING_REVIEW').length;
-    if (id === 'critical-exceptions') return recommendations.filter(r => r.recommendationStatus === 'AWAITING_REVIEW' && (r.decisionOutput?.dataQualityWarnings || []).length > 0).length;
+    if (id === 'critical-exceptions') return recommendations.filter(r => r.recommendationStatus === 'AWAITING_REVIEW' && (r.decisionOutput?.dataQualityIssues || []).length > 0).length;
     if (id === 'promotion-affected') return recommendations.filter(r => (r.sourceSnapshot?.activePromotionImpacts || []).length > 0).length;
-    if (id === 'below-retention') return recommendations.filter(r => r.decisionOutput?.planningBand?.status === 'BELOW_CONTROL').length;
-    if (id === 'above-maximum') return recommendations.filter(r => r.decisionOutput?.planningBand?.status === 'ABOVE_MAXIMUM').length;
-    if (id === 'stale-missing-data') return recommendations.filter(r => (r.decisionOutput?.dataQualityWarnings || []).length > 0).length;
+    if (id === 'below-retention') return recommendations.filter(r => r.decisionOutput?.planningBandStatus === 'BELOW_CONTROL').length;
+    if (id === 'above-maximum') return recommendations.filter(r => r.decisionOutput?.planningBandStatus === 'ABOVE_MAXIMUM').length;
+    if (id === 'stale-missing-data') return recommendations.filter(r => (r.decisionOutput?.dataQualityIssues || []).length > 0).length;
     return 0;
   };
 
@@ -221,10 +221,10 @@ export const RecommendationsWorkspacePage: React.FC = () => {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {(rec.decisionOutput?.dataQualityWarnings || []).length > 0 ? (
+                      {(rec.decisionOutput?.dataQualityIssues || []).length > 0 ? (
                         <div className="flex items-center text-amber-400">
                           <AlertTriangle className="w-4 h-4 mr-1" />
-                          <span>{(rec.decisionOutput?.dataQualityWarnings || []).length} Warnings</span>
+                          <span>{(rec.decisionOutput?.dataQualityIssues || []).length} Warnings</span>
                         </div>
                       ) : (
                         <div className="flex items-center text-green-400">

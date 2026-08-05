@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SectionCard } from '../components/ui/SectionCard';
 import { DataTable } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../components/ui/States';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
-import { Settings, Plus, RotateCcw, Building2, Filter } from 'lucide-react';
+import { Settings, Plus, RotateCcw, Building2, Filter, Sparkles } from 'lucide-react';
 import { 
   collections, 
   seedDevelopmentConfiguration,
@@ -18,6 +19,8 @@ import { subscribeToCollection } from '../services/firestoreBase';
 import { where, collection, getDocs, QueryConstraint } from 'firebase/firestore';
 import { ConfigItemModal } from '../features/configuration/components/ConfigItemModal';
 import { useSiteContext } from '../contexts/SiteContext';
+import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
+import { reopenSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { useAuth } from '../features/auth/context/AuthContext';
 import { db } from '../config/firebase';
 
@@ -36,6 +39,8 @@ export const ConfigurationPage: React.FC = () => {
   const { tenantId, siteId, availableSites } = useSiteContext();
   const { userProfile } = useAuth();
   const isSuperUser = userProfile?.role === 'PLATFORM_SUPERUSER';
+  const { onboarding, canComplete, isComplete, canModifyConfig } = useSiteOnboarding();
+  const { handleOpenOnboardingWizard } = useOutletContext<{ handleOpenOnboardingWizard: () => void }>() || {};
 
   const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
   const [activeTab, setActiveTab] = useState(TABS[0]);
@@ -292,16 +297,40 @@ export const ConfigurationPage: React.FC = () => {
         title="Configuration" 
         description="Master reference data used throughout the application."
         actions={
-          developmentMode ? (
-            <button
-              onClick={handleSeed}
-              disabled={seeding}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-900 bg-brand-500 hover:bg-brand-400 border border-transparent rounded-md transition-colors disabled:opacity-50"
-            >
-              {seeding ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
-              Load Development Configuration
-            </button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {onboarding && !isComplete && canComplete && handleOpenOnboardingWizard && (
+              <button
+                onClick={handleOpenOnboardingWizard}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 border border-transparent rounded-lg transition-colors shadow-sm"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Resume Site Onboarding
+              </button>
+            )}
+            {onboarding && isComplete && canComplete && (
+              <button
+                onClick={async () => {
+                  if (window.confirm('Are you absolutely sure you want to reopen onboarding for this site? This will change the site status back to ONBOARDING.')) {
+                    await reopenSiteOnboarding(tenantId, siteId, userProfile?.uid || 'system');
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 rounded-lg transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Reopen Site Onboarding
+              </button>
+            )}
+            {developmentMode && (
+              <button
+                onClick={handleSeed}
+                disabled={seeding}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-900 bg-brand-500 hover:bg-brand-400 border border-transparent rounded-md transition-colors disabled:opacity-50"
+              >
+                {seeding ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
+                Load Development Configuration
+              </button>
+            )}
+          </div>
         }
       />
 

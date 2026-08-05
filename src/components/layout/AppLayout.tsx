@@ -5,10 +5,14 @@ import { Header } from './Header';
 import { WifiOff, AlertTriangle } from 'lucide-react';
 import { usePageTitle } from '../../hooks/usePageTitle';
 import { useSiteContext } from '../../contexts/SiteContext';
+import { useSiteOnboarding } from '../../hooks/useSiteOnboarding';
+import { SiteOnboardingWizard } from '../onboarding/SiteOnboardingWizard';
 
 export const AppLayout: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const { siteReady, siteError } = useSiteContext();
+  const { siteReady, siteError, tenantId, siteId } = useSiteContext();
+  const { onboarding, canComplete, isComplete } = useSiteOnboarding();
+  const [showWizard, setShowWizard] = useState(false);
   
   const matches = useMatches();
   const currentMatch = matches[matches.length - 1];
@@ -28,6 +32,27 @@ export const AppLayout: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (onboarding && !isComplete && canComplete) {
+      const isDismissed = sessionStorage.getItem(`ovms_onboard_dismissed_${tenantId}_${siteId}`);
+      if (!isDismissed) {
+        setShowWizard(true);
+      }
+    } else {
+      setShowWizard(false);
+    }
+  }, [onboarding, isComplete, canComplete, tenantId, siteId]);
+
+  const handleCloseWizard = () => {
+    setShowWizard(false);
+    sessionStorage.setItem(`ovms_onboard_dismissed_${tenantId}_${siteId}`, 'true');
+  };
+
+  const handleOpenWizard = () => {
+    setShowWizard(true);
+    sessionStorage.removeItem(`ovms_onboard_dismissed_${tenantId}_${siteId}`);
+  };
+
   return (
     <div className="h-screen bg-slate-900 flex text-slate-300 font-sans overflow-hidden">
       <Sidebar />
@@ -42,7 +67,10 @@ export const AppLayout: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-6 bg-slate-900">
           <div className="max-w-7xl mx-auto h-full">
             {siteReady ? (
-              <Outlet />
+              <>
+                <Outlet context={{ handleOpenOnboardingWizard: handleOpenWizard }} />
+                {showWizard && <SiteOnboardingWizard onClose={handleCloseWizard} />}
+              </>
             ) : siteError ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center space-y-4 max-w-md mx-auto py-20">
                 <AlertTriangle className="w-12 h-12 text-amber-500 animate-bounce" />

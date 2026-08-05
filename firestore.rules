@@ -199,6 +199,15 @@ service cloud.firestore {
       allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser();
     }
+    match /siteOnboarding/{id} {
+      allow read: if isSuperuser() || 
+                    (resource == null && hasAssignedSiteAccess(id.split('_')[0], id.split('_')[1])) ||
+                    (resource != null && hasAssignedSiteAccess(resource.data.tenantId, resource.data.siteId));
+      allow create, update: if isSuperuser() || 
+                               (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged())) ||
+                               (isPlanner(request.resource.data.tenantId) && isAssignedToSite(request.resource.data.siteId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser();
+    }
     
     // ------------------------------------------------------------------------
     // Display / Dashboard specific reads

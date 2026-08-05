@@ -10,11 +10,54 @@ import { Timestamp } from 'firebase/firestore';
 import { AlertCircle, Target, CheckCircle2, Factory, TrendingUp, HelpCircle } from 'lucide-react';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection } from '../../../services/firestoreBase';
+import { collections } from '../../configuration/services/configurationService';
+import { where } from 'firebase/firestore';
+import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
 
 export const DecisionEngineScenariosPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
   const [selectedScenario, setSelectedScenario] = useState<number>(0);
   const [output, setOutput] = useState<DecisionOutput | null>(null);
+
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const unsubActions = subscribeToCollection<ActionType>(
+      collections.ACTION_TYPES,
+      [where('tenantId', '==', tenantId)],
+      setActionTypes,
+      console.error
+    );
+
+    const unsubDest = subscribeToCollection<Destination>(
+      collections.DESTINATIONS,
+      [where('tenantId', '==', tenantId)],
+      (items) => {
+        const filtered = items.filter(d => !d.siteId || d.siteId === '' || d.siteId === siteId);
+        setDestinations(filtered);
+      },
+      console.error
+    );
+
+    const unsubPriorities = subscribeToCollection<PriorityLevel>(
+      collections.PRIORITY_LEVELS,
+      [where('tenantId', '==', tenantId)],
+      setPriorityLevels,
+      console.error
+    );
+
+    return () => {
+      unsubActions();
+      unsubDest();
+      unsubPriorities();
+    };
+  }, [tenantId, siteId]);
 
   // Mock Scenarios Setup
   const basePlanningRule: ProductPlanningRule = {
@@ -324,7 +367,7 @@ export const DecisionEngineScenariosPage: React.FC = () => {
                 <div className="text-right">
                   <div className="text-sm text-slate-400 mb-1">Recommended Action</div>
                   <div className="text-xl font-bold text-brand-400">
-                    {output.recommendedActionTypeId} {output.recommendedQuantity > 0 ? `(${output.recommendedQuantity})` : ''}
+                    {getActionTypeLabel(output.recommendedActionTypeId, actionTypes)} {output.recommendedQuantity > 0 ? `(${output.recommendedQuantity})` : ''}
                   </div>
                 </div>
               </div>
@@ -372,12 +415,31 @@ export const DecisionEngineScenariosPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-6">
                 <SectionCard title="Engine Explanation">
                   <ul className="space-y-3">
-                    {output.explanationLines.map((line, i) => (
-                      <li key={i} className="flex gap-3 text-sm text-slate-300 items-start">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
-                        <span>{line}</span>
-                      </li>
-                    ))}
+                    {output.explanationLines.map((line, i) => {
+                      let renderedLine = line;
+                      actionTypes.forEach(act => {
+                        if (act.id && renderedLine.includes(act.id)) {
+                          renderedLine = renderedLine.replaceAll(act.id, act.label || act.code);
+                        }
+                      });
+                      destinations.forEach(dest => {
+                        if (dest.id && renderedLine.includes(dest.id)) {
+                          const label = dest.destinationName ? `${dest.destinationName} (${dest.destinationCode})` : dest.destinationCode;
+                          renderedLine = renderedLine.replaceAll(dest.id, label);
+                        }
+                      });
+                      priorityLevels.forEach(pl => {
+                        if (pl.id && renderedLine.includes(pl.id)) {
+                          renderedLine = renderedLine.replaceAll(pl.id, pl.label || pl.code);
+                        }
+                      });
+                      return (
+                        <li key={i} className="flex gap-3 text-sm text-slate-300 items-start">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                          <span>{renderedLine}</span>
+                        </li>
+                      );
+                    })}
                     {output.explanationLines.length === 0 && (
                       <li className="text-slate-500 text-sm italic">No explanation generated.</li>
                     )}
@@ -425,9 +487,9 @@ export const DecisionEngineScenariosPage: React.FC = () => {
                        <dt className="text-slate-400">Headroom to Max</dt>
                        <dd className="text-slate-200 font-medium text-right">{output.headroomToMaximum}</dd>
                        <dt className="text-slate-400">Destination</dt>
-                       <dd className="text-slate-200 font-medium text-right">{output.recommendedDestinationId || 'None'}</dd>
+                       <dd className="text-slate-200 font-medium text-right">{getDestinationLabel(output.recommendedDestinationId, destinations)}</dd>
                        <dt className="text-slate-400">Priority</dt>
-                       <dd className="text-slate-200 font-medium text-right">{output.recommendedPriorityLevelId || 'None'}</dd>
+                       <dd className="text-slate-200 font-medium text-right">{getPriorityLevelLabel(output.recommendedPriorityLevelId, priorityLevels)}</dd>
                      </dl>
                   </div>
                 </SectionCard>

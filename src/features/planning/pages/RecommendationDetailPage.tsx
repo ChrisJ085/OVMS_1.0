@@ -10,6 +10,13 @@ import { generateRecommendationForProduct, updateRecommendationStatus } from '..
 import { PlannerDecision, OverrideFlags } from '../../../types/recommendation';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToLocations } from '../../inventory/services/locationService';
+import { subscribeToCollection } from '../../../services/firestoreBase';
+import { collections } from '../../configuration/services/configurationService';
+import { where } from 'firebase/firestore';
+import { Location } from '../../../types/inventory';
+import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
 
 export const RecommendationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +39,54 @@ export const RecommendationDetailPage: React.FC = () => {
   // Dismiss states
   const [isDismissing, setIsDismissing] = useState(false);
   const [dismissReason, setDismissReason] = useState('');
+
+  // Dynamic collections loaded from database for label mapping
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const unsubLocations = subscribeToLocations(
+      tenantId,
+      siteId || '',
+      setLocations,
+      console.error
+    );
+
+    const unsubActions = subscribeToCollection<ActionType>(
+      collections.ACTION_TYPES,
+      [where('tenantId', '==', tenantId)],
+      setActionTypes,
+      console.error
+    );
+
+    const unsubDest = subscribeToCollection<Destination>(
+      collections.DESTINATIONS,
+      [where('tenantId', '==', tenantId)],
+      (items) => {
+        const filtered = items.filter(d => !d.siteId || d.siteId === '' || d.siteId === siteId);
+        setDestinations(filtered);
+      },
+      console.error
+    );
+
+    const unsubPriorities = subscribeToCollection<PriorityLevel>(
+      collections.PRIORITY_LEVELS,
+      [where('tenantId', '==', tenantId)],
+      setPriorityLevels,
+      console.error
+    );
+
+    return () => {
+      unsubLocations();
+      unsubActions();
+      unsubDest();
+      unsubPriorities();
+    };
+  }, [tenantId, siteId]);
 
   const fetchRec = async () => {
     if (!id) return;
@@ -211,14 +266,20 @@ export const RecommendationDetailPage: React.FC = () => {
               {(snap.inventoryByLocation || []).length > 0 && (
                 <div className="space-y-2 mt-4 pt-4 border-t border-slate-800">
                   <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">By Location</div>
-                  {(snap.inventoryByLocation || []).map((loc, idx) => (
-                    <div key={idx} className="flex justify-between text-sm">
-                      <span className="text-slate-400 font-mono">{loc.locationId}</span>
-                      <span className="font-medium text-slate-200">
-                        {loc.quantity} {loc.status !== 'AVAILABLE' && <span className="text-amber-400">({loc.status})</span>}
-                      </span>
-                    </div>
-                  ))}
+                  {(snap.inventoryByLocation || []).map((loc, idx) => {
+                    const matchLoc = locations.find(l => l.id === loc.locationId || l.locationCode === loc.locationId);
+                    const locLabel = matchLoc 
+                      ? `${matchLoc.locationCode} - ${matchLoc.locationName}` 
+                      : (loc.locationCodeSnapshot || loc.locationId);
+                    return (
+                      <div key={idx} className="flex justify-between text-sm">
+                        <span className="text-slate-400 font-mono">{locLabel}</span>
+                        <span className="font-medium text-slate-200">
+                          {loc.quantity} {loc.status !== 'AVAILABLE' && <span className="text-amber-400">({loc.status})</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -296,13 +357,16 @@ export const RecommendationDetailPage: React.FC = () => {
                   <div className="text-xs text-slate-400 mt-1">Deficit: <span className="font-mono text-slate-300">{out?.planningBand?.deficitQuantity ?? 0}</span>, Excess: <span className="font-mono text-slate-300">{out?.planningBand?.excessQuantity ?? 0}</span></div>
                 </div>
                 
-                {out?.recommendedActionTypeId && (
-                  <div className="flex-1 p-4 bg-brand-500/10 rounded-lg border border-brand-500/20">
-                    <div className="text-xs text-brand-400/70 uppercase tracking-wider mb-1">Recommended Action</div>
-                    <div className="text-lg font-bold text-brand-300">{out.recommendedActionTypeId}</div>
-                    <div className="text-sm font-medium text-brand-400 mt-1">Quantity: <span className="font-mono">{out.recommendedQuantity}</span></div>
-                  </div>
-                )}
+                {out?.recommendedActionTypeId && (() => {
+                  const labelStr = getActionTypeLabel(out.recommendedActionTypeId, actionTypes);
+                  return (
+                    <div className="flex-1 p-4 bg-brand-500/10 rounded-lg border border-brand-500/20">
+                      <div className="text-xs text-brand-400/70 uppercase tracking-wider mb-1">Recommended Action</div>
+                      <div className="text-lg font-bold text-brand-300">{labelStr}</div>
+                      <div className="text-sm font-medium text-brand-400 mt-1">Quantity: <span className="font-mono">{out.recommendedQuantity}</span></div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>
@@ -311,12 +375,31 @@ export const RecommendationDetailPage: React.FC = () => {
                   Explanation Log
                 </h4>
                 <div className="bg-black/40 text-slate-300 rounded-lg p-4 font-mono text-xs space-y-2 overflow-x-auto border border-slate-800">
-                  {(out?.explanationLines || []).map((line, idx) => (
-                    <div key={idx} className="flex">
-                      <span className="text-slate-600 mr-4">{(idx+1).toString().padStart(2, '0')}</span>
-                      <span>{line}</span>
-                    </div>
-                  ))}
+                  {(out?.explanationLines || []).map((line, idx) => {
+                    let renderedLine = line;
+                    actionTypes.forEach(act => {
+                      if (act.id && renderedLine.includes(act.id)) {
+                        renderedLine = renderedLine.replaceAll(act.id, act.label || act.code);
+                      }
+                    });
+                    destinations.forEach(dest => {
+                      if (dest.id && renderedLine.includes(dest.id)) {
+                        const label = dest.destinationName ? `${dest.destinationName} (${dest.destinationCode})` : dest.destinationCode;
+                        renderedLine = renderedLine.replaceAll(dest.id, label);
+                      }
+                    });
+                    priorityLevels.forEach(pl => {
+                      if (pl.id && renderedLine.includes(pl.id)) {
+                        renderedLine = renderedLine.replaceAll(pl.id, pl.label || pl.code);
+                      }
+                    });
+                    return (
+                      <div key={idx} className="flex">
+                        <span className="text-slate-600 mr-4">{(idx+1).toString().padStart(2, '0')}</span>
+                        <span>{renderedLine}</span>
+                      </div>
+                    );
+                  })}
                   <div className="flex pt-2 mt-2 border-t border-slate-800">
                     <span className="text-slate-600 mr-4">--</span>
                     <span className="text-brand-400">EVALUATION COMPLETE</span>
@@ -324,15 +407,15 @@ export const RecommendationDetailPage: React.FC = () => {
                 </div>
               </div>
 
-              {(out?.dataQualityWarnings || []).length > 0 && (
+              {(out?.dataQualityIssues || []).length > 0 && (
                 <div className="bg-amber-900/20 border border-amber-900/50 rounded-lg p-4">
                   <h4 className="text-sm font-semibold text-amber-500 mb-2 flex items-center">
                     <AlertTriangle className="w-4 h-4 mr-2" />
                     Data Quality Warnings
                   </h4>
                   <ul className="list-disc list-inside text-sm text-amber-400/80 space-y-1">
-                    {(out?.dataQualityWarnings || []).map((warning, idx) => (
-                      <li key={idx}>{warning}</li>
+                    {(out?.dataQualityIssues || []).map((issue, idx) => (
+                      <li key={idx}>{issue.message}</li>
                     ))}
                   </ul>
                 </div>
@@ -421,31 +504,69 @@ export const RecommendationDetailPage: React.FC = () => {
                             <button className="text-sm text-slate-400 hover:text-slate-200" onClick={() => setIsOverriding(false)}>Cancel</button>
                           </div>
                           
-                          <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-1">Action Type</label>
-                        <select 
-                          className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                          value={overrideActionType}
-                          onChange={(e) => setOverrideActionType(e.target.value)}
-                        >
-                          <option value="">None</option>
-                          <option value="RELEASE_TO_DESPATCH">Release to Despatch</option>
-                          <option value="REQUEST_PRODUCTION">Request Production</option>
-                          <option value="HOLD_INVENTORY">Hold Inventory</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-400 mb-1">Quantity</label>
-                        <input 
-                          type="number"
-                          className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
-                          value={overrideQuantity}
-                          onChange={(e) => setOverrideQuantity(Number(e.target.value))}
-                          min="0"
-                        />
-                      </div>
-                    </div>
+                           <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-medium text-slate-400 mb-1">Action Type</label>
+                              <select 
+                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
+                                value={overrideActionType}
+                                onChange={(e) => setOverrideActionType(e.target.value)}
+                              >
+                                <option value="">None</option>
+                                {actionTypes.length === 0 ? (
+                                  <>
+                                    <option value="RELEASE_TO_DESPATCH">Release to Despatch</option>
+                                    <option value="REQUEST_PRODUCTION">Request Production</option>
+                                    <option value="HOLD_INVENTORY">Hold Inventory</option>
+                                  </>
+                                ) : (
+                                  actionTypes.filter(act => act.status === 'active' || act.id === overrideActionType || act.code === overrideActionType).map(act => (
+                                    <option key={act.id} value={act.id}>{act.label}</option>
+                                  ))
+                                )}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-slate-400 mb-1">Quantity</label>
+                              <input 
+                                type="number"
+                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
+                                value={overrideQuantity}
+                                onChange={(e) => setOverrideQuantity(Number(e.target.value))}
+                                min="0"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-slate-400 mb-1">Destination</label>
+                              <select 
+                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
+                                value={overrideDestination}
+                                onChange={(e) => setOverrideDestination(e.target.value)}
+                              >
+                                <option value="">None</option>
+                                {destinations.map(dest => (
+                                  <option key={dest.id} value={dest.id}>
+                                    {dest.destinationName ? `${dest.destinationName} (${dest.destinationCode})` : dest.destinationCode}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-slate-400 mb-1">Priority Level</label>
+                              <select 
+                                className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200"
+                                value={overridePriority}
+                                onChange={(e) => setOverridePriority(e.target.value)}
+                              >
+                                <option value="">Normal</option>
+                                {priorityLevels.map(pl => (
+                                  <option key={pl.id} value={pl.id}>
+                                    {pl.label || pl.code}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
 
                     <div>
                       <label className="block text-sm font-medium text-slate-400 mb-1">Override Reason <span className="text-red-500">*</span></label>
@@ -510,15 +631,27 @@ export const RecommendationDetailPage: React.FC = () => {
                 {rec.plannerDecision ? (
                   <div className="space-y-4">
               <div className="flex flex-col gap-3">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <div className="text-xs text-slate-500 uppercase tracking-wider">Action</div>
-                    <div className="font-medium text-slate-200">{rec.plannerDecision.actionTypeId || 'None'}</div>
+                    <div className="font-medium text-slate-200">{getActionTypeLabel(rec.plannerDecision.actionTypeId, actionTypes)}</div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500 uppercase tracking-wider">Quantity</div>
                     <div className="font-medium text-slate-200 font-mono">{rec.plannerDecision.quantity}</div>
                   </div>
+                  {rec.plannerDecision.destinationId && (
+                    <div>
+                      <div className="text-xs text-slate-500 uppercase tracking-wider">Destination</div>
+                      <div className="font-medium text-slate-200">{getDestinationLabel(rec.plannerDecision.destinationId, destinations)}</div>
+                    </div>
+                  )}
+                  {rec.plannerDecision.priorityLevelId && (
+                    <div>
+                      <div className="text-xs text-slate-500 uppercase tracking-wider">Priority Level</div>
+                      <div className="font-medium text-slate-200">{getPriorityLevelLabel(rec.plannerDecision.priorityLevelId, priorityLevels)}</div>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="flex items-center gap-3">

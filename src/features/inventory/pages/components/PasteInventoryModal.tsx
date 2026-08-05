@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, ClipboardPaste, CheckCircle2, AlertTriangle, Layers, Box, Info } from 'lucide-react';
+import { X, ClipboardPaste, CheckCircle2, AlertTriangle, Layers, Box, Info, Plus } from 'lucide-react';
 import { Product } from '../../../../types/product';
 import { Location } from '../../../../types/inventory';
-import { UnitOfMeasure } from '../../../../types/configuration';
+import { UnitOfMeasure, ProductCategory, Destination } from '../../../../types/configuration';
 import { subscribeToLocations } from '../../services/locationService';
-import { subscribeToProducts } from '../../services/productService';
+import { subscribeToProducts, createProduct } from '../../services/productService';
 import { subscribeToCollection } from '../../../../services/firestoreBase';
 import { collections } from '../../../configuration/services/configurationService';
 import { where } from 'firebase/firestore';
@@ -45,11 +45,25 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
   const [locations, setLocations] = useState<Location[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
 
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
   const [rawText, setRawText] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const [quickAddForm, setQuickAddForm] = useState<{
+    productCode: string;
+    description: string;
+    categoryId: string;
+    unitOfMeasureId: string;
+    casesPerPallet: string;
+    unitsPerCase: string;
+    defaultDestinationId: string;
+  } | null>(null);
+  const [quickAddError, setQuickAddError] = useState<string | null>(null);
+  const [quickAddSubmitting, setQuickAddSubmitting] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -75,10 +89,31 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
       console.error
     );
 
+    const unsubCategories = subscribeToCollection<ProductCategory>(
+      collections.PRODUCT_CATEGORIES,
+      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      setCategories,
+      console.error
+    );
+
+    const unsubDestinations = subscribeToCollection<Destination>(
+      collections.DESTINATIONS,
+      [where('tenantId', '==', tenantId)],
+      (items) => {
+        const filtered = items
+          .filter(d => !d.siteId || d.siteId === '' || d.siteId === siteId)
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        setDestinations(filtered);
+      },
+      console.error
+    );
+
     return () => {
       unsubLocations();
       unsubProducts();
       unsubUnits();
+      unsubCategories();
+      unsubDestinations();
     };
   }, [isOpen, tenantId, siteId]);
 
@@ -149,6 +184,84 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
   const handleInsertSample = () => {
     setRawText(SAMPLE_PASTE_DATA);
     setFeedback(null);
+  };
+
+  const handleQuickAddClick = (rawCode: string, rawDesc: string) => {
+    const activeCategories = categories.filter(c => c.status === 'active');
+    const activeUnits = units.filter(u => u.status === 'active');
+    const defaultUom = activeUnits.find(u => u.code === 'CS' || u.id === 'CS') || activeUnits[0];
+
+    setQuickAddForm({
+      productCode: rawCode.toUpperCase(),
+      description: rawDesc || `Product ${rawCode}`,
+      categoryId: activeCategories.length > 0 ? activeCategories[0].id : 'default',
+      unitOfMeasureId: defaultUom ? defaultUom.id : 'CS',
+      casesPerPallet: '100',
+      unitsPerCase: '1',
+      defaultDestinationId: '',
+    });
+    setQuickAddError(null);
+  };
+
+  const handleQuickAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickAddForm) return;
+
+    if (!quickAddForm.productCode.trim() || !quickAddForm.description.trim()) {
+      setQuickAddError('Product Code and Description are required.');
+      return;
+    }
+
+    const casesPerPalletNum = parseInt(quickAddForm.casesPerPallet, 10);
+    if (isNaN(casesPerPalletNum) || casesPerPalletNum <= 0) {
+      setQuickAddError('Cases per pallet must be a valid number greater than 0.');
+      return;
+    }
+
+    const unitsPerCaseNum = parseInt(quickAddForm.unitsPerCase, 10);
+    if (isNaN(unitsPerCaseNum) || unitsPerCaseNum <= 0) {
+      setQuickAddError('Units per case must be a valid number greater than 0.');
+      return;
+    }
+
+    setQuickAddSubmitting(true);
+    setQuickAddError(null);
+
+    try {
+      const payload: Omit<Product, 'id' | 'status' | 'createdDate' | 'modifiedDate'> = {
+        tenantId,
+        siteId,
+        productCode: quickAddForm.productCode.toUpperCase().trim(),
+        description: quickAddForm.description.trim(),
+        categoryId: quickAddForm.categoryId || 'default',
+        unitOfMeasureId: quickAddForm.unitOfMeasureId,
+        casesPerPallet: casesPerPalletNum,
+        unitsPerCase: unitsPerCaseNum,
+        configurations: [
+          {
+            unitOfMeasureId: quickAddForm.unitOfMeasureId,
+            casesPerPallet: casesPerPalletNum,
+            unitsPerCase: unitsPerCaseNum,
+          }
+        ],
+        defaultDestinationId: quickAddForm.defaultDestinationId || null,
+        operationallyRelevant: true,
+        notes: 'Added via Paste Inventory Quick Add.',
+        createdBy: currentUser?.uid || 'system',
+        modifiedBy: currentUser?.uid || 'system',
+      };
+
+      const res = await createProduct(payload);
+      if (res.success) {
+        setQuickAddForm(null);
+      } else {
+        setQuickAddError(res.error || 'Failed to create product.');
+      }
+    } catch (err: any) {
+      setQuickAddError(err.message || 'An unexpected error occurred.');
+    } finally {
+      setQuickAddSubmitting(false);
+    }
   };
 
   const selectedLoc = locations.find(l => l.id === selectedLocationId);
@@ -321,7 +434,16 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
                               <span className="text-slate-400 ml-2 truncate max-w-xs inline-block align-bottom">{row.matchedProduct.description}</span>
                             </div>
                           ) : (
-                            <span className="text-red-400 italic">No matching product found</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-red-400 italic">No matching product found</span>
+                              <button
+                                type="button"
+                                onClick={() => handleQuickAddClick(row.rawMaterialNumber, row.rawDescription || '')}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-brand-500/20 text-brand-300 border border-brand-500/30 hover:bg-brand-500/35 transition-colors shrink-0"
+                              >
+                                <Plus className="w-3 h-3" /> Quick Add
+                              </button>
+                            </div>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right font-mono text-slate-100 font-semibold">
@@ -387,6 +509,145 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
           </div>
         </div>
       </div>
+
+      {quickAddForm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <h3 className="text-md font-semibold text-slate-100 flex items-center gap-2">
+                <Plus className="w-4 h-4 text-brand-400" />
+                Quick Add Product
+              </h3>
+              <button 
+                type="button" 
+                onClick={() => setQuickAddForm(null)} 
+                className="text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Form body */}
+            <form onSubmit={handleQuickAddSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
+              {quickAddError && (
+                <div className="p-3 rounded bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{quickAddError}</span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-300">Product Code *</label>
+                <input
+                  type="text"
+                  required
+                  value={quickAddForm.productCode}
+                  onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, productCode: e.target.value.toUpperCase() } : null)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-300">Description *</label>
+                <input
+                  type="text"
+                  required
+                  value={quickAddForm.description}
+                  onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, description: e.target.value } : null)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-300">Category *</label>
+                  <select
+                    value={quickAddForm.categoryId}
+                    onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, categoryId: e.target.value } : null)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                  >
+                    {categories.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-300">Unit of Measure *</label>
+                  <select
+                    value={quickAddForm.unitOfMeasureId}
+                    onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, unitOfMeasureId: e.target.value } : null)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                  >
+                    {units.map(u => (
+                      <option key={u.id} value={u.id}>{u.code} - {u.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-300">Cases per Pallet *</label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    value={quickAddForm.casesPerPallet}
+                    onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, casesPerPallet: e.target.value } : null)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-300">Units per Case *</label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    value={quickAddForm.unitsPerCase}
+                    onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, unitsPerCase: e.target.value } : null)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-400">Default Destination (Optional)</label>
+                <select
+                  value={quickAddForm.defaultDestinationId}
+                  onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, defaultDestinationId: e.target.value } : null)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+                >
+                  <option value="">None (Select as needed)</option>
+                  {destinations.map(d => (
+                    <option key={d.id} value={d.id}>{d.destinationCode} - {d.destinationName}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Footer */}
+              <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setQuickAddForm(null)}
+                  className="px-4 py-2 text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-md hover:bg-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={quickAddSubmitting}
+                  className="px-4 py-2 text-xs font-medium text-slate-900 bg-brand-500 rounded-md hover:bg-brand-400 transition-colors disabled:opacity-40"
+                >
+                  {quickAddSubmitting ? 'Adding...' : 'Add Product'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

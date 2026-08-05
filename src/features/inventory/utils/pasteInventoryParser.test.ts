@@ -72,6 +72,7 @@ Material Number    Material description                     Plnt SLoc BUn Crcy  
     // Item 1
     const item1 = result.items[0];
     expect(item1.rawMaterialNumber).toBe('3215931');
+    expect(item1.rawDescription).toBe('F1 KLX BOX Usoft CUBE 48sc x12 ap');
     expect(item1.matchedProduct?.productCode).toBe('03215931');
     expect(item1.unrestrictedCases).toBe(3000);
     expect(item1.casesPerPallet).toBe(80);
@@ -81,6 +82,7 @@ Material Number    Material description                     Plnt SLoc BUn Crcy  
     // Item 2 (No A3 config, falls back to available config)
     const item2 = result.items[1];
     expect(item2.rawMaterialNumber).toBe('4310310');
+    expect(item2.rawDescription).toBe('F1 Andrex Skin Protect 155sc 4rx6');
     expect(item2.matchedProduct?.productCode).toBe('04310310');
     expect(item2.unrestrictedCases).toBe(1548);
     expect(item2.casesPerPallet).toBe(54);

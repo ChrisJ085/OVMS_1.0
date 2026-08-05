@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useOutletContext } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, Timestamp, orderBy, limit } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Priority, PriorityStatus } from '../types/priority';
@@ -13,6 +13,9 @@ import { SectionCard } from '../components/ui/SectionCard';
 import { StatusBadge, BadgeVariant } from '../components/ui/StatusBadge';
 import { useAuth } from '../features/auth/context/AuthContext';
 import { useSiteContext } from '../contexts/SiteContext';
+import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
+import { resetSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
+import { Sparkles, RotateCcw } from 'lucide-react';
 import {
   Activity,
   AlertTriangle,
@@ -105,6 +108,8 @@ export const OperationalOverviewPage: React.FC = () => {
   const { userProfile } = useAuth();
   const { tenantId, siteId, site } = useSiteContext();
   const navigate = useNavigate();
+  const { onboarding, canComplete, isComplete, canModifyConfig } = useSiteOnboarding();
+  const { handleOpenOnboardingWizard } = useOutletContext<{ handleOpenOnboardingWizard: () => void }>() || {};
 
   const role = userProfile?.role || 'VIEWER';
   const isSuperOrAdmin = role === 'PLATFORM_SUPERUSER' || role === 'TENANT_ADMIN';
@@ -687,6 +692,79 @@ export const OperationalOverviewPage: React.FC = () => {
         </div>
       )}
 
+      {onboarding && !isComplete && (
+        <div className="bg-slate-950/45 border border-amber-500/15 rounded-xl p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-lg shrink-0">
+                <Sparkles className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-slate-200">Site Setup in Progress</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  The setup of operational site <strong className="text-slate-300 font-medium">{site?.siteName || siteId}</strong> is guided by the Onboarding Checklist. Complete the configurations to activate all modules.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-2">
+              {canComplete && handleOpenOnboardingWizard && (
+                <button
+                  onClick={handleOpenOnboardingWizard}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 shadow-sm"
+                >
+                  Resume Setup
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {canModifyConfig && (
+                <button
+                  onClick={async () => {
+                    if (window.confirm('Are you absolutely sure you want to reset all onboarding progress? This will reset the setup wizard.')) {
+                      await resetSiteOnboarding(tenantId, siteId, userProfile?.uid || 'system');
+                    }
+                  }}
+                  className="px-3.5 py-1.5 border border-slate-800 hover:bg-slate-850 hover:border-slate-750 text-slate-400 hover:text-slate-200 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset Progress
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs font-medium text-slate-500">
+              <span>Onboarding Progress Checklist</span>
+              <span className="text-amber-500">{onboarding.completedSteps?.length || 0} of 10 steps completed</span>
+            </div>
+            <div className="h-1.5 bg-slate-800/60 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-amber-500 transition-all duration-500" 
+                style={{ width: `${((onboarding.completedSteps?.length || 0) / 10) * 100}%` }}
+              />
+            </div>
+            
+            {/* Horizontal inline checklist markers */}
+            <div className="hidden md:flex justify-between gap-1 pt-1.5">
+              {[
+                'Site Details', 'Resources', 'Destinations', 'Actions', 'Priorities', 
+                'Settings', 'Decision', 'Products', 'Rules', 'Review'
+              ].map((name, idx) => {
+                const isStepDone = onboarding.completedSteps?.includes(idx);
+                const isStepSkipped = onboarding.skippedOptionalSteps?.includes(idx);
+                return (
+                  <div key={idx} className="flex-1 text-center">
+                    <div className={`h-1.5 rounded-full mb-1 ${isStepDone ? 'bg-green-500' : isStepSkipped ? 'bg-slate-600' : 'bg-slate-800'}`} />
+                    <span className={`text-[9px] block whitespace-nowrap truncate font-medium ${isStepDone ? 'text-green-500' : 'text-slate-500'}`}>{name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Role Banner / Context */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400">
         <div className="flex items-center gap-3">
@@ -1069,7 +1147,7 @@ export const OperationalOverviewPage: React.FC = () => {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {r.sourceSnapshot?.dataQualityWarnings?.length ? (
+                          {r.decisionOutput?.dataQualityIssues?.length ? (
                             <span className="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800">
                               Warning
                             </span>

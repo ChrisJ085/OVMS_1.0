@@ -137,7 +137,7 @@ export function parsePastedInventoryText(
 
     items.push({
       rawMaterialNumber,
-      rawDescription: tokens.slice(1, -4).join(' '),
+      rawDescription: tokens.length >= 7 ? tokens.slice(1, -5).join(' ') : tokens.slice(1, -1).join(' '),
       unrestrictedCases,
       matchedProduct,
       casesPerPallet,

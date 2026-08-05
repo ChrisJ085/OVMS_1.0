@@ -67,6 +67,26 @@
         "modifiedBy": { "type": "string" }
       },
       "required": ["tenantId", "siteId", "productionLineId", "noteDate", "noteType", "title", "note"]
+    },
+    "SiteOnboarding": {
+      "title": "SiteOnboarding",
+      "description": "Tracks the guided onboarding setup progress and steps for a newly provisioned site.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "status": { "type": "string", "enum": ["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "READY_FOR_REVIEW", "COMPLETED"] },
+        "currentStep": { "type": "number" },
+        "completedSteps": { "type": "array", "items": { "type": "number" } },
+        "skippedOptionalSteps": { "type": "array", "items": { "type": "number" } },
+        "startedBy": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "lastUpdatedBy": { "type": "string" },
+        "lastUpdatedAt": { "type": "string" },
+        "completedBy": { "type": "string" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["tenantId", "siteId", "status", "currentStep", "completedSteps"]
     }
   },
   "firestore": {
@@ -81,6 +101,10 @@
     "productionLinePlanNotes/{noteId}": {
       "schema": "#/entities/ProductionLinePlanNote",
       "description": "Planned events, maintenance windows, and shutdowns on production lines."
+    },
+    "siteOnboarding/{onboardingId}": {
+      "schema": "#/entities/SiteOnboarding",
+      "description": "Site-specific guided onboarding steps and status tracker."
     }
   }
 }
