@@ -25,73 +25,30 @@ export const enqueueRecommendationJob = async (
     const user = auth?.currentUser;
     const token = user ? await user.getIdToken() : null;
 
-    if (token) {
-      try {
-        const response = await fetch('/api/recommendation-jobs', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify(options)
-        });
+    if (!token) {
+      return { success: false, error: 'Authentication required. Please sign in.' };
+    }
 
-        if (response.ok) {
-          const resData = await response.json();
-          if (resData.success && resData.jobId) {
-            return { success: true, data: { jobId: resData.jobId } };
-          }
-        }
-      } catch (fetchErr) {
-        console.warn('[jobRequestService] API fetch error, falling back to direct Firestore queue:', fetchErr);
+    const response = await fetch('/api/recommendation-jobs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(options)
+    });
+
+    const resData = await response.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
+
+    if (response.ok) {
+      if (resData.success && resData.jobId) {
+        return { success: true, data: { jobId: resData.jobId } };
+      } else {
+        return { success: false, error: resData.error || 'Failed to enqueue recommendation job' };
       }
+    } else {
+      return { success: false, error: resData.error || `HTTP error ${response.status}: Failed to enqueue recommendation job` };
     }
-
-    // Fallback: create QUEUED job doc directly in Firestore (Requirement 1 & 2 compliant)
-    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const requestedBy = options.requestedBy || user?.uid || 'user';
-
-    const jobDoc = {
-      id: jobId,
-      jobId,
-      tenantId: options.tenantId,
-      siteId: options.siteId,
-      status: 'QUEUED',
-      triggerType: options.triggerType,
-      triggerReferenceId: options.triggerReferenceId || null,
-      sourceInventorySnapshotId: options.sourceInventorySnapshotId || null,
-      sourceProductionPlanImportId: options.sourceProductionPlanImportId || null,
-      idempotencyKey: options.idempotencyKey || jobId,
-      requestedBy,
-      requestedAt: serverTimestamp(),
-      startedAt: null,
-      completedAt: null,
-      leaseExpiresAt: null,
-      workerId: null,
-      attemptCount: 0,
-      maxAttempts: 3,
-      productCount: options.productIds?.length || 0,
-      processedCount: 0,
-      createdCount: 0,
-      updatedCount: 0,
-      unchangedCount: 0,
-      supersededCount: 0,
-      withdrawnCount: 0,
-      failedCount: 0,
-      errors: [],
-      productIds: options.productIds || [],
-      engineVersion: '2.0.0',
-      createdDate: serverTimestamp(),
-      modifiedDate: serverTimestamp(),
-      createdBy: requestedBy,
-      modifiedBy: requestedBy
-    };
-
-    if (db) {
-      await setDoc(doc(db, 'recommendationGenerationJobs', jobId), jobDoc);
-    }
-
-    return { success: true, data: { jobId } };
   } catch (error: any) {
     console.error('[jobRequestService] Error enqueuing job:', error);
     return { success: false, error: error.message || 'Failed to enqueue recommendation job' };

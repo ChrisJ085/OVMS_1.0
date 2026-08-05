@@ -94,6 +94,60 @@ export class RecommendationBackendService {
   private static workerId = `worker_${process.pid}_${Math.random().toString(36).slice(2, 7)}`;
 
   /**
+   * Extends the lease of the job inside a transaction.
+   * Throws an error if ownership was lost.
+   */
+  private static async extendLease(jobId: string): Promise<void> {
+    const jobRef = adminDb.collection(JOBS_COLLECTION).doc(jobId);
+    await adminDb.runTransaction(async (transaction) => {
+      const jobSnap = await transaction.get(jobRef);
+      if (!jobSnap.exists) {
+        throw new Error(`Job ${jobId} not found, aborting`);
+      }
+      const jobData = jobSnap.data()!;
+      if (jobData.status !== 'IN_PROGRESS') {
+        throw new Error(`Lease lost: Job ${jobId} status is no longer IN_PROGRESS`);
+      }
+      if (jobData.workerId !== this.workerId) {
+        throw new Error(`Lease lost: Job ${jobId} was reclaimed by worker ${jobData.workerId}`);
+      }
+
+      const nextLeaseExpiresAt = Timestamp.fromMillis(Date.now() + 5 * 60 * 1000);
+      transaction.update(jobRef, {
+        leaseExpiresAt: nextLeaseExpiresAt,
+        lastHeartbeatAt: FieldValue.serverTimestamp(),
+        modifiedDate: FieldValue.serverTimestamp()
+      });
+    });
+  }
+
+  /**
+   * Finalizes the job inside a transaction, verifying ownership.
+   */
+  private static async finalizeJobWithCompletion(jobId: string, completionData: any): Promise<void> {
+    const jobRef = adminDb.collection(JOBS_COLLECTION).doc(jobId);
+    await adminDb.runTransaction(async (transaction) => {
+      const jobSnap = await transaction.get(jobRef);
+      if (!jobSnap.exists) {
+        throw new Error(`Job ${jobId} not found for finalization`);
+      }
+      const jobData = jobSnap.data()!;
+      if (jobData.status !== 'IN_PROGRESS') {
+        throw new Error(`Cannot finalize: Job ${jobId} is no longer IN_PROGRESS`);
+      }
+      if (jobData.workerId !== this.workerId) {
+        throw new Error(`Cannot finalize: Job ${jobId} is owned by another worker`);
+      }
+
+      transaction.update(jobRef, {
+        ...completionData,
+        leaseExpiresAt: null,
+        modifiedDate: FieldValue.serverTimestamp()
+      });
+    });
+  }
+
+  /**
    * Unlock expired leases back to QUEUED status so that stuck processes can recover gracefully.
    */
   public static async unlockExpiredLeases(): Promise<void> {
@@ -376,6 +430,8 @@ export class RecommendationBackendService {
         modifiedDate: FieldValue.serverTimestamp()
       });
 
+      let lastHeartbeatTime = Date.now();
+
       // 4. Evaluate each product in bounded batches
       const batchSize = 20;
       for (let i = 0; i < productsToEvaluate.length; i += batchSize) {
@@ -491,13 +547,17 @@ export class RecommendationBackendService {
                 }
               });
 
+              // Resolve the active configuration for the product (Requirement 11)
+              const activeConfig = product.configurations?.find((c: any) => c.unitOfMeasureId === product.unitOfMeasureId) || product.configurations?.[0];
+              const casesPerPallet = activeConfig ? activeConfig.casesPerPallet : product.casesPerPallet;
+
               productionContext = {
                 isScheduled,
                 isCurrentlyInProduction,
                 plannedCasesNext7Days: plannedCases7,
                 plannedCasesNext14Days: plannedCases14,
-                plannedPalletsNext7Days: Math.ceil(plannedCases7 / (product.casesPerPallet || 100)),
-                plannedPalletsNext14Days: Math.ceil(plannedCases14 / (product.casesPerPallet || 100)),
+                plannedPalletsNext7Days: (casesPerPallet && casesPerPallet > 0) ? Math.ceil(plannedCases7 / casesPerPallet) : null,
+                plannedPalletsNext14Days: (casesPerPallet && casesPerPallet > 0) ? Math.ceil(plannedCases14 / casesPerPallet) : null,
                 daysUntilNextProduction: daysUntil,
                 dataFreshnessStatus: 'FRESH',
                 productionRiskStatus: 'LOW_RISK',
@@ -563,7 +623,7 @@ export class RecommendationBackendService {
               productId,
               productCodeSnapshot: productCode,
               descriptionSnapshot: description,
-              inventoryTotal: inventoryTotal !== null ? inventoryTotal : 0,
+              inventoryTotal: inventoryTotal,
               inventoryByLocation: [],
               planningRule: planningRule || null,
               productionContext,
@@ -574,13 +634,13 @@ export class RecommendationBackendService {
               configuration: configuration || null
             };
 
-            // HEARTBEAT LEASE RENEWAL (Requirement 3)
-            // Periodically extend lease for the job while this worker is actively making progress
-            const nextLeaseExpiresAt = Timestamp.fromMillis(Date.now() + 5 * 60 * 1000);
-            await jobRef.update({
-              leaseExpiresAt: nextLeaseExpiresAt,
-              modifiedDate: FieldValue.serverTimestamp()
-            });
+            // HEARTBEAT LEASE RENEWAL (Requirement 10)
+            // Periodically extend lease inside a transaction at a safe interval of 15 seconds
+            const currentMs = Date.now();
+            if (currentMs - lastHeartbeatTime > 15000) {
+              await this.extendLease(jobId);
+              lastHeartbeatTime = currentMs;
+            }
 
             const ruleVersion = planningRule ? (
               planningRule.modifiedDate && typeof (planningRule.modifiedDate as any).toDate === 'function'
@@ -773,6 +833,16 @@ export class RecommendationBackendService {
               isOverride: false
             };
 
+            const isMateriallyChanged = !existingCurrentDoc ||
+              existingCurrentDoc.fingerprint !== canonicalFingerprint ||
+              existingCurrentDoc.recommendationStatus !== recStatus ||
+              JSON.stringify(existingCurrentDoc.effectiveInstruction) !== JSON.stringify(effectiveInstruction) ||
+              existingCurrentDoc.hasActiveOverride !== hasActiveOverride ||
+              JSON.stringify(existingCurrentDoc.activeOverride) !== JSON.stringify(existingActiveOverride || null);
+
+            const historyId = `rec_${Date.now()}_${productId}_${canonicalFingerprint.slice(0, 8)}`;
+            const historyIdToUse = isMateriallyChanged ? historyId : (existingCurrentDoc?.sourceMetadata?.sourceRecommendationId || '');
+
             // K. Source Metadata (Requirement 13)
             const sourceMetadata = {
               triggerType,
@@ -784,7 +854,8 @@ export class RecommendationBackendService {
               productPlanningRuleModifiedDate: ruleVersion,
               decisionConfigurationVersion: configuration?.configurationVersion || 'v1.0.0',
               promotionIds: activePromotionIds,
-              engineVersion: ENGINE_VERSION
+              engineVersion: ENGINE_VERSION,
+              sourceRecommendationId: historyIdToUse
             };
 
             // L. Update Current Recommendation Document (Requirement 10)
@@ -814,19 +885,20 @@ export class RecommendationBackendService {
 
             productBatch.set(currentDocRef, currentDocData, { merge: true });
 
-            // M. Write Recommendation History Record
-            const historyId = `rec_${Date.now()}_${productId}_${canonicalFingerprint.slice(0, 8)}`;
-            const historyRef = adminDb.collection(RECOMMENDATIONS_COLLECTION).doc(historyId);
-            productBatch.set(historyRef, {
-              ...currentDocData,
-              id: historyId,
-              recommendationJobId: jobId,
-              historyTimestamp: FieldValue.serverTimestamp()
-            });
+            // M. Write Recommendation History Record ONLY if materially changed
+            if (isMateriallyChanged) {
+              const historyRef = adminDb.collection(RECOMMENDATIONS_COLLECTION).doc(historyId);
+              productBatch.set(historyRef, {
+                ...currentDocData,
+                id: historyId,
+                recommendationJobId: jobId,
+                historyTimestamp: FieldValue.serverTimestamp()
+              });
+            }
 
             if (!existingCurrentDoc) {
               createdCount++;
-            } else if (existingCurrentDoc.fingerprint !== canonicalFingerprint) {
+            } else if (isMateriallyChanged) {
               updatedCount++;
             } else {
               unchangedCount++;
@@ -847,7 +919,7 @@ export class RecommendationBackendService {
                 tenantId,
                 siteId,
                 sourceType: 'SYSTEM_RECOMMENDATION',
-                sourceRecommendationId: historyId,
+                sourceRecommendationId: historyIdToUse,
                 productId,
                 productCodeSnapshot: productCode,
                 descriptionSnapshot: description,
@@ -862,7 +934,7 @@ export class RecommendationBackendService {
                 priorityLevelId: decisionOutput.recommendedPriorityLevelId,
                 priorityLevelLabel: priorityLevelsMap.get(decisionOutput.recommendedPriorityLevelId || '') || decisionOutput.recommendedPriorityLevelId,
                 priorityStatus: 'ACTIVE',
-                publishedAt: FieldValue.serverTimestamp(),
+                publishedAt: prioritySnap.exists ? (prioritySnap.data()?.publishedAt || FieldValue.serverTimestamp()) : FieldValue.serverTimestamp(),
                 createdBy: 'system',
                 createdDate: prioritySnap.exists ? (prioritySnap.data()?.createdDate || FieldValue.serverTimestamp()) : FieldValue.serverTimestamp(),
                 modifiedBy: 'system',
@@ -932,10 +1004,9 @@ export class RecommendationBackendService {
       // 5. Finalize Job Status
       const finalStatus = failedCount === 0 ? 'COMPLETED' : (processedCount > failedCount ? 'COMPLETED_WITH_WARNINGS' : 'FAILED');
 
-      await jobRef.update({
+      await this.finalizeJobWithCompletion(jobId, {
         status: finalStatus,
         completedAt: FieldValue.serverTimestamp(),
-        leaseExpiresAt: null,
         processedCount,
         createdCount,
         updatedCount,
@@ -943,22 +1014,23 @@ export class RecommendationBackendService {
         supersededCount,
         withdrawnCount,
         failedCount,
-        errors,
-        modifiedDate: FieldValue.serverTimestamp()
+        errors
       });
 
       console.log(`[RecommendationBackendService] Job ${jobId} finished with status ${finalStatus}. Processed ${processedCount} products.`);
 
     } catch (jobErr: any) {
       console.error(`[RecommendationBackendService] Job ${jobId} fatal error:`, jobErr);
-      await jobRef.update({
-        status: 'FAILED',
-        completedAt: FieldValue.serverTimestamp(),
-        leaseExpiresAt: null,
-        failedCount: processedCount || 1,
-        errors: [{ message: jobErr.message || 'Fatal job failure', timestamp: new Date().toISOString() }],
-        modifiedDate: FieldValue.serverTimestamp()
-      });
+      try {
+        await this.finalizeJobWithCompletion(jobId, {
+          status: 'FAILED',
+          completedAt: FieldValue.serverTimestamp(),
+          failedCount: processedCount || 1,
+          errors: [{ message: jobErr.message || 'Fatal job failure', timestamp: new Date().toISOString() }]
+        });
+      } catch (finalizeErr: any) {
+        console.error(`[RecommendationBackendService] Failed to finalize job status for ${jobId} after fatal error:`, finalizeErr);
+      }
     }
   }
 }

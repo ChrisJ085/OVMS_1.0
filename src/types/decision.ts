@@ -105,7 +105,7 @@ export interface DecisionInputSnapshot {
   productCodeSnapshot: string;
   descriptionSnapshot?: string;
   unitOfMeasure?: string;
-  inventoryTotal: number;
+  inventoryTotal: number | null;
   inventoryByLocation: InventoryBalance[];
   inventoryUpdatedAt: Date | null;
   planningRule: ProductPlanningRule | null;

@@ -272,6 +272,59 @@ export const evaluateDecision = (
   // 1. Configuration Resolution & Validation (No operational fallback DEFAULT_DECISION_CONFIG in production)
   const config: DecisionConfiguration | null = input.configuration || configOverride || null;
 
+  if (inventoryTotal === null || inventoryTotal === undefined) {
+    const missingIssues: DataQualityIssue[] = [{
+      code: 'INVENTORY_MISSING',
+      severity: 'BLOCKING',
+      blocking: true,
+      message: 'Inventory balances are completely missing or unknown for this product. Quantitative decision cannot be evaluated.',
+      sourceArea: 'INVENTORY'
+    }];
+    
+    return {
+      productId,
+      planningBandStatus: 'UNKNOWN',
+      effectiveMinimum: { baseValue: 0, promotionAdjustment: 0, effectiveValue: 0 },
+      effectiveTarget: { baseValue: 0, promotionAdjustment: 0, effectiveValue: 0 },
+      effectiveMaximum: { baseValue: 0, promotionAdjustment: 0, effectiveValue: 0 },
+      effectiveDDXM: { baseValue: 0, promotionAdjustment: 0, effectiveValue: 0 },
+      controllingRetention: 0,
+      availableToRelease: 0,
+      shortfallQuantity: 0,
+      headroomToMaximum: 0,
+      recommendedActionTypeId: config?.reviewActionId || 'ACTION_REVIEW',
+      recommendedQuantity: 0,
+      recommendedDestinationId: null,
+      recommendedPriorityLevelId: config?.normalPriorityId || 'PRIORITY_NORMAL',
+      reasonCodes: ['REVIEW_REQUIRED'],
+      explanationLines: ['Evaluation aborted: Missing or unknown inventory.'],
+      structuredExplanation: {
+        currentFacts: ['Inventory is unknown or missing.'],
+        thresholds: [],
+        productionContext: [],
+        promotionContext: [],
+        risks: ['No stock visibility.'],
+        recommendation: ['Quantitative decision evaluation blocked due to unknown inventory.'],
+        calculationTrace: []
+      },
+      exceptions: [{ message: 'Inventory data is completely missing or unknown for this product.', severity: 'ERROR' }],
+      dataQualityStatus: 'INVENTORY_MISSING',
+      dataQualityIssues: missingIssues,
+      versionInfo: {
+        engineVersion: ENGINE_VERSION,
+        configurationVersion: config?.configurationVersion || 'v1.0.0',
+        planningRuleVersion: planningRule ? 'v1' : null,
+        inventorySnapshotTime: null,
+        productionImportId: productionContext?.sourceImportId || null,
+        promotionSnapshotIds: activePromotionImpacts.map(p => p.promotion.id || ''),
+        evaluatedAt: evaluationTime || new Date(),
+        sourceHash: ''
+      },
+      sourceSnapshot: input,
+      evaluatedAt: evaluationTime || new Date()
+    };
+  }
+
   const isConfigIncomplete = !config || 
     !config.holdActionId || 
     !config.reviewActionId || 
@@ -482,9 +535,9 @@ export const evaluateDecision = (
     isCurrentlyInProduction = false,
     currentProductionLine = null,
     plannedCasesToday = 0,
-    plannedPalletsToday = 0,
+    plannedPalletsToday = null,
     plannedCasesNext7Days = 0,
-    plannedPalletsNext7Days = 0,
+    plannedPalletsNext7Days = null,
     nextProductionDate = null,
     daysUntilNextProduction = null,
     hasDelay = false,
@@ -494,6 +547,16 @@ export const evaluateDecision = (
     productionRiskStatus = 'NORMAL',
     activeProductionNotes = []
   } = productionContext || {};
+
+  if (plannedPalletsNext7Days === null || plannedPalletsToday === null) {
+    dataQualityIssues.push({
+      code: 'PRODUCT_MASTER_INCOMPLETE',
+      severity: 'WARNING',
+      blocking: false,
+      message: 'Product casesPerPallet is missing. Cannot convert planned case quantities to pallets. Capacity overflow checks could not be evaluated.',
+      sourceArea: 'PRODUCT_MASTER'
+    });
+  }
 
   // Log Production Reasons
   if (isCurrentlyInProduction) reasonCodes.push('PRODUCTION_RUNNING');
@@ -659,7 +722,7 @@ export const evaluateDecision = (
     recAction = actionOverride || releaseAction;
     recQty = availableToRelease;
 
-    if (plannedPalletsNext7Days > 0 && (qoh + plannedPalletsNext7Days > effMax)) {
+    if (plannedPalletsNext7Days !== null && plannedPalletsNext7Days > 0 && (qoh + plannedPalletsNext7Days > effMax)) {
       reasonCodes.push('UPCOMING_PRODUCTION_CAPACITY_RISK');
       exceptions.push({ message: 'Upcoming production poses warehouse capacity overflow risk.', severity: 'WARNING' });
       riskLines.push(`Upcoming production of ${plannedPalletsNext7Days} pallets exceeds max capacity headroom.`);
@@ -670,7 +733,7 @@ export const evaluateDecision = (
     recQty = availableToRelease;
     recPrio = urgentPriority || normalPriority;
 
-    if (plannedPalletsNext7Days > 0) {
+    if (plannedPalletsNext7Days !== null && plannedPalletsNext7Days > 0) {
       reasonCodes.push('UPCOMING_PRODUCTION_CAPACITY_RISK');
       riskLines.push(`Warehouse is ABOVE maximum capacity by ${qoh - effMax} pallets. Further production of ${plannedPalletsNext7Days} pallets scheduled.`);
     }

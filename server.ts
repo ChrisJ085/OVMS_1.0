@@ -4,6 +4,8 @@ import { createServer as createViteServer } from "vite";
 import { FieldValue, Query, DocumentReference } from 'firebase-admin/firestore';
 import { adminAuth as auth, adminDb as db, resolvedAdminProjectId } from "./src/config/firebaseAdmin";
 import { RecommendationBackendService } from "./src/server/recommendationBackendService";
+import { CANONICAL_TRIGGER_TYPES } from "./src/types/recommendation";
+import crypto from "crypto";
 
 const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBi4tywQk5WaNIvalD3uSrz4Au7WxolJlM";
 const FIREBASE_PROJECT_ID = resolvedAdminProjectId || "ovms-ad209";
@@ -594,7 +596,7 @@ async function startServer() {
       const {
         tenantId,
         siteId,
-        triggerType = "MANUAL_RECALCULATION",
+        triggerType,
         triggerReferenceId = null,
         sourceInventorySnapshotId = null,
         sourceProductionPlanImportId = null,
@@ -602,8 +604,33 @@ async function startServer() {
         idempotencyKey = null
       } = req.body;
 
-      if (!tenantId || !siteId) {
-        return res.status(400).json({ success: false, error: "tenantId and siteId are required" });
+      // 3. VALIDATE REQUEST PAYLOAD TYPES
+      if (typeof tenantId !== "string" || tenantId.trim() === "") {
+        return res.status(400).json({ success: false, error: "Bad Request: tenantId must be a non-empty string" });
+      }
+      if (typeof siteId !== "string" || siteId.trim() === "") {
+        return res.status(400).json({ success: false, error: "Bad Request: siteId must be a non-empty string" });
+      }
+      if (typeof triggerType !== "string" || !CANONICAL_TRIGGER_TYPES.includes(triggerType as any)) {
+        return res.status(400).json({ success: false, error: "Bad Request: triggerType must be a canonical GenerationTriggerType value" });
+      }
+      if (!Array.isArray(productIds) || productIds.some(id => typeof id !== "string" || id.trim() === "")) {
+        return res.status(400).json({ success: false, error: "Bad Request: productIds must be an array of non-empty strings" });
+      }
+      if (productIds.length > 1000) {
+        return res.status(400).json({ success: false, error: "Bad Request: productIds exceeds the maximum allowed limit of 1000" });
+      }
+      if (triggerReferenceId !== null && typeof triggerReferenceId !== "string") {
+        return res.status(400).json({ success: false, error: "Bad Request: triggerReferenceId must be null or a string" });
+      }
+      if (sourceInventorySnapshotId !== null && typeof sourceInventorySnapshotId !== "string") {
+        return res.status(400).json({ success: false, error: "Bad Request: sourceInventorySnapshotId must be null or a string" });
+      }
+      if (sourceProductionPlanImportId !== null && typeof sourceProductionPlanImportId !== "string") {
+        return res.status(400).json({ success: false, error: "Bad Request: sourceProductionPlanImportId must be null or a string" });
+      }
+      if (idempotencyKey !== null && (typeof idempotencyKey !== "string" || idempotencyKey.length > 256 || idempotencyKey.trim() === "")) {
+        return res.status(400).json({ success: false, error: "Bad Request: idempotencyKey must be null or a non-empty string with max length 256" });
       }
 
       // 3. For non-Superusers, require requested tenantId to equal profile.tenantId
@@ -636,7 +663,11 @@ async function startServer() {
         return res.status(403).json({ success: false, error: "Forbidden: Requested Tenant is not active" });
       }
 
-      if (siteData && "status" in siteData && siteData.status !== "ACTIVE") {
+      // 9. STRICT SITE ACTIVE VALIDATION
+      const isStatusActive = siteData && (siteData.status === "ACTIVE");
+      const isLegacyActive = siteData && (!("status" in siteData) && siteData.active === true);
+      
+      if (!isStatusActive && !isLegacyActive) {
         return res.status(403).json({ success: false, error: "Forbidden: Requested Site is not active" });
       }
 
@@ -654,53 +685,94 @@ async function startServer() {
         }
       }
 
-      // 9. Reject unsupported trigger types
-      const allowedTriggerTypes = ["MANUAL", "MANUAL_RECALCULATION", "SCHEDULED", "EVENT_DRIVEN"];
-      if (!allowedTriggerTypes.includes(triggerType)) {
-        return res.status(400).json({ success: false, error: "Bad Request: Unsupported trigger type" });
-      }
-
-      const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const now = FieldValue.serverTimestamp();
-
-      // 10. Never trust requestedBy from the body. Derive requestedBy from decodedToken.uid (uid)
-      const jobDoc = {
-        id: jobId,
-        jobId,
+      // 4. ENFORCE IDEMPOTENCY
+      // Generate a stable server-side hash from input elements
+      const sortedProductIds = [...productIds].sort();
+      const rawKeyData = {
         tenantId,
         siteId,
-        status: "QUEUED",
         triggerType,
-        triggerReferenceId,
-        sourceInventorySnapshotId,
-        sourceProductionPlanImportId,
-        idempotencyKey: idempotencyKey || jobId,
-        requestedBy: uid,
-        requestedAt: now,
-        startedAt: null,
-        completedAt: null,
-        leaseExpiresAt: null,
-        workerId: null,
-        attemptCount: 0,
-        maxAttempts: 3,
-        productCount: productIds.length || 0,
-        processedCount: 0,
-        createdCount: 0,
-        updatedCount: 0,
-        unchangedCount: 0,
-        supersededCount: 0,
-        withdrawnCount: 0,
-        failedCount: 0,
-        errors: [],
-        productIds,
-        engineVersion: "2.0.0",
-        createdDate: now,
-        modifiedDate: now,
-        createdBy: uid,
-        modifiedBy: uid
+        triggerReferenceId: triggerReferenceId || null,
+        productIds: sortedProductIds,
+        sourceInventorySnapshotId: sourceInventorySnapshotId || null,
+        sourceProductionPlanImportId: sourceProductionPlanImportId || null
       };
+      const stableKeyString = JSON.stringify(rawKeyData);
+      const serverIdempotencyHash = crypto.createHash("sha256").update(stableKeyString).digest("hex");
 
-      await db.collection("recommendationGenerationJobs").doc(jobId).set(jobDoc);
+      const idempotencyRef = db.collection("recommendationIdempotencyKeys").doc(serverIdempotencyHash);
+      
+      const txResult = await db.runTransaction(async (transaction) => {
+        const idempotencySnap = await transaction.get(idempotencyRef);
+        if (idempotencySnap.exists) {
+          const existingJobId = idempotencySnap.data()?.jobId;
+          if (existingJobId) {
+            const jobRef = db.collection("recommendationGenerationJobs").doc(existingJobId);
+            const jobSnap = await transaction.get(jobRef);
+            if (jobSnap.exists) {
+              const jobData = jobSnap.data();
+              const activeStatuses = ["QUEUED", "IN_PROGRESS", "COMPLETED", "COMPLETED_WITH_WARNINGS"];
+              if (activeStatuses.includes(jobData?.status)) {
+                return { jobId: existingJobId, isDuplicate: true };
+              }
+            }
+          }
+        }
+
+        const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const now = FieldValue.serverTimestamp();
+
+        const jobDoc = {
+          id: jobId,
+          jobId,
+          tenantId,
+          siteId,
+          status: "QUEUED",
+          triggerType,
+          triggerReferenceId: triggerReferenceId || null,
+          sourceInventorySnapshotId: sourceInventorySnapshotId || null,
+          sourceProductionPlanImportId: sourceProductionPlanImportId || null,
+          idempotencyKey: idempotencyKey || jobId,
+          serverIdempotencyHash,
+          requestedBy: uid,
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          leaseExpiresAt: null,
+          workerId: null,
+          attemptCount: 0,
+          maxAttempts: 3,
+          productCount: productIds.length,
+          processedCount: 0,
+          createdCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          supersededCount: 0,
+          withdrawnCount: 0,
+          failedCount: 0,
+          errors: [],
+          productIds,
+          engineVersion: "2.0.0",
+          createdDate: now,
+          modifiedDate: now,
+          createdBy: uid,
+          modifiedBy: uid
+        };
+
+        const jobRef = db.collection("recommendationGenerationJobs").doc(jobId);
+        transaction.set(jobRef, jobDoc);
+        transaction.set(idempotencyRef, {
+          id: serverIdempotencyHash,
+          jobId,
+          createdAt: now,
+          tenantId,
+          siteId
+        });
+
+        return { jobId, isDuplicate: false };
+      });
+
+      const { jobId, isDuplicate } = txResult;
 
       // Trigger processing immediately in background
       setTimeout(() => {
@@ -712,7 +784,9 @@ async function startServer() {
       return res.json({
         success: true,
         jobId,
-        message: "Recommendation job successfully queued for trusted backend execution"
+        message: isDuplicate 
+          ? "Recommendation job already exists, returning existing job ID" 
+          : "Recommendation job successfully queued for trusted backend execution"
       });
     } catch (error: any) {
       console.error("[Server] Error queuing recommendation job:", error);

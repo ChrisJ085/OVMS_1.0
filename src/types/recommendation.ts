@@ -55,14 +55,17 @@ export interface SuppressionContext {
   inventorySnapshotId?: string | null;
 }
 
-export type GenerationTriggerType = 
-  | 'INVENTORY_IMPORT'
-  | 'MPPS_IMPORT'
-  | 'PLANNING_RULE_CHANGE'
-  | 'PROMOTION_CHANGE'
-  | 'DECISION_CONFIGURATION_CHANGE'
-  | 'MANUAL_RECALCULATION'
-  | 'REPAIR';
+export const CANONICAL_TRIGGER_TYPES = [
+  'INVENTORY_IMPORT',
+  'MPPS_IMPORT',
+  'PLANNING_RULE_CHANGE',
+  'PROMOTION_CHANGE',
+  'DECISION_CONFIGURATION_CHANGE',
+  'MANUAL_RECALCULATION',
+  'REPAIR'
+] as const;
+
+export type GenerationTriggerType = typeof CANONICAL_TRIGGER_TYPES[number];
 
 export type GenerationJobStatus = 
   | 'QUEUED'
