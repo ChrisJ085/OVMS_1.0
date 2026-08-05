@@ -43,9 +43,9 @@ let mockEntriesDocs: any[] = [];
 let mockQueryError: Error | null = null;
 
 vi.mock('firebase/firestore', () => ({
-  doc: vi.fn(),
-  collection: vi.fn(),
-  query: vi.fn(),
+  doc: (db: any, path: string, ...args: any[]) => ({ _type: 'doc', path, args }),
+  collection: (db: any, name: string) => ({ _type: 'collection', name }),
+  query: (col: any, ...args: any[]) => ({ _type: 'query', col, args }),
   where: vi.fn(),
   orderBy: vi.fn(),
   limit: vi.fn(),
@@ -54,19 +54,51 @@ vi.mock('firebase/firestore', () => ({
       errCb(mockQueryError);
       return () => {};
     }
-    // Simulate initial snapshot
-    let docs = mockPrioritiesDocs;
-    cb({ docs });
+    if (q && q._type === 'doc') {
+      cb({
+        exists: () => true,
+        data: () => ({
+          tenantId: 'tenant-1',
+          siteId: 'site-1',
+          status: 'COMPLETED',
+          currentStep: 3,
+          completedSteps: [0, 1, 2],
+          skippedOptionalSteps: []
+        })
+      });
+    } else {
+      let rawDocs = mockPrioritiesDocs;
+      if (q && q._type === 'query' && q.col && q.col.name === 'exceptions') {
+        rawDocs = mockExceptionsDocs;
+      } else if (q && q._type === 'query' && q.col && q.col.name === 'announcements') {
+        rawDocs = mockAnnouncementsDocs;
+      }
+      const docs = rawDocs.map(d => ({
+        id: d.id || 'mock-id',
+        data: () => d
+      }));
+      cb({ docs });
+    }
     return () => {};
   },
-  getDocs: async () => {
+  getDocs: async (q: any) => {
     if (mockQueryError) {
       throw mockQueryError;
     }
+    let rawDocs = mockRecommendationsDocs;
+    if (q && q._type === 'query' && q.col && q.col.name === 'productionPlanImports') {
+      rawDocs = mockImportDocs;
+    } else if (q && q._type === 'query' && q.col && q.col.name === 'siteSettings') {
+      rawDocs = mockEntriesDocs;
+    }
+    const docs = rawDocs.map(d => ({
+      id: d.id || 'mock-id',
+      data: () => d
+    }));
     return {
-      empty: mockImportDocs.length === 0,
-      size: mockRecommendationsDocs.length,
-      docs: mockRecommendationsDocs,
+      empty: docs.length === 0,
+      size: docs.length,
+      docs,
     };
   },
   Timestamp: {

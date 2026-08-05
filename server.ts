@@ -577,6 +577,20 @@ async function startServer() {
         return res.status(403).json({ success: false, error: "Forbidden: User profile not found" });
       }
 
+      const profile = profileRes.data;
+
+      // 1. Require accountStatus == "ACTIVE"
+      if (profile.accountStatus !== "ACTIVE") {
+        return res.status(403).json({ success: false, error: "Forbidden: User account is inactive" });
+      }
+
+      // 2. Require role to be PLATFORM_SUPERUSER, TENANT_ADMIN or PLANNER
+      // WAREHOUSE_OPERATOR, VIEWER and DISPLAY must be denied
+      const allowedRoles = ["PLATFORM_SUPERUSER", "TENANT_ADMIN", "PLANNER"];
+      if (!allowedRoles.includes(profile.role)) {
+        return res.status(403).json({ success: false, error: "Forbidden: Insufficient role permissions" });
+      }
+
       const {
         tenantId,
         siteId,
@@ -592,9 +606,64 @@ async function startServer() {
         return res.status(400).json({ success: false, error: "tenantId and siteId are required" });
       }
 
+      // 3. For non-Superusers, require requested tenantId to equal profile.tenantId
+      if (profile.role !== "PLATFORM_SUPERUSER" && tenantId !== profile.tenantId) {
+        return res.status(403).json({ success: false, error: "Forbidden: Tenant isolation violation" });
+      }
+
+      // 4. For Planner, require requested siteId to exist in profile.siteIds
+      if (profile.role === "PLANNER") {
+        if (!profile.siteIds || !Array.isArray(profile.siteIds) || !profile.siteIds.includes(siteId)) {
+          return res.status(403).json({ success: false, error: "Forbidden: Site assignment isolation violation" });
+        }
+      }
+
+      // 5. Validate the site document exists
+      const siteDoc = await db.collection("sites").doc(siteId).get();
+      if (!siteDoc.exists) {
+        return res.status(403).json({ success: false, error: "Forbidden: Site document does not exist" });
+      }
+
+      // 6. Validate site.tenantId equals requested tenantId
+      const siteData = siteDoc.data();
+      if (siteData?.tenantId !== tenantId) {
+        return res.status(403).json({ success: false, error: "Forbidden: Site tenantId mismatch" });
+      }
+
+      // 7. Validate the tenant and site are active
+      const tenantDoc = await db.collection("tenants").doc(tenantId).get();
+      if (!tenantDoc.exists || tenantDoc.data()?.status !== "ACTIVE") {
+        return res.status(403).json({ success: false, error: "Forbidden: Requested Tenant is not active" });
+      }
+
+      if (siteData && "status" in siteData && siteData.status !== "ACTIVE") {
+        return res.status(403).json({ success: false, error: "Forbidden: Requested Site is not active" });
+      }
+
+      // 8. Validate every productId belongs to the requested tenant and site
+      if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+        for (const prodId of productIds) {
+          const prodDoc = await db.collection("products").doc(prodId).get();
+          if (!prodDoc.exists) {
+            return res.status(403).json({ success: false, error: `Forbidden: Product ${prodId} does not exist` });
+          }
+          const prodData = prodDoc.data();
+          if (prodData?.tenantId !== tenantId || prodData?.siteId !== siteId) {
+            return res.status(403).json({ success: false, error: `Forbidden: Product ${prodId} does not belong to requested tenant or site` });
+          }
+        }
+      }
+
+      // 9. Reject unsupported trigger types
+      const allowedTriggerTypes = ["MANUAL", "MANUAL_RECALCULATION", "SCHEDULED", "EVENT_DRIVEN"];
+      if (!allowedTriggerTypes.includes(triggerType)) {
+        return res.status(400).json({ success: false, error: "Bad Request: Unsupported trigger type" });
+      }
+
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       const now = FieldValue.serverTimestamp();
 
+      // 10. Never trust requestedBy from the body. Derive requestedBy from decodedToken.uid (uid)
       const jobDoc = {
         id: jobId,
         jobId,

@@ -342,7 +342,7 @@ service cloud.firestore {
                        isTenantAdmin(request.resource.data.tenantId) ||
                        ((isPlanner(request.resource.data.tenantId)) && 
                         isAssignedToSite(getSiteId(request.resource))))
-                       && !('publishingStatus' in request.resource.data && request.resource.data.publishingStatus in ['AUTO_PUBLISHED', 'FAILED_VALIDATION'])
+                       && !('recommendationStatus' in request.resource.data && request.resource.data.recommendationStatus in ['AUTO_PUBLISHED', 'FAILED_VALIDATION'])
                        && (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'system')
                        && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION');
       allow update: if (isSuperuser() || 
@@ -350,7 +350,7 @@ service cloud.firestore {
                        ((isPlanner(request.resource.data.tenantId)) && 
                         isAssignedToSite(getSiteId(request.resource))))
                        && ownershipFieldsUnchanged()
-                       && !('publishingStatus' in request.resource.data && request.resource.data.publishingStatus in ['AUTO_PUBLISHED', 'FAILED_VALIDATION'])
+                       && !('recommendationStatus' in request.resource.data && request.resource.data.recommendationStatus in ['AUTO_PUBLISHED', 'FAILED_VALIDATION'])
                        && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION');
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }

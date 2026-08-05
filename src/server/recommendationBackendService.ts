@@ -5,6 +5,7 @@ import { evaluateDecision, ENGINE_VERSION } from '../features/planning/services/
 import { DecisionInputSnapshot, DecisionOutput, DecisionConfiguration } from '../types/decision';
 import { ProductPlanningRule } from '../types/planning';
 import { Promotion, PromotionProductRule, PromotionWithPhase } from '../types/promotion';
+import { calculatePromotionPhase } from '../features/planning/services/promotionService';
 
 const JOBS_COLLECTION = 'recommendationGenerationJobs';
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
@@ -93,6 +94,84 @@ export class RecommendationBackendService {
   private static workerId = `worker_${process.pid}_${Math.random().toString(36).slice(2, 7)}`;
 
   /**
+   * Unlock expired leases back to QUEUED status so that stuck processes can recover gracefully.
+   */
+  public static async unlockExpiredLeases(): Promise<void> {
+    const now = Date.now();
+    try {
+      const expiredSnap = await adminDb
+        .collection(JOBS_COLLECTION)
+        .where('status', '==', 'IN_PROGRESS')
+        .where('leaseExpiresAt', '<', Timestamp.fromMillis(now))
+        .get();
+
+      if (!expiredSnap.empty) {
+        const batch = adminDb.batch();
+        for (const doc of expiredSnap.docs) {
+          const data = doc.data();
+          const attemptCount = data.attemptCount || 1;
+          const maxAttempts = data.maxAttempts || 3;
+          
+          if (attemptCount >= maxAttempts) {
+            batch.update(doc.ref, {
+              status: 'FAILED',
+              leaseExpiresAt: null,
+              completedAt: FieldValue.serverTimestamp(),
+              modifiedDate: FieldValue.serverTimestamp(),
+              errors: FieldValue.arrayUnion({
+                message: `Job lease expired and exceeded maximum attempt count of ${maxAttempts}`,
+                timestamp: new Date().toISOString()
+              })
+            });
+            console.warn(`[RecommendationBackendService] Job ${doc.id} permanently failed: max lease attempts exceeded.`);
+          } else {
+            batch.update(doc.ref, {
+              status: 'QUEUED',
+              leaseExpiresAt: null,
+              workerId: null,
+              modifiedDate: FieldValue.serverTimestamp()
+            });
+            console.info(`[RecommendationBackendService] Unlocked stalled job ${doc.id} back to QUEUED status.`);
+          }
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error('[RecommendationBackendService] Error unlocking expired leases:', err);
+    }
+  }
+
+  /**
+   * Gracefully release any active leases owned by this worker on shutdown
+   */
+  public static async gracefulShutdown(): Promise<void> {
+    console.log(`[RecommendationBackendService] Shutting down worker ${this.workerId}. Releasing leased jobs...`);
+    try {
+      const leasedJobs = await adminDb
+        .collection(JOBS_COLLECTION)
+        .where('workerId', '==', this.workerId)
+        .where('status', '==', 'IN_PROGRESS')
+        .get();
+
+      if (!leasedJobs.empty) {
+        const batch = adminDb.batch();
+        for (const doc of leasedJobs.docs) {
+          batch.update(doc.ref, {
+            status: 'QUEUED',
+            leaseExpiresAt: null,
+            workerId: null,
+            modifiedDate: FieldValue.serverTimestamp()
+          });
+          console.info(`[RecommendationBackendService] Released leased job ${doc.id} back to QUEUED on shutdown.`);
+        }
+        await batch.commit();
+      }
+    } catch (err) {
+      console.error('[RecommendationBackendService] Error releasing leases during shutdown:', err);
+    }
+  }
+
+  /**
    * Claim and execute a queued job transactionally (Requirement 3)
    */
   public static async claimAndProcessNextJob(): Promise<boolean> {
@@ -103,6 +182,9 @@ export class RecommendationBackendService {
     let claimedJobId: string | null = null;
 
     try {
+      // First, unlock any expired leases so they can be re-queued immediately
+      await this.unlockExpiredLeases();
+
       await adminDb.runTransaction(async (tx) => {
         // Query for QUEUED jobs or expired lease IN_PROGRESS jobs
         const queuedQuery = adminDb
@@ -192,6 +274,9 @@ export class RecommendationBackendService {
 
     console.log(`[RecommendationBackendService] Processing job ${jobId} for tenant ${tenantId}, site ${siteId}, trigger ${triggerType}`);
 
+    let resolvedInventorySnapshotId = sourceInventorySnapshotId || null;
+    let resolvedProductionPlanImportId = sourceProductionPlanImportId || null;
+
     let processedCount = 0;
     let createdCount = 0;
     let updatedCount = 0;
@@ -202,6 +287,40 @@ export class RecommendationBackendService {
     const errors: Array<{ productId?: string; productCode?: string; message: string; timestamp: string }> = [];
 
     try {
+      // 0. Resolve the latest canonical source versions if not explicitly provided
+      if (!resolvedInventorySnapshotId) {
+        const latestInvSnap = await adminDb
+          .collection('inventorySnapshots')
+          .where('tenantId', '==', tenantId)
+          .where('siteId', '==', siteId)
+          .orderBy('uploadedAt', 'desc')
+          .limit(1)
+          .get();
+        if (!latestInvSnap.empty) {
+          resolvedInventorySnapshotId = latestInvSnap.docs[0].id;
+        }
+      }
+
+      if (!resolvedProductionPlanImportId) {
+        const latestProdImport = await adminDb
+          .collection('productionPlanImports')
+          .where('tenantId', '==', tenantId)
+          .where('siteId', '==', siteId)
+          .orderBy('uploadedAt', 'desc')
+          .limit(1)
+          .get();
+        if (!latestProdImport.empty) {
+          resolvedProductionPlanImportId = latestProdImport.docs[0].id;
+        }
+      }
+
+      // Save the resolved canonical source versions back to the job document
+      await jobRef.update({
+        sourceInventorySnapshotId: resolvedInventorySnapshotId,
+        sourceProductionPlanImportId: resolvedProductionPlanImportId,
+        modifiedDate: FieldValue.serverTimestamp()
+      });
+
       // 1. Fetch Decision Configuration
       const configSnap = await adminDb
         .collection(DECISION_CONFIGS_COLLECTION)
@@ -229,19 +348,23 @@ export class RecommendationBackendService {
       const plSnap = await adminDb.collection('priorityLevels').where('tenantId', '==', tenantId).get();
       plSnap.forEach(d => priorityLevelsMap.set(d.id, d.data().name || d.data().label || d.id));
 
-      // 3. Resolve Products to evaluate
+      // 3. Resolve Products to evaluate with strict tenant/site isolation (Requirement 11)
       let productsToEvaluate: Array<any> = [];
       if (productIds && Array.isArray(productIds) && productIds.length > 0) {
         for (const pid of productIds) {
           const pDoc = await adminDb.collection(PRODUCTS_COLLECTION).doc(pid).get();
           if (pDoc.exists) {
-            productsToEvaluate.push({ id: pDoc.id, ...pDoc.data() });
+            const pData = pDoc.data();
+            if (pData && pData.tenantId === tenantId && pData.siteId === siteId) {
+              productsToEvaluate.push({ id: pDoc.id, ...pData });
+            }
           }
         }
       } else {
         const pSnap = await adminDb
           .collection(PRODUCTS_COLLECTION)
           .where('tenantId', '==', tenantId)
+          .where('siteId', '==', siteId)
           .where('status', '==', 'active')
           .get();
         pSnap.forEach(d => productsToEvaluate.push({ id: d.id, ...d.data() }));
@@ -321,13 +444,15 @@ export class RecommendationBackendService {
 
             let productionContext: any = null;
             if (!prodSnap.empty) {
-              let plannedCases = 0;
+              let plannedCases7 = 0;
+              let plannedCases14 = 0;
               let isScheduled = false;
               let isCurrentlyInProduction = false;
               let daysUntil: number | null = null;
 
               const nowMs = Date.now();
               const sevenDaysMs = nowMs + 7 * 24 * 60 * 60 * 1000;
+              const fourteenDaysMs = nowMs + 14 * 24 * 60 * 60 * 1000;
 
               prodSnap.forEach(d => {
                 const data = d.data();
@@ -336,14 +461,31 @@ export class RecommendationBackendService {
                   if (data.status === 'RUNNING') isCurrentlyInProduction = true;
 
                   const plannedQty = data.plannedCases || data.quantityCases || 0;
-                  plannedCases += plannedQty;
-
                   const start = data.plannedStartDate || data.startDate;
+
                   if (start && typeof start.toDate === 'function') {
                     const startMs = start.toDate().getTime();
+                    
+                    // Sum 7 days
                     if (startMs >= nowMs && startMs <= sevenDaysMs) {
+                      plannedCases7 += plannedQty;
                       const diffDays = Math.ceil((startMs - nowMs) / (1000 * 60 * 60 * 24));
                       if (daysUntil === null || diffDays < daysUntil) daysUntil = diffDays;
+                    } else if (data.status === 'RUNNING') {
+                      plannedCases7 += plannedQty;
+                    }
+
+                    // Sum 14 days
+                    if (startMs >= nowMs && startMs <= fourteenDaysMs) {
+                      plannedCases14 += plannedQty;
+                    } else if (data.status === 'RUNNING') {
+                      plannedCases14 += plannedQty;
+                    }
+                  } else {
+                    plannedCases7 += plannedQty;
+                    plannedCases14 += plannedQty;
+                    if (data.status === 'RUNNING') {
+                      daysUntil = 0;
                     }
                   }
                 }
@@ -352,12 +494,14 @@ export class RecommendationBackendService {
               productionContext = {
                 isScheduled,
                 isCurrentlyInProduction,
-                plannedCasesNext7Days: plannedCases,
-                plannedPalletsNext7Days: Math.ceil(plannedCases / (product.casesPerPallet || 100)),
+                plannedCasesNext7Days: plannedCases7,
+                plannedCasesNext14Days: plannedCases14,
+                plannedPalletsNext7Days: Math.ceil(plannedCases7 / (product.casesPerPallet || 100)),
+                plannedPalletsNext14Days: Math.ceil(plannedCases14 / (product.casesPerPallet || 100)),
                 daysUntilNextProduction: daysUntil,
                 dataFreshnessStatus: 'FRESH',
                 productionRiskStatus: 'LOW_RISK',
-                sourceImportId: sourceProductionPlanImportId || null
+                sourceImportId: resolvedProductionPlanImportId || null
               };
             }
 
@@ -381,10 +525,17 @@ export class RecommendationBackendService {
                   if (pDoc.exists) {
                     const promoData = pDoc.data() as Promotion;
                     if (promoData.status === 'active' && promoData.promotionStatus !== 'CANCELLED' && promoData.promotionStatus !== 'COMPLETED') {
+                      // Call the canonical phase resolution helper
+                      const phase = calculatePromotionPhase(
+                        promoData.startDate,
+                        promoData.endDate,
+                        promoData.preBuildStartDate,
+                        promoData.runDownEndDate
+                      );
                       const promoWithPhase: PromotionWithPhase = {
                         ...promoData,
                         id: pDoc.id,
-                        phase: 'ACTIVE' // Simplified phase resolution for backend evaluation
+                        phase
                       };
                       activePromotionImpacts.push({ promotion: promoWithPhase, rule: pRule });
                       activePromotionIds.push(pDoc.id);
@@ -423,6 +574,14 @@ export class RecommendationBackendService {
               configuration: configuration || null
             };
 
+            // HEARTBEAT LEASE RENEWAL (Requirement 3)
+            // Periodically extend lease for the job while this worker is actively making progress
+            const nextLeaseExpiresAt = Timestamp.fromMillis(Date.now() + 5 * 60 * 1000);
+            await jobRef.update({
+              leaseExpiresAt: nextLeaseExpiresAt,
+              modifiedDate: FieldValue.serverTimestamp()
+            });
+
             const ruleVersion = planningRule ? (
               planningRule.modifiedDate && typeof (planningRule.modifiedDate as any).toDate === 'function'
                 ? (planningRule.modifiedDate as any).toDate().toISOString()
@@ -431,15 +590,31 @@ export class RecommendationBackendService {
                     : planningRule.id)
             ) : null;
 
+            // F1. Map rule values and phase resolutions for the canonical fingerprint (Requirement 9)
+            const promotionRuleValues = activePromotionImpacts.map(impact => ({
+              promotionId: impact.promotion.id,
+              retentionUpliftQuantity: impact.rule.retentionUpliftQuantity || null,
+              promotionMinimumOverride: impact.rule.promotionMinimumOverride || null,
+              promotionTargetOverride: impact.rule.promotionTargetOverride || null,
+              promotionMaximumOverride: impact.rule.promotionMaximumOverride || null,
+              destinationOverrideId: impact.rule.destinationOverrideId || null,
+              actionTypeOverrideId: impact.rule.actionTypeOverrideId || null
+            }));
+
+            const promotionPhaseMap: Record<string, string> = {};
+            for (const impact of activePromotionImpacts) {
+              promotionPhaseMap[impact.promotion.id] = impact.promotion.phase;
+            }
+
             const canonicalFingerprint = generateCanonicalFingerprint({
               tenantId,
               siteId,
               productId,
-              sourceInventorySnapshotId: sourceInventorySnapshotId || null,
+              sourceInventorySnapshotId: resolvedInventorySnapshotId || null,
               inventoryTotal,
               inventoryLocationBreakdown,
               inventoryUpdatedAtISO: inventoryUpdatedAt ? inventoryUpdatedAt.toISOString() : null,
-              sourceProductionPlanImportId: sourceProductionPlanImportId || null,
+              sourceProductionPlanImportId: resolvedProductionPlanImportId || null,
               productionContext,
               productPlanningRuleId: planningRule?.id || null,
               productPlanningRuleVersion: ruleVersion,
@@ -454,6 +629,8 @@ export class RecommendationBackendService {
               preferredDestinationId: planningRule?.preferredDestinationId || null,
               decisionConfigurationVersion: configuration?.configurationVersion || null,
               activePromotionIds,
+              promotionRuleValues,
+              promotionPhaseMap,
               effectiveOverrideState: hasActiveOverride ? {
                 hasActiveOverride: true,
                 overrideActionTypeId: existingActiveOverride.recommendedActionTypeId,
@@ -466,11 +643,14 @@ export class RecommendationBackendService {
             // G. Evaluate Decision Engine
             const decisionOutput = evaluateDecision(inputSnapshot, configuration || undefined);
 
-            // Requirement 8: Handle Missing Inventory Cleanly
+            // Requirement 8: Handle Missing Inventory Cleanly & Deny quantitative recommendations (Requirement 13)
             const isMissingInventory = inventoryTotal === null;
             if (isMissingInventory) {
               decisionOutput.planningBandStatus = 'UNKNOWN';
               decisionOutput.dataQualityStatus = 'MISSING_INVENTORY';
+              decisionOutput.recommendedQuantity = 0;
+              decisionOutput.recommendedActionTypeId = null;
+              decisionOutput.recommendedDestinationId = null;
               if (!decisionOutput.dataQualityIssues.some(i => i.code === 'MISSING_INVENTORY')) {
                 decisionOutput.dataQualityIssues.push({
                   code: 'MISSING_INVENTORY',
@@ -481,6 +661,9 @@ export class RecommendationBackendService {
                 });
               }
             }
+
+            // Start Transactional Write Batch for this product (Requirement 3 & 4)
+            const productBatch = adminDb.batch();
 
             // H. Deduplicate Exceptions (Requirement 12)
             const hasBlockingIssues = decisionOutput.dataQualityIssues.some(i => i.blocking) || isMissingInventory;
@@ -495,7 +678,7 @@ export class RecommendationBackendService {
 
               const issueMsg = decisionOutput.dataQualityIssues.find(i => i.blocking)?.message || 'Engine validation failed.';
 
-              await excRef.set({
+              productBatch.set(excRef, {
                 id: excId,
                 tenantId,
                 siteId,
@@ -525,7 +708,7 @@ export class RecommendationBackendService {
                 .get();
 
               for (const excDoc of openExcSnap.docs) {
-                await excDoc.ref.update({
+                productBatch.update(excDoc.ref, {
                   status: 'RESOLVED',
                   resolvedAt: FieldValue.serverTimestamp(),
                   resolutionNotes: 'Automatically resolved by successful backend engine execution.',
@@ -629,11 +812,12 @@ export class RecommendationBackendService {
               modifiedBy: 'system'
             };
 
-            await currentDocRef.set(currentDocData, { merge: true });
+            productBatch.set(currentDocRef, currentDocData, { merge: true });
 
             // M. Write Recommendation History Record
             const historyId = `rec_${Date.now()}_${productId}_${canonicalFingerprint.slice(0, 8)}`;
-            await adminDb.collection(RECOMMENDATIONS_COLLECTION).doc(historyId).set({
+            const historyRef = adminDb.collection(RECOMMENDATIONS_COLLECTION).doc(historyId);
+            productBatch.set(historyRef, {
               ...currentDocData,
               id: historyId,
               recommendationJobId: jobId,
@@ -649,10 +833,15 @@ export class RecommendationBackendService {
             }
 
             // N. Publish Priority & Display Priority if AUTO_PUBLISHED (Requirement 1, 2)
-            if (isAutoPublishable && decisionOutput.recommendedActionTypeId && decisionOutput.recommendedQuantity > 0) {
-              const priorityId = `prio_auto_${tenantId}_${siteId}_${productId}`;
-              const priorityRef = adminDb.collection(PRIORITIES_COLLECTION).doc(priorityId);
+            const priorityId = `prio_auto_${tenantId}_${siteId}_${productId}`;
+            const priorityRef = adminDb.collection(PRIORITIES_COLLECTION).doc(priorityId);
+            const displayPriorityId = `disp_${priorityId}`;
+            const displayPriorityRef = adminDb.collection(DISPLAY_PRIORITIES_COLLECTION).doc(displayPriorityId);
 
+            const prioritySnap = await priorityRef.get();
+            const displayPrioritySnap = await displayPriorityRef.get();
+
+            if (isAutoPublishable && decisionOutput.recommendedActionTypeId && decisionOutput.recommendedQuantity > 0) {
               const priorityData = {
                 id: priorityId,
                 tenantId,
@@ -675,16 +864,15 @@ export class RecommendationBackendService {
                 priorityStatus: 'ACTIVE',
                 publishedAt: FieldValue.serverTimestamp(),
                 createdBy: 'system',
-                createdDate: FieldValue.serverTimestamp(),
+                createdDate: prioritySnap.exists ? (prioritySnap.data()?.createdDate || FieldValue.serverTimestamp()) : FieldValue.serverTimestamp(),
                 modifiedBy: 'system',
                 modifiedDate: FieldValue.serverTimestamp()
               };
 
-              await priorityRef.set(priorityData, { merge: true });
+              productBatch.set(priorityRef, priorityData, { merge: true });
 
               // Display Priority Projection (Requirement 1, 2)
-              const displayPriorityId = `disp_${priorityId}`;
-              await adminDb.collection(DISPLAY_PRIORITIES_COLLECTION).doc(displayPriorityId).set({
+              productBatch.set(displayPriorityRef, {
                 id: displayPriorityId,
                 sourcePriorityId: priorityId,
                 tenantId,
@@ -704,10 +892,29 @@ export class RecommendationBackendService {
                 progressPercent: 0,
                 destinationId: priorityData.destinationId,
                 destinationLabel: priorityData.destinationLabel,
-                createdDate: FieldValue.serverTimestamp(),
+                createdDate: displayPrioritySnap.exists ? (displayPrioritySnap.data()?.createdDate || FieldValue.serverTimestamp()) : FieldValue.serverTimestamp(),
                 modifiedDate: FieldValue.serverTimestamp()
               }, { merge: true });
+            } else {
+              // Withdraw active system priorities if recommendation status is withdrawn, suppressed, or no longer actionable (Requirement 6)
+              if (prioritySnap.exists) {
+                const pData = prioritySnap.data();
+                if (pData && pData.priorityStatus !== 'WITHDRAWN') {
+                  productBatch.update(priorityRef, {
+                    priorityStatus: 'WITHDRAWN',
+                    modifiedBy: 'system',
+                    modifiedDate: FieldValue.serverTimestamp()
+                  });
+                  withdrawnCount++;
+                }
+              }
+              if (displayPrioritySnap.exists) {
+                productBatch.delete(displayPriorityRef);
+              }
             }
+
+            // Commit atomic product batch
+            await productBatch.commit();
 
           } catch (productErr: any) {
             failedCount++;
