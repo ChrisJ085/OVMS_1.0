@@ -1,7 +1,7 @@
 import { collection, query, where, getDocs, doc, setDoc, writeBatch, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { ensureDefaultDecisionConfiguration } from './decisionConfigurationService';
-import { reEvaluateRecommendation } from './recommendationService';
+import { generateRecommendationForProduct } from './recommendationService';
 
 // Define structures matching types
 const PRODUCTS_COLLECTION = 'products';
@@ -288,7 +288,7 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
     let count = 0;
     for (const prod of testProducts) {
       try {
-        const recResult = await reEvaluateRecommendation(tenantId, siteId, prod.id);
+        const recResult = await generateRecommendationForProduct(tenantId, siteId, prod.id);
         if (recResult.success) {
           count++;
         } else {

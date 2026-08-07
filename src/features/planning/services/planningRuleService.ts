@@ -5,10 +5,9 @@ import {
   subscribeToCollection
 } from '../../../services/firestoreBase';
 import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, doc, getDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
-import { enqueueRecommendationJob } from './jobRequestService';
 
 const COLLECTION_NAME = 'planningRules';
 
@@ -109,19 +108,10 @@ export const createPlanningRule = async (
 
     const id = await createDocument<any>(COLLECTION_NAME, {
       ...data,
-      status: 'active'
+      status: 'active',
+      createdDate: Timestamp.now(),
+      modifiedDate: Timestamp.now()
     });
-
-    if (data.tenantId && data.siteId && data.productId) {
-      enqueueRecommendationJob({
-        tenantId: data.tenantId,
-        siteId: data.siteId,
-        triggerType: 'PLANNING_RULE_CHANGE',
-        triggerReferenceId: id,
-        productIds: [data.productId]
-      }).catch(err => console.error('Recommendation trigger error:', err));
-    }
-
     return { success: true, data: id };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
@@ -138,15 +128,12 @@ export const updatePlanningRule = async (
   if (error) return { success: false, error };
 
   try {
-    let productId = data.productId;
-    if (!productId && db) {
-      const existing = await getDoc(doc(db, COLLECTION_NAME, id));
-      if (existing.exists()) {
-        productId = existing.data().productId;
-      }
-    }
-
+    // Note: if updating dates or productId, we should check for overlaps
+    // But typically we don't change productId of an existing rule.
+    // If effective dates change:
     if (data.effectiveFrom || data.effectiveTo || data.productId) {
+       // We'll need the full rule to check overlap properly if only partial is sent,
+       // but typically our form sends the whole object.
        const fromDate = (data.effectiveFrom as any).toDate ? (data.effectiveFrom as any).toDate() : new Date(data.effectiveFrom as any);
        const toDate = data.effectiveTo ? ((data.effectiveTo as any).toDate ? (data.effectiveTo as any).toDate() : new Date(data.effectiveTo as any)) : null;
        
@@ -158,18 +145,10 @@ export const updatePlanningRule = async (
        }
     }
 
-    await updateDocument(COLLECTION_NAME, id, data);
-
-    if (tenantId && siteId && productId) {
-      enqueueRecommendationJob({
-        tenantId,
-        siteId,
-        triggerType: 'PLANNING_RULE_CHANGE',
-        triggerReferenceId: id,
-        productIds: [productId]
-      }).catch(err => console.error('Recommendation trigger error on update:', err));
-    }
-
+    await updateDocument(COLLECTION_NAME, id, {
+      ...data,
+      modifiedDate: Timestamp.now()
+    });
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
@@ -181,36 +160,11 @@ export const setPlanningRuleStatus = async (
   active: boolean
 ): Promise<ServiceResult<void>> => {
   try {
-    let tenantId = '';
-    let siteId = '';
-    let productId = '';
-
-    if (db) {
-      const existing = await getDoc(doc(db, COLLECTION_NAME, id));
-      if (existing.exists()) {
-        const rData = existing.data();
-        tenantId = rData.tenantId;
-        siteId = rData.siteId;
-        productId = rData.productId;
-      }
-    }
-
     if (!active) {
       await deactivateDocument(COLLECTION_NAME, id);
     } else {
       await updateDocument(COLLECTION_NAME, id, { status: 'active' });
     }
-
-    if (tenantId && siteId && productId) {
-      enqueueRecommendationJob({
-        tenantId,
-        siteId,
-        triggerType: 'PLANNING_RULE_CHANGE',
-        triggerReferenceId: id,
-        productIds: [productId]
-      }).catch(err => console.error('Recommendation trigger error on status change:', err));
-    }
-
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -250,11 +204,19 @@ export const getProductPlanningRule = async (
       where('status', '==', 'active')
     );
     const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    const rules = snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductPlanningRule));
     
-    // We should ideally filter by effective dates here
+    // Sort descending by modifiedDate or createdDate so the latest saved rule is prioritized
+    rules.sort((a, b) => {
+      const timeA = (a.modifiedDate as any)?.toDate?.()?.getTime() || (a.modifiedDate as any)?.seconds * 1000 || (a.createdDate as any)?.toDate?.()?.getTime() || (a.createdDate as any)?.seconds * 1000 || 0;
+      const timeB = (b.modifiedDate as any)?.toDate?.()?.getTime() || (b.modifiedDate as any)?.seconds * 1000 || (b.createdDate as any)?.toDate?.()?.getTime() || (b.createdDate as any)?.seconds * 1000 || 0;
+      return timeB - timeA;
+    });
+
     const now = new Date();
-    for (const d of snap.docs) {
-      const rule = { id: d.id, ...d.data() } as ProductPlanningRule;
+    for (const rule of rules) {
       const from = (rule.effectiveFrom as any)?.toDate?.() || new Date(rule.effectiveFrom as any);
       const to = rule.effectiveTo ? ((rule.effectiveTo as any)?.toDate?.() || new Date(rule.effectiveTo as any)) : null;
       
@@ -263,14 +225,7 @@ export const getProductPlanningRule = async (
       }
     }
     
-    // If no specific date match, maybe just return the first active one? Or null.
-    // Assuming we want strict date matching. If there's an active rule but no date overlap, we might still want it if dates are loose.
-    // Let's just return the first one if we can't find a date match but it's active.
-    if (!snap.empty) {
-       return { id: snap.docs[0].id, ...snap.docs[0].data() } as ProductPlanningRule;
-    }
-    
-    return null;
+    return rules[0] || null;
   } catch (e) {
     console.error(e);
     return null;

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, CheckCircle } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { ProductPlanningRule, ControllingThresholdMode } from '../../../../types/planning';
 import { Destination } from '../../../../types/configuration';
 import { createPlanningRule, updatePlanningRule } from '../../services/planningRuleService';
+import { generateRecommendationForProduct } from '../../services/recommendationService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { Timestamp } from 'firebase/firestore';
 import { useSiteContext } from '../../../../contexts/SiteContext';
@@ -13,10 +14,11 @@ interface PlanningRuleModalProps {
   onClose: () => void;
   item?: ProductPlanningRule;
   destinations: Destination[];
+  onSaveSuccess?: (message: string) => void;
 }
 
 export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({ 
-  isOpen, onClose, item, destinations 
+  isOpen, onClose, item, destinations, onSaveSuccess
 }) => {
   const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<ProductPlanningRule>>({});
@@ -127,8 +129,21 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
       } as Omit<ProductPlanningRule, 'id' | 'status' | 'createdDate' | 'modifiedDate'>);
     }
     
+    if (result.success && payload.productId) {
+      // Re-evaluate recommendation for this single product with forceReevaluate=true
+      try {
+        await generateRecommendationForProduct(tenantId, siteId, payload.productId, true);
+      } catch (err) {
+        console.error('Failed to auto-generate recommendation on rule save:', err);
+      }
+    }
+
     setSubmitting(false);
     if (result.success) {
+      const msg = `Planning rule saved for ${formData.productCode || 'product'}. Recommendation was automatically re-evaluated and updated across Recommendation Workspace and TV Dashboard.`;
+      if (onSaveSuccess) {
+        onSaveSuccess(msg);
+      }
       onClose();
     } else {
       alert(result.error);

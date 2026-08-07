@@ -55,6 +55,7 @@ const ALL_NAVIGATION: NavGroup[] = [
       { label: 'Operational Priorities', path: '/operations/priorities', icon: Box, permission: 'VIEW_PRIORITIES' },
       { label: 'Warehouse Execution', path: '/operations/warehouse', icon: Workflow, permission: 'VIEW_WAREHOUSE_EXECUTION' },
       { label: 'Announcements', path: '/operations/announcements', icon: Megaphone, permission: 'VIEW_PRIORITIES' },
+      { label: 'TV Dashboard', path: '/tv-dashboard', icon: MonitorPlay, permission: 'VIEW_TV_DASHBOARD' },
     ],
   },
   {
@@ -144,7 +145,6 @@ export const Sidebar: React.FC = () => {
         <div className="p-4 border-t border-slate-800">
           <NavLink
             to="/tv-dashboard"
-            target="_blank"
             className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md transition-colors"
           >
             <MonitorPlay className="w-4 h-4" />

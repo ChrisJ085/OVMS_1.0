@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet, useMatches } from 'react-router-dom';
-import { LogOut, Settings, X, Building2 } from 'lucide-react';
+import { Outlet, useMatches, useNavigate } from 'react-router-dom';
+import { LogOut, Settings, X, Building2, LayoutDashboard } from 'lucide-react';
 import { usePageTitle } from '../../hooks/usePageTitle';
 import { useAuth } from '../../features/auth/context/AuthContext';
 import { useSiteContext } from '../../contexts/SiteContext';
@@ -9,6 +9,7 @@ export const TVLayout: React.FC = () => {
   const { userProfile, logout } = useAuth();
   const { siteName, availableSites, siteId, setSite, siteReady, siteError } = useSiteContext();
   const [showControlModal, setShowControlModal] = useState(false);
+  const navigate = useNavigate();
   
   const matches = useMatches();
   const currentMatch = matches[matches.length - 1];
@@ -116,13 +117,24 @@ export const TVLayout: React.FC = () => {
               </div>
             )}
 
-            <div className="flex justify-between items-center pt-2">
-              <button
-                onClick={() => setShowControlModal(false)}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium cursor-pointer"
-              >
-                Close Menu
-              </button>
+            <div className="flex flex-wrap justify-between items-center gap-3 pt-2">
+              <div className="flex items-center gap-2">
+                {!isDisplayRole && (
+                  <button
+                    onClick={() => navigate('/')}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-500/20 hover:bg-brand-500/30 text-brand-400 border border-brand-500/30 text-sm font-medium cursor-pointer"
+                  >
+                    <LayoutDashboard className="w-4 h-4" />
+                    Main App
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowControlModal(false)}
+                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
               <button
                 onClick={handleSignOut}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 text-sm font-medium cursor-pointer"

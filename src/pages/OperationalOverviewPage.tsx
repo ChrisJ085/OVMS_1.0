@@ -8,6 +8,12 @@ import { OperationalException, ExceptionSeverity } from '../types/exception';
 import { Announcement } from '../types/announcement';
 import { ProductionPlanImport, ProductionPlanEntry, ProductionEvent } from '../types/production';
 import { SiteSettings } from '../types/settings';
+import { Product } from '../types/product';
+import { Destination, ActionType, PriorityLevel } from '../types/configuration';
+import { subscribeToCollection } from '../services/firestoreBase';
+import { collections } from '../features/configuration/services/configurationService';
+import { subscribeToProducts } from '../features/inventory/services/productService';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel, formatQuantityInPallets } from '../features/operations/utils/priorityFormatters';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SectionCard } from '../components/ui/SectionCard';
 import { StatusBadge, BadgeVariant } from '../components/ui/StatusBadge';
@@ -129,6 +135,12 @@ export const OperationalOverviewPage: React.FC = () => {
   const [activePromotionsCount, setActivePromotionsCount] = useState<number>(0);
   const [activeSessionsCount, setActiveSessionsCount] = useState<number>(0);
 
+  // Reference/Configuration states
+  const [products, setProducts] = useState<Product[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -191,6 +203,10 @@ export const OperationalOverviewPage: React.FC = () => {
     setSiteSettings(null);
     setActivePromotionsCount(0);
     setActiveSessionsCount(0);
+    setProducts([]);
+    setDestinations([]);
+    setActionTypes([]);
+    setPriorityLevels([]);
     setPanelErrors({});
 
     if (!tenantId || !siteId) {
@@ -461,12 +477,61 @@ export const OperationalOverviewPage: React.FC = () => {
       setLoading(false);
     };
 
+    // Reference / Configuration collections subscriptions
+    let unsubDest = () => {};
+    let unsubActions = () => {};
+    let unsubLevels = () => {};
+    let unsubProd = () => {};
+
+    try {
+      unsubDest = subscribeToCollection<Destination>(
+        collections.DESTINATIONS,
+        [where('tenantId', '==', tenantId)],
+        setDestinations,
+        console.error
+      );
+    } catch (e) {
+      console.error('Error subscribing to destinations:', e);
+    }
+
+    try {
+      unsubActions = subscribeToCollection<ActionType>(
+        collections.ACTION_TYPES,
+        [where('tenantId', '==', tenantId)],
+        setActionTypes,
+        console.error
+      );
+    } catch (e) {
+      console.error('Error subscribing to action types:', e);
+    }
+
+    try {
+      unsubLevels = subscribeToCollection<PriorityLevel>(
+        collections.PRIORITY_LEVELS,
+        [where('tenantId', '==', tenantId)],
+        setPriorityLevels,
+        console.error
+      );
+    } catch (e) {
+      console.error('Error subscribing to priority levels:', e);
+    }
+
+    try {
+      unsubProd = subscribeToProducts(tenantId, siteId, setProducts, console.error);
+    } catch (e) {
+      console.error('Error subscribing to products:', e);
+    }
+
     fetchOneTimeData();
 
     return () => {
       unsubPriorities();
       unsubExceptions();
       unsubAnnouncements();
+      unsubDest();
+      unsubActions();
+      unsubLevels();
+      unsubProd();
     };
   }, [tenantId, siteId, role, isSuperOrAdmin]);
 
@@ -1034,6 +1099,20 @@ export const OperationalOverviewPage: React.FC = () => {
                           ? 'release'
                           : 'hold';
 
+                      const productMatch = products.find(prod => 
+                        (p.productId && prod.id === p.productId) || 
+                        (prod.productCode === p.productCodeSnapshot)
+                      );
+                      const cpp = productMatch?.casesPerPallet || 
+                        productMatch?.configurations?.[0]?.casesPerPallet || 
+                        100;
+
+                      const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+                      const actionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel);
+                      const destLabel = getDestinationLabel(p.destinationId, destinations, p.destinationLabel);
+
+                      const isUrgent = levelLabel.toUpperCase().includes('URGENT') || levelLabel.toUpperCase().includes('HIGH');
+
                       return (
                         <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
                           <td className="py-3 px-3">
@@ -1043,23 +1122,30 @@ export const OperationalOverviewPage: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-3 px-3">
-                            <span className="font-mono text-amber-400">{p.actionTypeId || 'RELEASE'}</span>
+                            <span className="font-mono text-amber-400">{actionLabel}</span>
                             {p.destinationId && (
-                              <div className="text-[10px] text-slate-500">→ {p.destinationId}</div>
+                              <div className="text-[10px] text-slate-500">→ {destLabel}</div>
                             )}
                           </td>
-                          <td className="py-3 px-3 font-medium">
-                            {p.requestedQuantity ? `${p.requestedQuantity} cases` : 'N/A'}
+                          <td className="py-3 px-3">
+                            <div className="font-medium text-slate-200">
+                              {p.requestedQuantity ? `${p.requestedQuantity} cases` : 'N/A'}
+                            </div>
+                            {p.requestedQuantity && (
+                              <div className="text-[10px] text-amber-500 font-medium">
+                                {formatQuantityInPallets(p.requestedQuantity, cpp)}
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 px-3">
                             <span
                               className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                p.priorityLevelId?.toUpperCase().includes('URGENT')
+                                isUrgent
                                   ? 'bg-red-950 text-red-300 border border-red-800'
                                   : 'bg-slate-800 text-slate-300'
                               }`}
                             >
-                              {p.priorityLevelId || 'NORMAL'}
+                              {levelLabel}
                             </span>
                           </td>
                           <td className="py-3 px-3">

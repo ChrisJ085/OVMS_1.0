@@ -1,10 +1,10 @@
 import { collection, doc, getDocs, query, where, writeBatch, Timestamp, addDoc, getDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { Priority, PriorityEvent, PriorityStatus, PriorityEventType } from '../../../types/priority';
+import { Priority, PriorityEvent, PriorityStatus, PriorityEventType, PriorityConflict, ConflictResolutionChoice } from '../../../types/priority';
 import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
-
 import { logAuditEvent } from '../../../services/auditService';
+import { deductProductInventory } from '../../inventory/services/inventoryService';
 
 const PRIORITIES_COLLECTION = 'priorities';
 const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';
@@ -252,8 +252,8 @@ export const updatePriority = async (
 };
 
 const VALID_TRANSITIONS: Record<PriorityStatus, PriorityStatus[]> = {
-  'DRAFT': ['SCHEDULED', 'ACTIVE', 'CANCELLED'],
-  'SCHEDULED': ['ACTIVE', 'CANCELLED'],
+  'DRAFT': ['SCHEDULED', 'ACTIVE', 'CANCELLED', 'COMPLETED'],
+  'SCHEDULED': ['ACTIVE', 'CANCELLED', 'COMPLETED'],
   'ACTIVE': ['ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED', 'EXPIRED'],
   'ACKNOWLEDGED': ['IN_PROGRESS', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED'],
   'IN_PROGRESS': ['WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE', 'COMPLETED', 'CANCELLED'],
@@ -263,8 +263,6 @@ const VALID_TRANSITIONS: Record<PriorityStatus, PriorityStatus[]> = {
   'COMPLETED': ['ARCHIVED'],
   'CANCELLED': ['ARCHIVED'],
   'EXPIRED': ['ARCHIVED'],
-  'WITHDRAWN': ['ARCHIVED'],
-  'SUPERSEDED': ['ARCHIVED'],
   'ARCHIVED': []
 };
 
@@ -283,6 +281,25 @@ export const updatePriorityStatus = async (
     
     if (!VALID_TRANSITIONS[priority.priorityStatus].includes(newStatus)) {
       return { success: false, error: `Invalid transition from ${priority.priorityStatus} to ${newStatus}` };
+    }
+
+    if (newStatus === 'COMPLETED') {
+      const remaining = (priority.requestedQuantity || 0) - (priority.progressQuantity || 0);
+      if (remaining > 0) {
+        const deductRes = await deductProductInventory({
+          tenantId: priority.tenantId,
+          siteId: priority.siteId,
+          productId: priority.productId,
+          productCodeSnapshot: priority.productCodeSnapshot,
+          quantity: remaining,
+          reason: 'Priority Completed',
+          reference: `Priority completed: ${priorityId}`,
+          performedBy: userId
+        });
+        if (!deductRes.success) {
+          return { success: false, error: deductRes.error || 'Failed to update inventory balance' };
+        }
+      }
     }
 
     const batch = writeBatch(db);
@@ -341,12 +358,16 @@ export interface PriorityUpdateParams {
 
 export const executePriorityUpdate = async (params: PriorityUpdateParams): Promise<ServiceResult<void>> => {
   try {
+    let deductionQty = 0;
+    let priorityObj: Priority | null = null;
+
     await runTransaction(db, async (transaction) => {
       const ref = doc(db, PRIORITIES_COLLECTION, params.priorityId);
       const snap = await transaction.get(ref);
       if (!snap.exists()) throw new Error('Priority not found');
 
       const priority = snap.data() as Priority;
+      priorityObj = priority;
       const newStatus = params.newStatus || priority.priorityStatus;
       
       if (params.newStatus && !VALID_TRANSITIONS[priority.priorityStatus].includes(params.newStatus)) {
@@ -358,6 +379,21 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
       }
       if (params.newStatus === 'WAITING' && !params.note?.trim()) {
         throw new Error('Waiting status requires a note');
+      }
+
+      // Calculate deduction quantity
+      if (params.progressQuantity !== undefined) {
+        const delta = params.progressQuantity - (priority.progressQuantity || 0);
+        if (delta > 0) {
+          deductionQty += delta;
+        }
+      }
+      if (params.newStatus === 'COMPLETED') {
+        const effectiveProgressQty = params.progressQuantity !== undefined ? params.progressQuantity : (priority.progressQuantity || 0);
+        const remaining = (priority.requestedQuantity || 0) - effectiveProgressQty;
+        if (remaining > 0) {
+          deductionQty += remaining;
+        }
       }
 
       const updateData: any = {
@@ -455,6 +491,20 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
       }
     });
 
+    if (deductionQty > 0 && priorityObj) {
+      const p = priorityObj as Priority;
+      await deductProductInventory({
+        tenantId: p.tenantId,
+        siteId: p.siteId,
+        productId: p.productId,
+        productCodeSnapshot: p.productCodeSnapshot,
+        quantity: deductionQty,
+        reason: params.newStatus === 'COMPLETED' ? 'Priority Completed' : 'Priority Progress Updated',
+        reference: `Priority action: ${params.priorityId}`,
+        performedBy: params.userId
+      });
+    }
+
     return { success: true };
   } catch (e: any) {
     console.error(e);
@@ -464,11 +514,33 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
 
 export const deletePriority = async (
   priorityId: string,
-  userId: string
+  userId: string,
+  completedQty?: number
 ): Promise<ServiceResult<void>> => {
   try {
-    const batch = writeBatch(db);
     const ref = doc(db, PRIORITIES_COLLECTION, priorityId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return { success: false, error: 'Priority not found' };
+
+    const priority = snap.data() as Priority;
+
+    if (completedQty && completedQty > 0) {
+      const deductRes = await deductProductInventory({
+        tenantId: priority.tenantId,
+        siteId: priority.siteId,
+        productId: priority.productId,
+        productCodeSnapshot: priority.productCodeSnapshot,
+        quantity: completedQty,
+        reason: 'Priority Deletion (Partial Completion)',
+        reference: `Priority deletion: ${priorityId}`,
+        performedBy: userId
+      });
+      if (!deductRes.success) {
+        return { success: false, error: deductRes.error || 'Failed to update inventory balance' };
+      }
+    }
+
+    const batch = writeBatch(db);
     const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
     batch.delete(ref);
     batch.delete(displayRef);
@@ -599,3 +671,162 @@ export const repairDisplayPriorities = async (
     return { success: false, error: e.message };
   }
 };
+
+export const detectPriorityConflicts = async (
+  tenantId: string,
+  siteId: string
+): Promise<PriorityConflict[]> => {
+  try {
+    const q = query(
+      collection(db, PRIORITIES_COLLECTION),
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId),
+      where('priorityStatus', 'in', ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
+    );
+
+    const snap = await getDocs(q);
+    if (snap.empty) return [];
+
+    const priorities = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Priority));
+
+    // Group by productId
+    const byProduct = new Map<string, Priority[]>();
+    priorities.forEach(p => {
+      if (!p.productId) return;
+      const existing = byProduct.get(p.productId) || [];
+      existing.push(p);
+      byProduct.set(p.productId, existing);
+    });
+
+    const conflicts: PriorityConflict[] = [];
+
+    byProduct.forEach((proList, prodId) => {
+      const manuals = proList.filter(p => p.sourceType === 'MANUAL');
+      const systems = proList.filter(p => p.sourceType === 'RECOMMENDATION');
+
+      if (manuals.length > 0 && systems.length > 0) {
+        manuals.forEach(manualPrio => {
+          systems.forEach(systemPrio => {
+            conflicts.push({
+              id: `${manualPrio.id}_${systemPrio.id}`,
+              tenantId,
+              siteId,
+              productId: prodId,
+              productCodeSnapshot: manualPrio.productCodeSnapshot || systemPrio.productCodeSnapshot || prodId,
+              descriptionSnapshot: manualPrio.descriptionSnapshot || systemPrio.descriptionSnapshot || '',
+              manualPriority: manualPrio,
+              systemPriority: systemPrio,
+            });
+          });
+        });
+      }
+    });
+
+    return conflicts;
+  } catch (e) {
+    console.error('Failed to detect priority conflicts:', e);
+    return [];
+  }
+};
+
+export const resolvePriorityConflict = async (
+  tenantId: string,
+  siteId: string,
+  manualPriorityId: string,
+  systemPriorityId: string,
+  resolution: ConflictResolutionChoice,
+  userId: string
+): Promise<ServiceResult<void>> => {
+  try {
+    const batch = writeBatch(db);
+
+    if (resolution === 'REPLACE_MANUAL_WITH_SYSTEM') {
+      const manualRef = doc(db, PRIORITIES_COLLECTION, manualPriorityId);
+      const manualSnap = await getDoc(manualRef);
+      if (manualSnap.exists()) {
+        const manualPrio = manualSnap.data() as Priority;
+        batch.update(manualRef, {
+          priorityStatus: 'CANCELLED',
+          cancelledAt: Timestamp.now(),
+          modifiedDate: Timestamp.now(),
+          modifiedBy: userId
+        });
+        batch.delete(doc(db, DISPLAY_PRIORITIES_COLLECTION, manualPriorityId));
+        await logPriorityEvent(
+          batch,
+          tenantId,
+          siteId,
+          manualPriorityId,
+          'STATUS_CHANGED',
+          manualPrio.priorityStatus,
+          'CANCELLED',
+          manualPrio.priorityStatus,
+          'CANCELLED',
+          'Manual priority replaced by system driven recommendation upon planner confirmation.',
+          userId
+        );
+      }
+    } else if (resolution === 'KEEP_MANUAL_IGNORE_SYSTEM') {
+      const systemRef = doc(db, PRIORITIES_COLLECTION, systemPriorityId);
+      const systemSnap = await getDoc(systemRef);
+      if (systemSnap.exists()) {
+        const systemPrio = systemSnap.data() as Priority;
+        batch.update(systemRef, {
+          priorityStatus: 'CANCELLED',
+          cancelledAt: Timestamp.now(),
+          modifiedDate: Timestamp.now(),
+          modifiedBy: userId
+        });
+        batch.delete(doc(db, DISPLAY_PRIORITIES_COLLECTION, systemPriorityId));
+        await logPriorityEvent(
+          batch,
+          tenantId,
+          siteId,
+          systemPriorityId,
+          'STATUS_CHANGED',
+          systemPrio.priorityStatus,
+          'CANCELLED',
+          systemPrio.priorityStatus,
+          'CANCELLED',
+          'System driven priority overridden and cancelled in favor of existing manual priority.',
+          userId
+        );
+      }
+    }
+
+    await batch.commit();
+    return { success: true };
+  } catch (e: any) {
+    console.error('Error resolving priority conflict:', e);
+    return { success: false, error: e.message };
+  }
+};
+
+export const resolveAllPriorityConflicts = async (
+  tenantId: string,
+  siteId: string,
+  resolutions: Array<{
+    manualPriorityId: string;
+    systemPriorityId: string;
+    resolution: ConflictResolutionChoice;
+  }>,
+  userId: string
+): Promise<ServiceResult<void>> => {
+  try {
+    for (const item of resolutions) {
+      const res = await resolvePriorityConflict(
+        tenantId,
+        siteId,
+        item.manualPriorityId,
+        item.systemPriorityId,
+        item.resolution,
+        userId
+      );
+      if (!res.success) return res;
+    }
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+};
+

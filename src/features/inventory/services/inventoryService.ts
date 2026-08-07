@@ -2,7 +2,6 @@ import { db } from '../../../config/firebase';
 import { 
   collection, 
   doc, 
-  setDoc,
   runTransaction, 
   serverTimestamp, 
   Timestamp, 
@@ -16,7 +15,9 @@ import { ServiceResult } from '../../../types/common';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { Product } from '../../../types/product';
 import { Location } from '../../../types/inventory';
-import { enqueueRecommendationJob } from '../../planning/services/jobRequestService';
+import { getProduct } from './productService';
+
+import { generateRecommendationForProduct } from '../../planning/services/recommendationService';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',
@@ -136,6 +137,9 @@ export const adjustInventory = async (params: IncreaseDecreaseParams, type: 'INC
         timestamp: serverTimestamp(),
       });
     });
+
+    // Trigger recommendation refresh for affected product
+    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
 
     return { success: true };
   } catch (error: any) {
@@ -279,6 +283,9 @@ export const transferInventory = async (params: TransferParams): Promise<Service
 
     });
 
+    // Trigger recommendation refresh for affected product
+    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message || 'Failed to transfer inventory' };
@@ -346,23 +353,42 @@ export const getProductInventory = async (
   productId: string
 ): Promise<{ totalQuantity: number, balances: InventoryBalance[] } | null> => {
   try {
-    const q = query(
+    const balancesMap = new Map<string, InventoryBalance>();
+
+    // 1. Query by productId
+    const qByProdId = query(
       collection(db, COLLECTIONS.BALANCES),
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('productId', '==', productId)
     );
-    const snap = await getDocs(q);
-    const balances = snap.docs.map(d => ({ id: d.id, ...d.data() } as InventoryBalance));
-    
-    if (balances.length === 0) {
-      return { totalQuantity: 0, balances: [] };
+    const snapProdId = await getDocs(qByProdId);
+    snapProdId.docs.forEach(d => {
+      balancesMap.set(d.id, { id: d.id, ...d.data() } as InventoryBalance);
+    });
+
+    // 2. Query by productCodeSnapshot as fallback/supplement
+    const productDoc = await getProduct(productId);
+    if (productDoc?.productCode) {
+      const qCode = query(
+        collection(db, COLLECTIONS.BALANCES),
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId),
+        where('productCodeSnapshot', '==', productDoc.productCode)
+      );
+      const snapCode = await getDocs(qCode);
+      snapCode.docs.forEach(d => {
+        if (!balancesMap.has(d.id)) {
+          balancesMap.set(d.id, { id: d.id, ...d.data() } as InventoryBalance);
+        }
+      });
     }
-    
+
+    const balances = Array.from(balancesMap.values());
     const totalQuantity = balances.reduce((sum, b) => sum + (b.quantity || 0), 0);
     return { totalQuantity, balances };
   } catch (e) {
-    console.error(e);
+    console.error('Error fetching product inventory:', e);
     return null;
   }
 };
@@ -386,15 +412,51 @@ export interface BatchInventoryUpdateParams {
 
 export const batchUpdateInventoryFromPastedData = async (
   params: BatchInventoryUpdateParams
-): Promise<ServiceResult<{ updatedCount: number; snapshotId?: string; jobId?: string }>> => {
+): Promise<ServiceResult<{ updatedCount: number; zeroedCount: number }>> => {
   if (!params.items || params.items.length === 0) {
     return { success: false, error: 'No items provided for inventory update.' };
   }
 
   try {
-    const chunkSize = 200;
-    let totalUpdated = 0;
+    const pastedProductIds = new Set(params.items.map(i => i.productId).filter(Boolean));
+    const pastedProductCodes = new Set(params.items.map(i => i.productCodeSnapshot).filter(Boolean));
 
+    // Fetch all existing inventory balances for this tenant and site
+    const allBalancesQ = query(
+      collection(db, COLLECTIONS.BALANCES),
+      where('tenantId', '==', params.tenantId),
+      where('siteId', '==', params.siteId)
+    );
+    const allBalancesSnap = await getDocs(allBalancesQ);
+
+    // Identify balance docs for products NOT in the pasted items that currently have quantity > 0
+    interface ZeroItem {
+      docRef: any;
+      data: InventoryBalance;
+    }
+    const omittedBalanceDocs: ZeroItem[] = [];
+    const zeroedProductIds = new Set<string>();
+
+    allBalancesSnap.docs.forEach(docSnap => {
+      const data = docSnap.data() as InventoryBalance;
+      const pId = data.productId;
+      const pCode = data.productCodeSnapshot;
+
+      const isPasted = (pId && pastedProductIds.has(pId)) || (pCode && pastedProductCodes.has(pCode));
+      if (!isPasted && (data.quantity || 0) > 0) {
+        omittedBalanceDocs.push({
+          docRef: docSnap.ref,
+          data: { id: docSnap.id, ...data }
+        });
+        if (pId) zeroedProductIds.add(pId);
+      }
+    });
+
+    let totalUpdated = 0;
+    let totalZeroed = 0;
+
+    // Process pasted items in chunks
+    const chunkSize = 200;
     for (let i = 0; i < params.items.length; i += chunkSize) {
       const chunk = params.items.slice(i, i + chunkSize);
 
@@ -479,45 +541,239 @@ export const batchUpdateInventoryFromPastedData = async (
       });
     }
 
-    // Record Inventory Snapshot and trigger automatic Decision Engine reassessment
-    const snapshotId = `inv_snap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    let jobId: string | null = null;
+    // Process omitted items (setting their balance to 0) in chunks
+    for (let i = 0; i < omittedBalanceDocs.length; i += chunkSize) {
+      const chunk = omittedBalanceDocs.slice(i, i + chunkSize);
 
-    try {
-      if (db) {
-        await setDoc(doc(db, 'inventorySnapshots', snapshotId), {
-          id: snapshotId,
+      await runTransaction(db, async (transaction) => {
+        for (const item of chunk) {
+          const currentQty = item.data.quantity || 0;
+
+          transaction.update(item.docRef, {
+            quantity: 0,
+            source: 'IMPORT',
+            sourceUpdatedAt: serverTimestamp(),
+            modifiedBy: params.performedBy,
+            modifiedDate: serverTimestamp(),
+          });
+
+          const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
+          transaction.set(movementRef, {
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            productId: item.data.productId,
+            productCodeSnapshot: item.data.productCodeSnapshot,
+            movementType: 'DECREASE',
+            fromLocationId: item.data.locationId || params.locationId,
+            toLocationId: null,
+            quantity: currentQty,
+            reason: 'Pasted Stock Update - Omitted Product Zeroed',
+            reference: `Stock Update at ${params.locationCodeSnapshot} (Omitted Product Zeroed)`,
+            balanceBefore: currentQty,
+            balanceAfter: 0,
+            performedBy: params.performedBy,
+            timestamp: serverTimestamp(),
+          });
+
+          totalZeroed++;
+        }
+      });
+    }
+
+    // Trigger recommendation refresh for ALL affected products (pasted + zeroed)
+    const allAffectedProductIds = Array.from(new Set([
+      ...Array.from(pastedProductIds),
+      ...Array.from(zeroedProductIds)
+    ]));
+
+    allAffectedProductIds.forEach(productId => {
+      generateRecommendationForProduct(params.tenantId, params.siteId, productId, true).catch(console.error);
+    });
+
+    return { success: true, data: { updatedCount: totalUpdated, zeroedCount: totalZeroed } };
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Failed to update inventory balances.' };
+  }
+};
+
+export interface DeductInventoryParams {
+  tenantId: string;
+  siteId: string;
+  productId: string;
+  productCodeSnapshot: string;
+  quantity: number;
+  reason: string;
+  reference: string;
+  performedBy: string;
+}
+
+export const deductProductInventory = async (params: DeductInventoryParams): Promise<ServiceResult<void>> => {
+  if (params.quantity <= 0) {
+    return { success: true };
+  }
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const balancesRef = collection(db, COLLECTIONS.BALANCES);
+      const q = query(
+        balancesRef, 
+        where('tenantId', '==', params.tenantId), 
+        where('siteId', '==', params.siteId),
+        where('productId', '==', params.productId)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      
+      let remainingToDeduct = params.quantity;
+      
+      const sortedDocs = querySnapshot.docs.map(docSnap => ({
+        ref: docSnap.ref,
+        id: docSnap.id,
+        data: docSnap.data() as InventoryBalance
+      })).sort((a, b) => {
+        return (b.data.quantity || 0) - (a.data.quantity || 0);
+      });
+
+      const movementsToCreate: any[] = [];
+
+      for (const item of sortedDocs) {
+        if (remainingToDeduct <= 0) break;
+        const currentQty = item.data.quantity || 0;
+        if (currentQty <= 0) continue;
+
+        const deductAmt = Math.min(currentQty, remainingToDeduct);
+        const newQty = currentQty - deductAmt;
+        remainingToDeduct -= deductAmt;
+
+        transaction.update(item.ref, {
+          quantity: newQty,
+          source: 'MANUAL',
+          sourceUpdatedAt: serverTimestamp(),
+          modifiedBy: params.performedBy,
+          modifiedDate: serverTimestamp(),
+        });
+
+        movementsToCreate.push({
           tenantId: params.tenantId,
           siteId: params.siteId,
-          locationId: params.locationId,
-          locationCodeSnapshot: params.locationCodeSnapshot,
-          updatedItemCount: totalUpdated,
+          productId: params.productId,
+          productCodeSnapshot: params.productCodeSnapshot,
+          movementType: 'DECREASE',
+          fromLocationId: item.data.locationId,
+          toLocationId: null,
+          quantity: deductAmt,
+          reason: params.reason,
+          reference: params.reference,
+          balanceBefore: currentQty,
+          balanceAfter: newQty,
           performedBy: params.performedBy,
           timestamp: serverTimestamp(),
-          createdDate: serverTimestamp()
         });
       }
 
-      // Enqueue backend recommendation generation job (Requirement 4)
-      const jobRes = await enqueueRecommendationJob({
-        tenantId: params.tenantId,
-        siteId: params.siteId,
-        triggerType: 'INVENTORY_IMPORT',
-        triggerReferenceId: snapshotId,
-        sourceInventorySnapshotId: snapshotId,
-        requestedBy: params.performedBy
-      });
+      if (remainingToDeduct > 0) {
+        if (sortedDocs.length > 0) {
+          const firstItem = sortedDocs[0];
+          const currentQty = firstItem.data.quantity || 0;
+          const newQty = currentQty - remainingToDeduct;
 
-      if (jobRes.success && jobRes.data) {
-        jobId = jobRes.data.jobId;
+          transaction.update(firstItem.ref, {
+            quantity: newQty,
+            source: 'MANUAL',
+            sourceUpdatedAt: serverTimestamp(),
+            modifiedBy: params.performedBy,
+            modifiedDate: serverTimestamp(),
+          });
+
+          movementsToCreate.push({
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            productId: params.productId,
+            productCodeSnapshot: params.productCodeSnapshot,
+            movementType: 'DECREASE',
+            fromLocationId: firstItem.data.locationId,
+            toLocationId: null,
+            quantity: remainingToDeduct,
+            reason: params.reason,
+            reference: params.reference,
+            balanceBefore: currentQty,
+            balanceAfter: newQty,
+            performedBy: params.performedBy,
+            timestamp: serverTimestamp(),
+          });
+        } else {
+          const locationsRef = collection(db, 'locations');
+          const locQ = query(
+            locationsRef,
+            where('tenantId', '==', params.tenantId),
+            where('siteId', '==', params.siteId),
+            where('status', '==', 'active')
+          );
+          const locSnap = await getDocs(locQ);
+          let defaultLocationId = 'SYSTEM';
+          let defaultLocationCode = 'SYSTEM';
+          
+          if (!locSnap.empty) {
+            defaultLocationId = locSnap.docs[0].id;
+            defaultLocationCode = locSnap.docs[0].data().locationCode || 'HB-01';
+          }
+
+          const product = await getProduct(params.productId);
+          const descSnapshot = product?.description || '';
+          const uomId = product?.unitOfMeasureId || '';
+
+          const newBalanceDocRef = doc(balancesRef);
+          const newQty = -remainingToDeduct;
+
+          transaction.set(newBalanceDocRef, {
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            productId: params.productId,
+            productCodeSnapshot: params.productCodeSnapshot,
+            descriptionSnapshot: descSnapshot,
+            locationId: defaultLocationId,
+            locationCodeSnapshot: defaultLocationCode,
+            quantity: newQty,
+            unitOfMeasureId: uomId,
+            source: 'MANUAL',
+            sourceUpdatedAt: serverTimestamp(),
+            createdBy: params.performedBy,
+            createdDate: serverTimestamp(),
+            modifiedBy: params.performedBy,
+            modifiedDate: serverTimestamp(),
+            status: 'active'
+          });
+
+          movementsToCreate.push({
+            tenantId: params.tenantId,
+            siteId: params.siteId,
+            productId: params.productId,
+            productCodeSnapshot: params.productCodeSnapshot,
+            movementType: 'DECREASE',
+            fromLocationId: defaultLocationId,
+            toLocationId: null,
+            quantity: remainingToDeduct,
+            reason: params.reason,
+            reference: params.reference,
+            balanceBefore: 0,
+            balanceAfter: newQty,
+            performedBy: params.performedBy,
+            timestamp: serverTimestamp(),
+          });
+        }
       }
-    } catch (snapErr) {
-      console.warn('Failed to record inventory snapshot or enqueue job:', snapErr);
-    }
 
-    return { success: true, data: { updatedCount: totalUpdated, snapshotId, jobId } };
+      for (const move of movementsToCreate) {
+        const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
+        transaction.set(movementRef, move);
+      }
+    });
+
+    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+
+    return { success: true };
   } catch (error: any) {
-    return { success: false, error: error.message || 'Failed to update inventory balances.' };
+    return { success: false, error: error.message || 'Failed to deduct product inventory' };
   }
 };
 

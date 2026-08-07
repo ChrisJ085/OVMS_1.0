@@ -172,22 +172,6 @@ export const setProductStatus = async (
   }
 };
 
-export const getAllProducts = async (tenantId: string, siteId: string): Promise<Product[]> => {
-  try {
-    const q = query(
-      collection(db, COLLECTION_NAME),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('status', '==', 'active')
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() } as Product));
-  } catch (e) {
-    console.error('Failed to fetch all products:', e);
-    return [];
-  }
-};
-
 export const subscribeToProducts = (
   tenantId: string,
   siteId: string,

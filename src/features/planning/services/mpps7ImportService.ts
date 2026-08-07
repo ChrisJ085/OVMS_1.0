@@ -26,8 +26,6 @@ import {
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
 
-import { enqueueRecommendationJob } from './jobRequestService';
-
 // 1. Calculate File Hash
 export const calculateFileHash = async (file: File): Promise<string> => {
   const buffer = await file.arrayBuffer();
@@ -510,6 +508,56 @@ export const matchResourceToLine = (resourceCode: string, lines: ProductionLine[
 };
 
 // 8. Duplicate Check Result
+export const checkWeeklyMppsImportLimit = async (
+  tenantId: string,
+  siteId: string
+): Promise<{ allowed: boolean; countThisWeek: number; maxAllowed: number; message?: string }> => {
+  if (!db) return { allowed: true, countThisWeek: 0, maxAllowed: 2 };
+
+  const now = new Date();
+  const dayOfWeek = now.getUTCDay(); // 0 is Sunday, 1 is Monday
+  const diffToMonday = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
+  const startOfWeek = new Date(now);
+  startOfWeek.setUTCDate(now.getUTCDate() + diffToMonday);
+  startOfWeek.setUTCHours(0, 0, 0, 0);
+
+  const importsRef = collection(db, 'productionPlanImports');
+  const q = query(
+    importsRef,
+    where('tenantId', '==', tenantId),
+    where('siteId', '==', siteId),
+    where('status', '==', 'COMMITTED')
+  );
+
+  const snap = await getDocs(q);
+  const startOfWeekMs = startOfWeek.getTime();
+
+  let countThisWeek = 0;
+  snap.docs.forEach(d => {
+    const data = d.data();
+    const uploadedAt = data.uploadedAt?.toDate
+      ? data.uploadedAt.toDate()
+      : (data.createdDate?.toDate
+          ? data.createdDate.toDate()
+          : new Date(data.uploadedAt || data.createdDate || 0));
+    if (uploadedAt && uploadedAt.getTime() >= startOfWeekMs) {
+      countThisWeek++;
+    }
+  });
+
+  const maxAllowed = 2;
+  if (countThisWeek >= maxAllowed) {
+    return {
+      allowed: false,
+      countThisWeek,
+      maxAllowed,
+      message: `MPPS/Production data updates are limited to a maximum of twice weekly. You have already completed ${countThisWeek} committed update(s) this week.`
+    };
+  }
+
+  return { allowed: true, countThisWeek, maxAllowed };
+};
+
 export const verifyDuplicateImport = async (
   tenantId: string,
   siteId: string,
@@ -710,6 +758,9 @@ export const createImportPreview = async (
 
   // 3. Duplicate Verification Check
   const duplicateVerification = await verifyDuplicateImport(tenantId, siteId, fileHash);
+
+  // 3b. Weekly Import Limit Check
+  const weeklyLimitCheck = await checkWeeklyMppsImportLimit(tenantId, siteId);
 
   // 4. Plan Comparison Check
   const activePlanComparison = await evaluatePlanComparison(tenantId, siteId, periodStart, periodEnd);
@@ -1293,25 +1344,6 @@ export const commitProductionPlanImport = async (
   });
 
   await batch.commit();
-
-  // Enqueue backend recommendation generation job (Requirement 5)
-  let jobId: string | null = null;
-  try {
-    const jobRes = await enqueueRecommendationJob({
-      tenantId: preview.summary.tenantId,
-      siteId: preview.summary.siteId,
-      triggerType: 'MPPS_IMPORT',
-      triggerReferenceId: importId,
-      sourceProductionPlanImportId: importId,
-      requestedBy: (preview.summary as any).importedBy || 'Planner'
-    });
-    if (jobRes.success && jobRes.data) {
-      jobId = jobRes.data.jobId;
-    }
-  } catch (err) {
-    console.error('Error enqueuing recommendation job after MPPS commit:', err);
-  }
-
   return importId;
 };
 

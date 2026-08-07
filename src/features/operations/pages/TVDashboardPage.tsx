@@ -4,20 +4,27 @@ import { db } from '../../../config/firebase';
 import { DisplayPriority } from '../../../types/priority';
 import { Announcement } from '../../../types/announcement';
 import { OperationalException } from '../../../types/exception';
+import { Product } from '../../../types/product';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useSiteOnboarding } from '../../../hooks/useSiteOnboarding';
 import { subscribeToCollection } from '../../../services/firestoreBase';
+import { subscribeToProducts } from '../../inventory/services/productService';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
-import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
+import { 
+  getActionTypeLabel, 
+  getDestinationLabel, 
+  getPriorityLevelLabel, 
+  formatQuantityInPallets, 
+  isManualInstruction 
+} from '../utils/priorityFormatters';
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play, 
-  Package, LayoutGrid, AlertCircle, TrendingDown,
+  LayoutGrid, AlertCircle, TrendingDown,
   Wifi, WifiOff, Settings
 } from 'lucide-react';
 
 // Constants
-const ITEMS_PER_PAGE = 8;
 const PAGE_ROTATION_MS = 15000;
 const COMPLETED_RETENTION_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -46,11 +53,12 @@ const STATUS_ICONS: Record<string, any> = {
 };
 
 export const TVDashboardPage: React.FC = () => {
-  const { tenantId, siteId } = useSiteContext();
-  const { onboarding, isComplete } = useSiteOnboarding();
+  const { tenantId, siteId, siteName, site, siteLoading } = useSiteContext();
+  const { onboarding, isComplete, loading: onboardingLoading } = useSiteOnboarding();
   const [priorities, setPriorities] = useState<DisplayPriority[]>([]);
   const [exceptions, setExceptions] = useState<OperationalException[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isConnected, setIsConnected] = useState(true);
@@ -92,17 +100,23 @@ export const TVDashboardPage: React.FC = () => {
     };
   }, [tenantId]);
 
+  // Subscribe to Products for pallet calculation
+  useEffect(() => {
+    if (!tenantId || !siteId) return;
+    const unsubProd = subscribeToProducts(tenantId, siteId, setProducts, console.error);
+    return () => unsubProd();
+  }, [tenantId, siteId]);
+
   // Clock tick
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Data Fetching
+  // Data Fetching for displayPriorities
   useEffect(() => {
     if (!tenantId || !siteId) return;
 
-    // Listen to sanitized displayPriorities
     const prioritiesQuery = query(
       collection(db, 'displayPriorities'),
       where('tenantId', '==', tenantId),
@@ -114,28 +128,43 @@ export const TVDashboardPage: React.FC = () => {
       const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as DisplayPriority));
       
       const activePriorities = fetched.filter(p => {
-        // Exclude completely inactive statuses
         if (['DRAFT', 'SCHEDULED', 'ARCHIVED', 'CANCELLED', 'EXPIRED'].includes(p.priorityStatus)) {
-          // Exception: Scheduled items that have started
           if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
-             const start = (p.startAt as any)?.toDate?.() || new Date(p.startAt as any);
-             if (start <= now) return true;
+             try {
+               const start = (p.startAt as any)?.toDate?.() || new Date(p.startAt as any);
+               if (start && start.getTime && !isNaN(start.getTime()) && start <= now) return true;
+             } catch (e) {
+               console.warn('Failed to parse startAt for scheduled item', p.id);
+             }
           }
           return false;
         }
         
-        // Filter out old completed items
         if (p.priorityStatus === 'COMPLETED') {
-          const compDate = p.completedAt ? ((p.completedAt as any)?.toDate?.() || new Date(p.completedAt as any)) : ((p as any).modifiedDate ? ((p as any).modifiedDate as any)?.toDate?.() : new Date());
-          if (now.getTime() - compDate.getTime() > COMPLETED_RETENTION_MS) {
-            return false;
+          try {
+            const compDate = p.completedAt 
+              ? ((p.completedAt as any)?.toDate?.() || new Date(p.completedAt as any)) 
+              : ((p as any).modifiedDate 
+                  ? ((p as any).modifiedDate as any)?.toDate?.() || new Date((p as any).modifiedDate as any)
+                  : new Date());
+            
+            if (compDate && compDate.getTime && !isNaN(compDate.getTime())) {
+              if (now.getTime() - compDate.getTime() > COMPLETED_RETENTION_MS) {
+                return false;
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to parse completedAt for item', p.id);
           }
         }
         
-        // Ensure not expired
         if (p.expireAt && !p.untilSwitchedOff) {
-          const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as any);
-          if (exp < now) return false;
+          try {
+            const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as any);
+            if (exp && exp.getTime && !isNaN(exp.getTime()) && exp < now) return false;
+          } catch (e) {
+            console.warn('Failed to parse expireAt for item', p.id);
+          }
         }
 
         return true;
@@ -147,9 +176,17 @@ export const TVDashboardPage: React.FC = () => {
         const weightB = PRIORITY_WEIGHTS[b.priorityLevelId] || 0;
         if (weightA !== weightB) return weightB - weightA;
         
-        const dateA = (a.startAt as any)?.toDate?.() || new Date(a.createdDate as any);
-        const dateB = (b.startAt as any)?.toDate?.() || new Date(b.createdDate as any);
-        return dateA.getTime() - dateB.getTime();
+        try {
+          const dateA = (a.startAt as any)?.toDate?.() || (a.createdDate ? ((a.createdDate as any)?.toDate?.() || new Date(a.createdDate as any)) : new Date(0));
+          const dateB = (b.startAt as any)?.toDate?.() || (b.createdDate ? ((b.createdDate as any)?.toDate?.() || new Date(b.createdDate as any)) : new Date(0));
+          
+          const timeA = dateA && dateA.getTime && !isNaN(dateA.getTime()) ? dateA.getTime() : 0;
+          const timeB = dateB && dateB.getTime && !isNaN(dateB.getTime()) ? dateB.getTime() : 0;
+          
+          return timeA - timeB;
+        } catch (e) {
+          return 0;
+        }
       });
 
       setPriorities(activePriorities);
@@ -160,7 +197,6 @@ export const TVDashboardPage: React.FC = () => {
       setIsConnected(false);
     });
 
-    // Listen to exceptions for the side panel exception metrics
     const exceptionsQuery = query(
       collection(db, 'exceptions'),
       where('tenantId', '==', tenantId),
@@ -175,7 +211,6 @@ export const TVDashboardPage: React.FC = () => {
       console.error(err);
     });
 
-    // Listen to announcements
     const announcementsQuery = query(
       collection(db, 'announcements'),
       where('tenantId', '==', tenantId),
@@ -223,8 +258,21 @@ export const TVDashboardPage: React.FC = () => {
     };
   }, []);
 
-  // Pagination Rotation
-  const totalPages = Math.ceil(priorities.length / ITEMS_PER_PAGE) || 1;
+  // Dynamic grid layout calculation to fit cards on one screen
+  const gridConfig = useMemo(() => {
+    const count = priorities.length;
+    if (count <= 2) return { cols: 2, rows: 1, itemsPerPage: 2 };
+    if (count <= 4) return { cols: 2, rows: 2, itemsPerPage: 4 };
+    if (count <= 6) return { cols: 3, rows: 2, itemsPerPage: 6 };
+    if (count <= 8) return { cols: 4, rows: 2, itemsPerPage: 8 };
+    if (count <= 12) return { cols: 4, rows: 3, itemsPerPage: 12 };
+    if (count <= 16) return { cols: 4, rows: 4, itemsPerPage: 16 };
+    if (count <= 20) return { cols: 5, rows: 4, itemsPerPage: 20 };
+    return { cols: 5, rows: 5, itemsPerPage: 25 };
+  }, [priorities.length]);
+
+  const totalPages = Math.ceil(priorities.length / gridConfig.itemsPerPage) || 1;
+
   useEffect(() => {
     if (totalPages <= 1) {
       setCurrentPage(0);
@@ -236,7 +284,10 @@ export const TVDashboardPage: React.FC = () => {
     return () => clearInterval(timer);
   }, [totalPages]);
 
-  const visiblePriorities = priorities.slice(currentPage * ITEMS_PER_PAGE, (currentPage + 1) * ITEMS_PER_PAGE);
+  const visiblePriorities = priorities.slice(
+    currentPage * gridConfig.itemsPerPage, 
+    (currentPage + 1) * gridConfig.itemsPerPage
+  );
 
   // Derived metrics
   const stats = useMemo(() => {
@@ -251,6 +302,42 @@ export const TVDashboardPage: React.FC = () => {
     };
   }, [priorities, exceptions]);
 
+  // Active Displayed Site Label (Never raw ID)
+  const displaySiteLabel = useMemo(() => {
+    if (siteName) return siteName;
+    if (site?.siteName) return site.siteName;
+    return 'Active Site';
+  }, [siteName, site]);
+
+  if (siteLoading || onboardingLoading) {
+    return (
+      <div className="h-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-6 font-sans">
+        <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold text-slate-100">Syncing Dashboard Data</h2>
+          <p className="text-slate-400 text-sm">Please wait while we prepare the operational display...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!tenantId || !siteId) {
+    return (
+      <div className="h-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-6 font-sans">
+        <div className="w-16 h-16 bg-red-500/10 border border-red-500/30 text-red-500 rounded-full flex items-center justify-center">
+          <AlertCircle className="w-10 h-10" />
+        </div>
+        <div className="space-y-2 max-w-md">
+          <h2 className="text-2xl font-extrabold text-slate-100 tracking-tight">No Site Selected</h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            This display terminal requires an active site assignment to load data. 
+            Please use the control menu to select a site or contact your administrator.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (onboarding && !isComplete) {
     return (
       <div className="h-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-6 select-none font-sans">
@@ -261,7 +348,7 @@ export const TVDashboardPage: React.FC = () => {
         <div className="space-y-2 max-w-md">
           <h2 className="text-2xl font-extrabold text-slate-100 tracking-tight">Site Configuration In Progress</h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            This display terminal will activate automatically once the guided site onboarding setup for <strong className="text-slate-300">{siteId}</strong> has been fully completed by an administrator.
+            This display terminal will activate automatically once the guided site onboarding setup for <strong className="text-slate-300">{displaySiteLabel}</strong> has been fully completed by an administrator.
           </p>
         </div>
 
@@ -285,22 +372,22 @@ export const TVDashboardPage: React.FC = () => {
   return (
     <div className="h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden flex flex-col font-sans select-none">
       {/* Header */}
-      <header className="h-20 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-8 shrink-0">
+      <header className="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex flex-col">
-            <h1 className="text-2xl font-bold text-slate-100 uppercase tracking-wider">Operations Dashboard</h1>
-            <span className="text-brand-400 font-medium text-sm tracking-widest">{siteId || 'SITE_UNKNOWN'}</span>
+            <h1 className="text-xl font-bold text-slate-100 uppercase tracking-wider">Operations Dashboard</h1>
+            <span className="text-brand-400 font-semibold text-xs tracking-widest">{displaySiteLabel}</span>
           </div>
           {!isConnected && (
-            <div className="flex items-center gap-2 px-4 py-1.5 bg-red-900/40 border border-red-500/50 rounded-full text-red-400 font-bold animate-pulse">
-              <WifiOff className="w-5 h-5" />
+            <div className="flex items-center gap-2 px-3 py-1 bg-red-900/40 border border-red-500/50 rounded-full text-red-400 text-xs font-bold animate-pulse">
+              <WifiOff className="w-4 h-4" />
               <span>OFFLINE - STALE DATA</span>
             </div>
           )}
         </div>
         
-        <div className="flex items-center gap-8 text-right">
-          <div className="flex flex-col text-slate-400 text-xs">
+        <div className="flex items-center gap-6 text-right">
+          <div className="flex flex-col text-slate-400 text-[11px]">
             <div className="flex items-center gap-1 justify-end">
               {isConnected ? <Wifi className="w-3 h-3 text-green-500" /> : <WifiOff className="w-3 h-3 text-red-500" />}
               <span>Last Update</span>
@@ -310,11 +397,11 @@ export const TVDashboardPage: React.FC = () => {
             </span>
           </div>
           <div className="flex flex-col">
-            <span className="text-3xl font-mono font-bold text-slate-100 tracking-tight">
+            <span className="text-2xl font-mono font-bold text-slate-100 tracking-tight">
               {currentTime.toLocaleTimeString([], { hour12: false })}
             </span>
-            <span className="text-slate-400 text-sm font-medium">
-              {currentTime.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}
+            <span className="text-slate-400 text-xs font-medium">
+              {currentTime.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
             </span>
           </div>
         </div>
@@ -323,41 +410,61 @@ export const TVDashboardPage: React.FC = () => {
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Priorities Grid */}
-        <div className="flex-1 p-6 flex flex-col">
-          <div className="flex-1 grid grid-cols-2 grid-rows-4 gap-4">
+        <div className="flex-1 p-4 flex flex-col overflow-hidden">
+          <div 
+            className="flex-1 grid gap-3 overflow-hidden"
+            style={{
+              gridTemplateColumns: `repeat(${gridConfig.cols}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${gridConfig.rows}, minmax(0, 1fr))`
+            }}
+          >
             {visiblePriorities.map(p => {
-              const pColor = PRIORITY_COLORS[p.priorityLevelId] || PRIORITY_COLORS.NORMAL;
+              const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+              const pColor = PRIORITY_COLORS[levelLabel] || PRIORITY_COLORS[p.priorityLevelId] || PRIORITY_COLORS.NORMAL;
               const StatusIcon = STATUS_ICONS[p.priorityStatus] || AlertCircle;
               const isBlocked = p.priorityStatus === 'BLOCKED';
               const isCompleted = p.priorityStatus === 'COMPLETED';
+
+              // Product CPP matching for pallet calculation
+              const productMatch = products.find(prod => 
+                (p.productId && prod.id === p.productId) || 
+                (prod.productCode === p.productCodeSnapshot)
+              );
+              const cpp = productMatch?.casesPerPallet || 
+                productMatch?.configurations?.[0]?.casesPerPallet || 
+                100;
+              
+              const palletQuantityText = formatQuantityInPallets(p.requestedQuantity, cpp);
+              const hasManualInstruction = isManualInstruction(p.instruction);
 
               return (
                 <div 
                   key={p.id} 
                   className={`
-                    rounded-lg border-2 p-4 flex flex-col justify-between
+                    rounded-lg border-2 p-3 flex flex-col justify-between overflow-hidden transition-all
                     ${isBlocked ? 'border-red-500 bg-red-950/30' : isCompleted ? 'border-green-500/30 bg-green-950/20' : `bg-slate-900 ${pColor.border}`}
                   `}
                 >
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${isBlocked ? 'bg-red-500 text-white animate-pulse' : isCompleted ? 'bg-green-500/20 text-green-400' : pColor.bg} ${isBlocked ? '' : pColor.text}`}>
-                        <StatusIcon className="w-6 h-6" />
+                  {/* Card Header: Product & Priority Level */}
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`p-1.5 rounded-lg shrink-0 ${isBlocked ? 'bg-red-500 text-white animate-pulse' : isCompleted ? 'bg-green-500/20 text-green-400' : pColor.bg} ${isBlocked ? '' : pColor.text}`}>
+                        <StatusIcon className="w-5 h-5" />
                       </div>
-                      <div>
-                        <div className="font-mono font-bold text-xl text-slate-100 leading-tight">
+                      <div className="min-w-0">
+                        <div className="font-mono font-bold text-lg text-slate-100 leading-tight truncate">
                           {p.productCodeSnapshot}
                         </div>
-                        <div className="text-sm text-slate-400 font-medium truncate max-w-sm">
+                        <div className="text-xs text-slate-400 font-medium truncate">
                           {p.descriptionSnapshot}
                         </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className={`text-sm font-bold tracking-wider ${pColor.text}`}>
-                        {p.priorityLevelId}
+                    <div className="text-right shrink-0">
+                      <div className={`text-xs font-extrabold tracking-wider ${pColor.text}`}>
+                        {levelLabel}
                       </div>
-                      <div className={`text-xs font-bold uppercase px-2 py-0.5 rounded mt-1 inline-block
+                      <div className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded mt-0.5 inline-block
                         ${isBlocked ? 'bg-red-500 text-white' : isCompleted ? 'bg-green-500 text-slate-900' : 'bg-slate-800 text-slate-300'}
                       `}>
                         {p.priorityStatus.replace(/_/g, ' ')}
@@ -365,19 +472,22 @@ export const TVDashboardPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex-1 grid grid-cols-2 gap-4 my-2 items-center">
+                  {/* Card Core Details: Action, Quantity (in Pallets) & Destination */}
+                  <div className="grid grid-cols-2 gap-2 my-1 items-center">
                     <div>
-                      <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold">Action</div>
-                      <div className="text-lg font-medium text-brand-300 truncate">{getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel)}</div>
+                      <div className="text-slate-500 text-[9px] uppercase tracking-widest font-bold">Action</div>
+                      <div className="text-base font-semibold text-brand-300 truncate">
+                        {getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel)}
+                      </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold">Quantity & Dest</div>
-                      <div className="text-lg font-mono text-slate-200">
-                        {p.requestedQuantity || 'N/A'} {p.destinationId && (
-                          <span className="text-slate-400 text-sm ml-1">
+                      <div className="text-slate-500 text-[9px] uppercase tracking-widest font-bold">Quantity & Dest</div>
+                      <div className="text-base font-mono font-bold text-slate-100 truncate" title={`${p.requestedQuantity || 0} cases`}>
+                        {palletQuantityText} {p.destinationId && (
+                          <span className="text-slate-300 text-xs ml-1 font-sans font-normal">
                             → {getDestinationLabel(p.destinationId, destinations, p.destinationLabel)}
                             {p.overflowDestinationId && (
-                              <span className="text-amber-400/80 text-xs ml-1" title="Overflow Destination">
+                              <span className="text-amber-400/80 text-[10px] ml-1" title="Overflow Destination">
                                 (OF: {getDestinationLabel(p.overflowDestinationId, destinations, p.overflowDestinationLabel)})
                               </span>
                             )}
@@ -387,97 +497,100 @@ export const TVDashboardPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="bg-slate-950/50 p-3 rounded-md border border-slate-800 flex-1 flex flex-col justify-center">
-                    <div className="flex justify-between items-end mb-1">
-                      <span className="text-slate-400 text-sm font-medium">Instruction</span>
-                      {p.requestedQuantity && p.progressQuantity > 0 && (
-                        <span className="text-xs font-mono font-bold text-brand-400">
-                          {p.progressPercent}% ({p.progressQuantity}/{p.requestedQuantity})
-                        </span>
-                      )}
+                  {/* Manual Instruction Box - Only rendered if manually added by user */}
+                  {hasManualInstruction && (
+                    <div className="bg-slate-950/70 p-2 rounded border border-slate-800/80 mt-1 shrink-0">
+                      <div className="flex justify-between items-center mb-0.5">
+                        <span className="text-slate-400 text-[9px] uppercase font-bold tracking-wider">Instruction</span>
+                        {p.requestedQuantity && p.progressQuantity > 0 && (
+                          <span className="text-[10px] font-mono font-bold text-brand-400">
+                            {p.progressPercent}% ({p.progressQuantity}/{p.requestedQuantity})
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-200 font-medium leading-snug line-clamp-2">
+                        {isBlocked ? (
+                          <span className="text-red-400 flex items-center gap-1.5">
+                            <Ban className="w-3.5 h-3.5 shrink-0" />
+                            Blocked
+                          </span>
+                        ) : (
+                          p.instruction
+                        )}
+                      </div>
                     </div>
-                    <div className="text-lg text-slate-200 font-medium leading-snug line-clamp-2">
-                      {isBlocked ? (
-                        <span className="text-red-400 flex items-center gap-2">
-                          <Ban className="w-5 h-5 shrink-0" />
-                          Blocked
-                        </span>
-                      ) : (
-                        p.instruction
-                      )}
-                    </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
             
             {visiblePriorities.length === 0 && (
-              <div className="col-span-2 row-span-4 flex flex-col items-center justify-center text-slate-500 space-y-4">
-                <CheckCircle className="w-24 h-24 text-slate-800" />
-                <div className="text-2xl font-medium">No Active Priorities</div>
-                <div className="text-slate-600">The execution queue is currently empty.</div>
+              <div className="col-span-full row-span-full flex flex-col items-center justify-center text-slate-500 space-y-4">
+                <CheckCircle className="w-20 h-20 text-slate-800" />
+                <div className="text-xl font-medium text-slate-400">No Active Recommendations</div>
+                <div className="text-xs text-slate-600">The execution queue is currently empty for this site.</div>
               </div>
             )}
           </div>
 
           {/* Pagination Indicators */}
           {totalPages > 1 && (
-            <div className="mt-6 flex justify-center items-center gap-2">
+            <div className="mt-3 flex justify-center items-center gap-2 shrink-0">
               {Array.from({ length: totalPages }).map((_, i) => (
                 <div 
                   key={i} 
                   className={`h-2 rounded-full transition-all duration-500 ${i === currentPage ? 'w-8 bg-brand-500' : 'w-2 bg-slate-700'}`}
                 />
               ))}
-              <span className="text-slate-500 text-sm ml-4 font-mono font-medium">PAGE {currentPage + 1} OF {totalPages}</span>
+              <span className="text-slate-500 text-xs ml-3 font-mono font-medium">PAGE {currentPage + 1} OF {totalPages}</span>
             </div>
           )}
         </div>
 
-        {/* Side Panel - Exceptions / Summary */}
-        <div className="w-80 bg-slate-900 border-l border-slate-800 p-6 flex flex-col gap-6 shrink-0 z-10">
+        {/* Side Panel - Execution Summary (Compact Width) */}
+        <div className="w-56 lg:w-60 bg-slate-900 border-l border-slate-800 p-4 flex flex-col gap-4 shrink-0 z-10 overflow-y-auto">
           <div>
-            <h2 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <LayoutGrid className="w-4 h-4" />
+            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <LayoutGrid className="w-3.5 h-3.5" />
               Execution Summary
             </h2>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-950 border border-slate-800 p-4 rounded-lg flex flex-col items-center justify-center text-center">
-                <span className="text-3xl font-bold text-brand-400 font-mono">{stats.active}</span>
-                <span className="text-xs text-slate-500 font-medium uppercase mt-1">Active</span>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg flex flex-col items-center justify-center text-center">
+                <span className="text-2xl font-bold text-brand-400 font-mono">{stats.active}</span>
+                <span className="text-[10px] text-slate-500 font-medium uppercase mt-0.5">Active</span>
               </div>
-              <div className="bg-red-950/20 border border-red-900/50 p-4 rounded-lg flex flex-col items-center justify-center text-center">
-                <span className="text-3xl font-bold text-red-500 font-mono">{stats.blocked}</span>
-                <span className="text-xs text-red-400 font-medium uppercase mt-1">Blocked</span>
+              <div className="bg-red-950/20 border border-red-900/50 p-3 rounded-lg flex flex-col items-center justify-center text-center">
+                <span className="text-2xl font-bold text-red-500 font-mono">{stats.blocked}</span>
+                <span className="text-[10px] text-red-400 font-medium uppercase mt-0.5">Blocked</span>
               </div>
             </div>
           </div>
 
           <div className="flex-1">
-            <h2 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" />
+            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5" />
               Network Exceptions
             </h2>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-sm text-slate-300 font-medium">Urgent Priorities</span>
-                <span className={`text-lg font-bold font-mono ${stats.urgent > 0 ? 'text-orange-400' : 'text-slate-600'}`}>{stats.urgent}</span>
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-300 font-medium">Urgent Priorities</span>
+                <span className={`font-bold font-mono text-sm ${stats.urgent > 0 ? 'text-orange-400' : 'text-slate-600'}`}>{stats.urgent}</span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-sm text-slate-300 font-medium">Below Retention</span>
-                <span className={`text-lg font-bold font-mono ${stats.belowRetention > 0 ? 'text-amber-400' : 'text-slate-600'}`}>{stats.belowRetention}</span>
+              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-300 font-medium">Below Retention</span>
+                <span className={`font-bold font-mono text-sm ${stats.belowRetention > 0 ? 'text-amber-400' : 'text-slate-600'}`}>{stats.belowRetention}</span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-sm text-slate-300 font-medium">Above Maximum</span>
-                <span className={`text-lg font-bold font-mono ${stats.aboveMax > 0 ? 'text-blue-400' : 'text-slate-600'}`}>{stats.aboveMax}</span>
+              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-300 font-medium">Above Maximum</span>
+                <span className={`font-bold font-mono text-sm ${stats.aboveMax > 0 ? 'text-blue-400' : 'text-slate-600'}`}>{stats.aboveMax}</span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-sm text-slate-300 font-medium">Promo Affected</span>
-                <span className={`text-lg font-bold font-mono ${stats.promotionAffected > 0 ? 'text-fuchsia-400' : 'text-slate-600'}`}>{stats.promotionAffected}</span>
+              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-300 font-medium">Promo Affected</span>
+                <span className={`font-bold font-mono text-sm ${stats.promotionAffected > 0 ? 'text-fuchsia-400' : 'text-slate-600'}`}>{stats.promotionAffected}</span>
               </div>
-              <div className="flex justify-between items-center p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-sm text-slate-300 font-medium">Stale Inventory</span>
-                <span className={`text-lg font-bold font-mono ${stats.staleInventory > 0 ? 'text-slate-400' : 'text-slate-600'}`}>{stats.staleInventory}</span>
+              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-300 font-medium">Stale Inventory</span>
+                <span className={`font-bold font-mono text-sm ${stats.staleInventory > 0 ? 'text-slate-400' : 'text-slate-600'}`}>{stats.staleInventory}</span>
               </div>
             </div>
           </div>
@@ -485,19 +598,19 @@ export const TVDashboardPage: React.FC = () => {
       </div>
 
       {/* Ticker */}
-      <footer className="h-12 bg-brand-600 text-slate-900 flex items-center px-4 overflow-hidden shrink-0 relative">
-        <div className="font-bold uppercase tracking-widest text-sm bg-brand-600 z-10 pr-4 h-full flex items-center shrink-0">
+      <footer className="h-10 bg-brand-600 text-slate-900 flex items-center px-4 overflow-hidden shrink-0 relative">
+        <div className="font-bold uppercase tracking-widest text-xs bg-brand-600 z-10 pr-4 h-full flex items-center shrink-0">
           ANNOUNCEMENTS
         </div>
         <div className="flex-1 overflow-hidden h-full flex items-center relative">
-           <div className="whitespace-nowrap animate-[ticker_20s_linear_infinite] font-medium text-lg flex gap-12">
+           <div className="whitespace-nowrap animate-[ticker_20s_linear_infinite] font-medium text-base flex gap-12">
              {announcements.length > 0 ? (
                announcements.map(a => (
                  <span key={a.id} className="flex items-center gap-2">
-                   {a.severity === 'CRITICAL' && <AlertTriangle className="w-5 h-5 text-red-900" />}
+                   {a.severity === 'CRITICAL' && <AlertTriangle className="w-4 h-4 text-red-900" />}
                    {a.title && <strong className="uppercase">{a.title}:</strong>}
                    {a.message}
-                   <span className="w-8"></span> {/* Spacer */}
+                   <span className="w-8"></span>
                  </span>
                ))
              ) : (

@@ -23,7 +23,7 @@ export const ProductionPlanPage: React.FC = () => {
   const userFullName = userProfile?.fullName || 'Production Planner';
 
   // Master Data hook
-  const { productionLines, products, units, loading: masterLoading, revalidate: revalidateMasterData } = useProductionMasterData(
+  const { productionLines, products, units, categories, loading: masterLoading, revalidate: revalidateMasterData } = useProductionMasterData(
     tenantId,
     siteId
   );
@@ -95,6 +95,8 @@ export const ProductionPlanPage: React.FC = () => {
           productionLines={productionLines}
           activeEntries={activeEntries}
           gridNotes={gridNotes}
+          products={products}
+          categories={categories}
           onPrevWeek={prevWeek}
           onNextWeek={nextWeek}
           onResetWeek={resetToCurrentWeek}

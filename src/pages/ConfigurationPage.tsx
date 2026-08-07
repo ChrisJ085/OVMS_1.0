@@ -240,6 +240,14 @@ export const ConfigurationPage: React.FC = () => {
       cols.push({ header: 'Name', accessor: 'lineName' as const });
       cols.push({ header: 'SAP Resource Code', accessor: (row: any) => row.sapResourceCode || <span className="text-slate-500 italic">Not set</span> });
       cols.push({ header: 'SAP Aliases', accessor: (row: any) => Array.isArray(row.sapResourceAliases) && row.sapResourceAliases.length > 0 ? row.sapResourceAliases.join(', ') : <span className="text-slate-500 italic">None</span> });
+      cols.push({ 
+        header: 'Scheduled Clean Day', 
+        accessor: (row: any) => (
+          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${row.scheduledCleanDay && row.scheduledCleanDay !== 'None' ? 'bg-pink-950 text-pink-300 border border-pink-800' : 'text-slate-500'}`}>
+            {row.scheduledCleanDay || 'None'}
+          </span>
+        ) 
+      });
     } else if (activeTab.id === 'actions') {
       cols.push({ header: 'Code', accessor: 'code' as const });
       cols.push({ header: 'Label', accessor: 'label' as const });

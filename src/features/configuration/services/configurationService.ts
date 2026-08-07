@@ -183,6 +183,20 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
       sortOrder: 1
     });
 
+    // Product Categories
+    const initialCategories = [
+      { code: 'FAMILY_SOFT', name: 'Family Soft' },
+      { code: 'QUILTS', name: 'Quilts' },
+      { code: 'COCONUT', name: 'Coconut' },
+      { code: 'WR_ESS', name: 'WR Ess' },
+      { code: 'WR_PREM', name: 'WR Prem' },
+      { code: 'COMPLETE_CLEAN', name: 'Complete Clean' },
+      { code: 'WATERMELON', name: 'Watermelon' },
+    ];
+    for (const cat of initialCategories) {
+      addDocToBatch(collections.PRODUCT_CATEGORIES, cat);
+    }
+
     // Action Types
     addDocToBatch(collections.ACTION_TYPES, {
       code: 'HOLD',

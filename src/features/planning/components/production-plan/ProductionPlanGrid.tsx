@@ -1,7 +1,13 @@
 import React from 'react';
-import { StickyNote } from 'lucide-react';
-import { ProductionLine } from '../../../../types/configuration';
+import { StickyNote, Sparkles, AlertTriangle } from 'lucide-react';
+import { ProductionLine, ProductCategory } from '../../../../types/configuration';
+import { Product } from '../../../../types/product';
 import { ProductionPlanEntry, ProductionLinePlanNote } from '../../../../types/production';
+import {
+  calculateDayEventSummary,
+  PRODUCTION_EVENT_COLOURS,
+} from '../../services/changeoverEngine';
+import { LineDayHeaderCell } from './LineDayHeaderCell';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -13,6 +19,8 @@ interface ProductionPlanGridProps {
   activeEntries: ProductionPlanEntry[];
   gridNotes: ProductionLinePlanNote[];
   gridDates: Date[];
+  products?: Product[];
+  categories?: ProductCategory[];
   isFiltered?: boolean;
 }
 
@@ -21,6 +29,8 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
   activeEntries,
   gridNotes,
   gridDates,
+  products = [],
+  categories = [],
   isFiltered = false
 }) => {
   const today = new Date();
@@ -57,14 +67,16 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
     <div className="overflow-x-auto">
       <table className="w-full text-left border-collapse min-w-[1000px]">
         <thead>
-          <tr className="border-b border-slate-800 bg-slate-900/50">
-            <th className="p-4 text-xs font-semibold text-slate-400 uppercase tracking-wider w-64">Production Line / SKU</th>
+          <tr className="border-b border-slate-800 bg-slate-900/80">
+            <th className="p-4 text-xs font-bold text-slate-300 uppercase tracking-wider w-64">
+              Production Line / SKU
+            </th>
             {gridDates.map((date, idx) => {
               const isToday = isTodayColumn(date);
               return (
                 <th 
                   key={idx} 
-                  className={`p-4 text-xs font-semibold uppercase tracking-wider text-center border-l border-slate-850 transition-colors ${
+                  className={`p-3 text-xs font-semibold uppercase tracking-wider text-center border-l border-slate-850 transition-colors ${
                     isToday ? 'bg-brand-500/10 text-brand-300 border-b-2 border-b-brand-500' : 'text-slate-400'
                   }`}
                 >
@@ -87,14 +99,53 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
             const lineEntries = activeEntries.filter(e => e.productionLineId.toUpperCase() === line.lineCode.toUpperCase());
             const scheduledSKUs = Array.from(new Set(lineEntries.map(e => e.productCodeSnapshot)));
 
+            // Calculate day summaries for this line across all grid dates
+            const daySummaries = gridDates.map(date =>
+              calculateDayEventSummary(line, date, lineEntries, products, categories)
+            );
+
+            const hasAnyEventsOnLine = daySummaries.some(s => s.events.length > 0 || s.missingCategoryWarning);
+
             if (scheduledSKUs.length === 0) {
               if (isFiltered) return null; // Hide non-matching lines when filtering
               return (
                 <React.Fragment key={line.id}>
-                  <tr className="border-b border-slate-850/80 bg-slate-900/10">
+                  {/* Line Title Bar */}
+                  <tr className="border-b border-slate-850 bg-slate-900/40">
+                    <td colSpan={8} className="p-3 text-xs font-semibold text-slate-300">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-sm font-bold text-slate-200">{line.lineName}</span>
+                          <span className="text-slate-500 font-mono ml-2">({line.sapResourceCode || line.lineCode})</span>
+                        </div>
+                        {line.scheduledCleanDay && line.scheduledCleanDay !== 'None' && (
+                          <span className="text-[10px] px-2 py-0.5 bg-pink-950 text-pink-300 border border-pink-800 rounded font-medium">
+                            Scheduled Clean: {line.scheduledCleanDay}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* Line Specific Date Header Row */}
+                  <tr className="border-b border-slate-800 bg-slate-950/60">
+                    <td className="p-2 pl-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Operational Schedule
+                    </td>
+                    {gridDates.map((date, idx) => (
+                      <td key={idx} className="p-1.5 border-l border-slate-850">
+                        <LineDayHeaderCell
+                          date={date}
+                          summary={daySummaries[idx]}
+                          isToday={isTodayColumn(date)}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+
+                  <tr>
                     <td className="p-4 font-medium text-slate-300">
-                      <div className="text-sm font-semibold">{line.lineName}</div>
-                      <div className="text-xs text-slate-500 font-mono">Resource: {line.sapResourceCode || line.lineCode}</div>
+                      <div className="text-xs text-slate-500 font-mono">No Active SKUs</div>
                     </td>
                     <td colSpan={7} className="p-4 text-center text-slate-500 italic text-xs">
                       No production scheduled for this line within this period.
@@ -106,21 +157,53 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
 
             return (
               <React.Fragment key={line.id}>
-                <tr className="border-b border-slate-850 bg-slate-900/30">
-                  <td colSpan={8} className="p-3 bg-slate-900/50 text-xs font-semibold text-slate-300">
-                    <span>{line.lineName}</span>
-                    <span className="text-slate-500 font-mono ml-2">({line.sapResourceCode || line.lineCode})</span>
+                {/* Line Title Header Bar */}
+                <tr className="border-b border-slate-800 bg-slate-900/60">
+                  <td colSpan={8} className="p-3 bg-slate-900/80 text-xs font-semibold text-slate-200">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-100">{line.lineName}</span>
+                        <span className="text-slate-400 font-mono text-xs bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                          {line.sapResourceCode || line.lineCode}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {line.scheduledCleanDay && line.scheduledCleanDay !== 'None' && (
+                          <span className="text-[11px] px-2 py-0.5 bg-pink-950/80 text-pink-300 border border-pink-800/80 rounded font-medium flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: PRODUCTION_EVENT_COLOURS.CLEAN }} />
+                            Clean Day: {line.scheduledCleanDay}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </td>
                 </tr>
 
+                {/* Requirement 4: Per-Line Day / Date Header Row with Event Color Highlights */}
+                <tr className="border-b border-slate-800 bg-slate-950/80">
+                  <td className="p-2 pl-4 text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                    {line.lineCode} Schedule Events
+                  </td>
+                  {gridDates.map((date, idx) => (
+                    <td key={idx} className="p-1.5 border-l border-slate-850">
+                      <LineDayHeaderCell
+                        date={date}
+                        summary={daySummaries[idx]}
+                        isToday={isTodayColumn(date)}
+                      />
+                    </td>
+                  ))}
+                </tr>
+
+                {/* Scheduled SKUs Rows */}
                 {scheduledSKUs.map(sku => {
                   const sampleEntry = lineEntries.find(e => e.productCodeSnapshot === sku);
                   const desc = sampleEntry?.descriptionSnapshot || 'Unknown Product';
 
                   return (
-                    <tr key={sku} className="border-b border-slate-850/50 hover:bg-slate-900/10 transition-colors">
+                    <tr key={sku} className="border-b border-slate-850/50 hover:bg-slate-900/20 transition-colors">
                       <td className="p-3 pl-6">
-                        <div className="font-semibold text-slate-300 text-xs">{sku}</div>
+                        <div className="font-semibold text-slate-200 text-xs font-mono">{sku}</div>
                         <div className="text-[11px] text-slate-400 truncate max-w-[220px]" title={desc}>
                           {desc}
                         </div>
@@ -144,10 +227,10 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                           >
                             {entry ? (
                               <div className="flex flex-col gap-1 items-center">
-                                <div className="text-xs font-semibold text-brand-400">
+                                <div className="text-xs font-bold text-brand-400">
                                   {Number(entry.plannedCases).toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">CS</span>
                                 </div>
-                                <div className="text-[10px] text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                                <div className="text-[10px] text-slate-300 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 font-mono">
                                   {entry.plannedPallets !== null && entry.plannedPallets !== undefined ? (
                                     `${entry.plannedPallets} Pallets`
                                   ) : (
@@ -171,7 +254,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                 })}
 
                 {/* Line Totals row */}
-                <tr className="border-b border-slate-800 bg-slate-900/20 font-medium">
+                <tr className="border-b border-slate-800 bg-slate-900/30 font-medium">
                   <td className="p-3 pl-6 text-xs text-slate-400 uppercase tracking-wider font-semibold">
                     {line.lineName} Totals
                   </td>
@@ -194,7 +277,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                         {sumCases > 0 ? (
                           <div className="font-semibold text-slate-200">
                             <div>{sumCases.toLocaleString()} cs</div>
-                            <div className="text-[10px] text-slate-400">{sumPallets} pal</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{sumPallets} pal</div>
                           </div>
                         ) : (
                           <span className="text-slate-700">-</span>
@@ -204,13 +287,87 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                   })}
                 </tr>
 
-                {/* Planner Notes for this line in current period */}
+                {/* Requirement 2 & 15: Automated Production Planning Notes Row */}
+                {hasAnyEventsOnLine && (
+                  <tr className="border-b border-slate-800 bg-slate-950/70">
+                    <td className="p-3 pl-6 text-xs text-slate-300 font-semibold align-top">
+                      <div className="flex items-center gap-1.5 text-amber-400">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Automated Planning Notes</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-normal mt-0.5">
+                        Derived from schedule & line config
+                      </p>
+                    </td>
+                    {gridDates.map((date, idx) => {
+                      const summary = daySummaries[idx];
+                      const isToday = isTodayColumn(date);
+
+                      if (summary.events.length === 0 && !summary.missingCategoryWarning) {
+                        return (
+                          <td key={idx} className={`p-2 border-l border-slate-850 text-center text-[10px] text-slate-600 ${isToday ? 'bg-brand-500/5' : ''}`}>
+                            -
+                          </td>
+                        );
+                      }
+
+                      return (
+                        <td key={idx} className={`p-2 border-l border-slate-850 align-top text-left ${isToday ? 'bg-brand-500/5' : ''}`}>
+                          <div className="space-y-1">
+                            {summary.events.map(event => (
+                              <div
+                                key={event}
+                                className={`px-2 py-1 rounded text-[10px] font-bold tracking-tight text-slate-950 shadow-sm ${
+                                  event === 'FORMAT_CHANGE'
+                                    ? 'bg-amber-400'
+                                    : event === 'GRADE_CHANGE'
+                                    ? 'bg-cyan-400'
+                                    : 'bg-pink-400'
+                                }`}
+                              >
+                                {event === 'FORMAT_CHANGE'
+                                  ? 'Format Change'
+                                  : event === 'GRADE_CHANGE'
+                                  ? 'Grade Change'
+                                  : 'Scheduled Clean'}
+                              </div>
+                            ))}
+
+                            {/* Format change transitions */}
+                            {summary.formatChanges.map((fc, i) => (
+                              <div key={i} className="text-[10px] font-mono text-amber-300 bg-slate-900/90 p-1 rounded border border-amber-900/50 truncate">
+                                {fc.fromProductCode} → {fc.toProductCode}
+                              </div>
+                            ))}
+
+                            {/* Grade change transitions */}
+                            {summary.gradeChanges.map((gc, i) => (
+                              <div key={i} className="text-[10px] font-mono text-cyan-300 bg-slate-900/90 p-1 rounded border border-cyan-900/50 truncate">
+                                {gc.fromCategoryName} → {gc.toCategoryName}
+                              </div>
+                            ))}
+
+                            {/* Missing category warning */}
+                            {summary.missingCategoryWarning && (
+                              <div className="p-1 bg-amber-950/80 border border-amber-700/80 rounded text-[9px] text-amber-300 flex items-center gap-1" title="Missing Product Category">
+                                <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                                <span>Cat Missing</span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )}
+
+                {/* Active Manual Planner Notes for this line */}
                 {gridNotes.filter(n => n.productionLineId.toUpperCase() === line.lineCode.toUpperCase()).length > 0 && (
-                  <tr className="bg-slate-900/5">
+                  <tr className="bg-slate-900/20 border-b border-slate-800">
                     <td colSpan={8} className="p-3 pl-6">
                       <div className="text-[11px] font-semibold text-slate-400 mb-1 flex items-center gap-1.5">
                         <StickyNote className="w-3.5 h-3.5 text-amber-500" />
-                        <span>Active Planner Notes</span>
+                        <span>Manual Planner Notes</span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
                         {gridNotes
@@ -244,3 +401,4 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
     </div>
   );
 };
+

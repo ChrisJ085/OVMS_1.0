@@ -43,12 +43,15 @@ export interface StorageArea extends BaseDocument {
   metadata?: Record<string, any>;
 }
 
+export type ScheduledCleanDay = 'None' | 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+
 export interface ProductionLine extends BaseDocument {
   siteId: string; // Required for site-scoped
   lineCode: string;
   lineName: string;
   sapResourceCode?: string;
   sapResourceAliases?: string[];
+  scheduledCleanDay?: ScheduledCleanDay;
   metadata?: Record<string, any>;
 }
 

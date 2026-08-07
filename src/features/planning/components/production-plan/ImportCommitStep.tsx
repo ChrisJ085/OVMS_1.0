@@ -1,6 +1,8 @@
-import React from 'react';
-import { CheckCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { CheckCircle, RefreshCw } from 'lucide-react';
 import { ParsedPlanPreview } from '../../services/mpps7ImportService';
+import { refreshSiteRecommendations } from '../../services/recommendationService';
+import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface ImportCommitStepProps {
   committedImportId: string;
@@ -15,6 +17,27 @@ export const ImportCommitStep: React.FC<ImportCommitStepProps> = ({
   onViewPlanGrid,
   onViewImportHistory
 }) => {
+  const { tenantId, siteId } = useSiteContext();
+  const [generating, setGenerating] = useState(false);
+  const [genMessage, setGenMessage] = useState<string | null>(null);
+
+  const handleRegenerate = async () => {
+    setGenerating(true);
+    setGenMessage(null);
+    try {
+      const res = await refreshSiteRecommendations(tenantId, siteId, true);
+      if (res.success) {
+        setGenMessage(`Regenerated recommendations for ${res.data?.generatedCount || 0} product(s). The latest production plan is now active in the Recommendation Workspace and TV Dashboard!`);
+      } else {
+        setGenMessage(`Generation failed: ${res.error}`);
+      }
+    } catch (e: any) {
+      setGenMessage(`Error: ${e.message}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="max-w-xl mx-auto">
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-8 text-center space-y-6">
@@ -36,10 +59,39 @@ export const ImportCommitStep: React.FC<ImportCommitStepProps> = ({
           </div>
         </div>
 
-        <div className="flex gap-3 justify-center pt-4">
+        <div className="bg-slate-950/80 border border-brand-500/30 rounded-lg p-4 text-left space-y-3">
+          <div className="flex items-start gap-2">
+            <RefreshCw className="w-4 h-4 text-brand-400 mt-0.5 shrink-0" />
+            <div>
+              <h4 className="text-xs font-semibold text-slate-200">Recommendation Workspace Sync</h4>
+              <p className="text-xs text-slate-400 mt-0.5">
+                New production schedule data is uploaded. Would you like to re-evaluate product recommendations to update the Recommendation Workspace and TV Dashboard?
+              </p>
+            </div>
+          </div>
+
+          {genMessage && (
+            <div className="p-2.5 bg-brand-500/10 border border-brand-500/30 rounded text-xs text-brand-300">
+              {genMessage}
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              onClick={handleRegenerate}
+              disabled={generating}
+              className="px-3 py-1.5 bg-brand-500 text-slate-950 text-xs font-semibold rounded hover:bg-brand-400 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} />
+              {generating ? 'Regenerating Recommendations...' : 'Regenerate Recommendations Now'}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex gap-3 justify-center pt-2">
           <button
             onClick={onViewPlanGrid}
-            className="px-4 py-2 bg-brand-500 text-slate-950 font-semibold text-sm rounded hover:bg-brand-400 transition-colors"
+            className="px-4 py-2 bg-slate-800 border border-slate-700 text-sm font-semibold text-slate-200 rounded hover:bg-slate-750 transition-colors"
           >
             View Plan Grid
           </button>

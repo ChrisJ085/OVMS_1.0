@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { ProductionLine } from '../../../types/configuration';
+import { ProductionLine, ProductCategory } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { toAppError } from '../../../types/error';
@@ -10,6 +10,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
   const [productionLines, setProductionLines] = useState<ProductionLine[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
@@ -47,10 +48,17 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
         const snapUnits = await getDocs(qUnits);
         const fetchedUnits = snapUnits.docs.map(d => ({ id: d.id, ...d.data() } as UnitOfMeasure));
 
+        // Fetch Product Categories
+        const catRef = collection(db, 'productCategories');
+        const qCat = query(catRef, where('tenantId', '==', tenantId));
+        const snapCat = await getDocs(qCat);
+        const fetchedCat = snapCat.docs.map(d => ({ id: d.id, ...d.data() } as ProductCategory));
+
         if (isMounted) {
           setProductionLines(fetchedLines);
           setProducts(fetchedProducts);
           setUnits(fetchedUnits);
+          setCategories(fetchedCat);
           setLoading(false);
         }
       } catch (err) {
@@ -73,6 +81,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
     productionLines,
     products,
     units,
+    categories,
     loading,
     error,
     revalidate

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, ClipboardPaste, CheckCircle2, AlertTriangle, Layers, Box, Info, Plus } from 'lucide-react';
+import { X, ClipboardPaste, CheckCircle2, AlertTriangle, Layers, Box, Info, Plus, RefreshCw } from 'lucide-react';
 import { Product } from '../../../../types/product';
 import { Location } from '../../../../types/inventory';
 import { UnitOfMeasure, ProductCategory, Destination } from '../../../../types/configuration';
@@ -12,6 +12,7 @@ import { useSiteContext } from '../../../../contexts/SiteContext';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { parsePastedInventoryText, ParseResult } from '../../utils/pasteInventoryParser';
 import { batchUpdateInventoryFromPastedData } from '../../services/inventoryService';
+import { refreshSiteRecommendations } from '../../../planning/services/recommendationService';
 
 interface PasteInventoryModalProps {
   isOpen: boolean;
@@ -52,6 +53,13 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
   const [rawText, setRawText] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [updatedItemCount, setUpdatedItemCount] = useState(0);
+  const [zeroedItemCount, setZeroedItemCount] = useState(0);
+  const [regeneratingRecs, setRegeneratingRecs] = useState(false);
+  const [regenProgress, setRegenProgress] = useState<{ current: number; total: number; productCode?: string } | null>(null);
+  const [regenSuccessMsg, setRegenSuccessMsg] = useState<string | null>(null);
 
   const [quickAddForm, setQuickAddForm] = useState<{
     productCode: string;
@@ -175,9 +183,32 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
 
     if (result.success) {
       if (onSuccess) onSuccess();
-      onClose();
+      setUpdatedItemCount(matchedItems.length);
+      setZeroedItemCount(result.data?.zeroedCount || 0);
+      setPromptOpen(true);
     } else {
       setFeedback({ type: 'error', message: result.error || 'Failed to update stock.' });
+    }
+  };
+
+  const handleRegenerateRecs = async () => {
+    setRegeneratingRecs(true);
+    setRegenSuccessMsg(null);
+    setRegenProgress({ current: 0, total: 1 });
+    try {
+      const res = await refreshSiteRecommendations(tenantId, siteId, true, (progress) => {
+        setRegenProgress(progress);
+      });
+      if (res.success) {
+        setRegenSuccessMsg(`Successfully regenerated recommendations for ${res.data?.generatedCount || 0} product(s). Updates have been fed to the Recommendation Workspace and TV Dashboard.`);
+      } else {
+        setRegenSuccessMsg(`Generation failed: ${res.error}`);
+      }
+    } catch (e: any) {
+      setRegenSuccessMsg(`Error: ${e.message}`);
+    } finally {
+      setRegeneratingRecs(false);
+      setRegenProgress(null);
     }
   };
 
@@ -645,6 +676,99 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {promptOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-emerald-400">
+              <CheckCircle2 className="w-6 h-6" />
+              <h3 className="text-lg font-semibold text-slate-100">Stock Balances Updated</h3>
+            </div>
+            
+            <p className="text-sm text-slate-300">
+              Successfully updated inventory balances for <span className="font-semibold text-white">{updatedItemCount}</span> product(s).
+              {zeroedItemCount > 0 && (
+                <span className="text-amber-400 font-medium block mt-1">
+                  ({zeroedItemCount} omitted product(s) not in pasted list were set to 0)
+                </span>
+              )}
+            </p>
+            
+            <p className="text-xs text-slate-400 bg-slate-950 p-3 rounded-lg border border-slate-800">
+              Changes in inventory balances affect holding retention calculations and stock position bands. Would you like to run recommendation generation now to update the Recommendation Workspace and TV Dashboard?
+            </p>
+
+            {regeneratingRecs && regenProgress && (
+              <div className="space-y-2 p-3 bg-slate-950 rounded-lg border border-slate-800 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                  <span className="flex items-center gap-1.5">
+                    <RefreshCw className="w-3 h-3 text-brand-400 animate-spin" />
+                    Evaluating product recommendations...
+                  </span>
+                  <span className="text-brand-400 font-mono font-semibold">
+                    {regenProgress.total > 0 ? Math.round((regenProgress.current / regenProgress.total) * 100) : 0}%
+                  </span>
+                </div>
+
+                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-brand-500 h-2 rounded-full transition-all duration-300 ease-out"
+                    style={{
+                      width: `${Math.min(100, Math.max(5, regenProgress.total > 0 ? Math.round((regenProgress.current / regenProgress.total) * 100) : 5))}%`
+                    }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Product {regenProgress.current} of {regenProgress.total}</span>
+                  {regenProgress.productCode && (
+                    <span className="font-mono text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                      {regenProgress.productCode}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {regenSuccessMsg && (
+              <div className="p-3 bg-brand-500/10 border border-brand-500/30 rounded-lg text-xs text-brand-300">
+                {regenSuccessMsg}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPromptOpen(false);
+                  onClose();
+                }}
+                className="px-4 py-2 text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-md hover:bg-slate-700 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={regeneratingRecs}
+                onClick={handleRegenerateRecs}
+                className="px-4 py-2 text-xs font-medium text-slate-900 bg-brand-500 rounded-md hover:bg-brand-400 transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {regeneratingRecs ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Regenerate Recommendations
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

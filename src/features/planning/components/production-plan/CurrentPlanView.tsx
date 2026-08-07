@@ -2,7 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Search, Filter, CalendarCheck, X, Factory } from 'lucide-react';
 import { SectionCard } from '../../../../components/ui/SectionCard';
 import { ProductionPlanGrid } from './ProductionPlanGrid';
-import { ProductionLine } from '../../../../types/configuration';
+import { ProductionPlanLegend } from './ProductionPlanLegend';
+import { ProductionLine, ProductCategory } from '../../../../types/configuration';
+import { Product } from '../../../../types/product';
 import { ProductionPlanEntry, ProductionLinePlanNote } from '../../../../types/production';
 
 export const formatUTCDate = (d: Date) => {
@@ -21,6 +23,8 @@ interface CurrentPlanViewProps {
   productionLines: ProductionLine[];
   activeEntries: ProductionPlanEntry[];
   gridNotes: ProductionLinePlanNote[];
+  products?: Product[];
+  categories?: ProductCategory[];
   onPrevWeek: () => void;
   onNextWeek: () => void;
   onResetWeek: () => void;
@@ -32,6 +36,8 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
   productionLines,
   activeEntries,
   gridNotes,
+  products = [],
+  categories = [],
   onPrevWeek,
   onNextWeek,
   onResetWeek
@@ -283,15 +289,20 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
         )}
       </div>
 
+      {/* Production Plan Event Legend */}
+      <ProductionPlanLegend />
+
       <SectionCard 
         title="Active Production Planning Board" 
-        description="Review active production schedules loaded from committed SAP plans. Click to modify notes."
+        description="Review active production schedules loaded from committed SAP plans with automated changeover & clean events."
       >
         <ProductionPlanGrid
           productionLines={filteredProductionLines}
           activeEntries={filteredEntries}
           gridNotes={gridNotes}
           gridDates={gridDates}
+          products={products}
+          categories={categories}
           isFiltered={isFiltered}
         />
       </SectionCard>

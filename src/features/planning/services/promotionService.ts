@@ -5,10 +5,9 @@ import {
   subscribeToDocument
 } from '../../../services/firestoreBase';
 import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, doc, getDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { Promotion, PromotionProductRule, PromotionPhase, PromotionWithPhase } from '../../../types/promotion';
 import { ServiceResult } from '../../../types/common';
-import { enqueueRecommendationJob } from './jobRequestService';
 
 const PROMOTIONS_COLLECTION = 'promotions';
 const RULES_COLLECTION = 'promotionProductRules';
@@ -190,17 +189,6 @@ export const createPromotionRule = async (
       ...data,
       status: 'active'
     });
-
-    if (data.tenantId && data.siteId && data.productId) {
-      enqueueRecommendationJob({
-        tenantId: data.tenantId,
-        siteId: data.siteId,
-        triggerType: 'PROMOTION_CHANGE',
-        triggerReferenceId: id,
-        productIds: [data.productId]
-      }).catch(err => console.error('Recommendation trigger error:', err));
-    }
-
     return { success: true, data: id };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
@@ -216,17 +204,6 @@ export const updatePromotionRule = async (
 
   try {
     await updateDocument(RULES_COLLECTION, id, data);
-
-    if (data.tenantId && data.siteId && data.productId) {
-      enqueueRecommendationJob({
-        tenantId: data.tenantId,
-        siteId: data.siteId,
-        triggerType: 'PROMOTION_CHANGE',
-        triggerReferenceId: id,
-        productIds: [data.productId]
-      }).catch(err => console.error('Recommendation trigger error:', err));
-    }
-
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };

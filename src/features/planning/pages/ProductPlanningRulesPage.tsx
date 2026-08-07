@@ -5,17 +5,20 @@ import { DataTable } from '../../../components/ui/DataTable';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Upload } from 'lucide-react';
 import { subscribeToPlanningRules, setPlanningRuleStatus, calculatePlanningMetrics } from '../services/planningRuleService';
 import { ProductPlanningRule } from '../../../types/planning';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination } from '../../../types/configuration';
 import { subscribeToBalances } from '../../inventory/services/inventoryService';
+import { subscribeToProducts } from '../../inventory/services/productService';
+import { Product } from '../../../types/product';
 import { InventoryBalance } from '../../../types/inventory';
 import { where } from 'firebase/firestore';
 import { PlanningRuleModal } from './components/PlanningRuleModal';
 import { PlanningRuleDetailModal } from './components/PlanningRuleDetailModal';
+import { PlanningRuleImportModal } from './components/PlanningRuleImportModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
 
 export const ProductPlanningRulesPage: React.FC = () => {
@@ -23,6 +26,7 @@ export const ProductPlanningRulesPage: React.FC = () => {
   const [rules, setRules] = useState<ProductPlanningRule[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -35,6 +39,8 @@ export const ProductPlanningRulesPage: React.FC = () => {
   const [modalState, setModalState] = useState<{isOpen: boolean, item?: ProductPlanningRule}>({ isOpen: false });
   const [detailModalState, setDetailModalState] = useState<{isOpen: boolean, rule?: ProductPlanningRule, qoh?: number}>({ isOpen: false });
   const [actionItem, setActionItem] = useState<{item: ProductPlanningRule, action: 'deactivate' | 'reactivate'} | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -74,10 +80,18 @@ export const ProductPlanningRulesPage: React.FC = () => {
       console.error
     );
 
+    const unsubProd = subscribeToProducts(
+      tenantId,
+      siteId,
+      setProducts,
+      console.error
+    );
+
     return () => {
       unsubRules();
       unsubDest();
       unsubBal();
+      unsubProd();
     };
   }, [tenantId, siteId]);
 
@@ -213,16 +227,40 @@ export const ProductPlanningRulesPage: React.FC = () => {
         description="Define threshold policies, destinations and retention levels."
       />
 
+      {notificationMessage && (
+        <div className="mb-4 p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-sm flex items-start justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-emerald-400">Success:</span>
+            <span>{notificationMessage}</span>
+          </div>
+          <button 
+            onClick={() => setNotificationMessage(null)} 
+            className="text-emerald-400 hover:text-emerald-200 font-medium text-xs px-2 py-0.5 rounded border border-emerald-500/30"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <SectionCard 
         title="Planning Rules"
         actions={
-          <button 
-            onClick={() => setModalState({ isOpen: true })}
-            className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add Rule
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setImportModalOpen(true)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors"
+            >
+              <Upload className="w-4 h-4 text-brand-400" />
+              Import Excel
+            </button>
+            <button 
+              onClick={() => setModalState({ isOpen: true })}
+              className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add Rule
+            </button>
+          </div>
         }
       >
         <div className="flex flex-col md:flex-row gap-4 mb-6">
@@ -303,6 +341,7 @@ export const ProductPlanningRulesPage: React.FC = () => {
         onClose={() => setModalState({ isOpen: false })}
         item={modalState.item}
         destinations={destinations}
+        onSaveSuccess={(msg) => setNotificationMessage(msg)}
       />
       
       {detailModalState.rule && (
@@ -314,6 +353,13 @@ export const ProductPlanningRulesPage: React.FC = () => {
           destinations={destinations}
         />
       )}
+
+      <PlanningRuleImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        destinations={destinations}
+        products={products}
+      />
     </div>
   );
 };

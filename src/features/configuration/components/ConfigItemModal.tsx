@@ -157,6 +157,26 @@ export const ConfigItemModal: React.FC<ConfigItemModalProps> = ({
               onChange={(e) => handleChange('sapResourceAliases', (e.target.value || '').split(',').map((s: string) => s.trim()).filter(Boolean))} 
               placeholder="e.g. FCL5, LINE5" 
             />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-slate-300">Scheduled Clean Day</label>
+              <select
+                value={formData.scheduledCleanDay || 'None'}
+                onChange={(e) => handleChange('scheduledCleanDay', e.target.value)}
+                className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
+              >
+                <option value="None">None</option>
+                <option value="Monday">Monday</option>
+                <option value="Tuesday">Tuesday</option>
+                <option value="Wednesday">Wednesday</option>
+                <option value="Thursday">Thursday</option>
+                <option value="Friday">Friday</option>
+                <option value="Saturday">Saturday</option>
+                <option value="Sunday">Sunday</option>
+              </select>
+              <p className="text-[11px] text-slate-400 italic">
+                Select the normal weekly day on which this production line is scheduled for a clean. The Production Plan will automatically highlight this day.
+              </p>
+            </div>
           </>
         );
       case 'actions':

@@ -63,11 +63,8 @@ service cloud.firestore {
              (profile != null &&
               siteId != null &&
               siteId != '' &&
-              ('siteIds' in profile) &&
-              profile.siteIds != null &&
-              profile.siteIds is list &&
-              profile.siteIds.size() > 0 &&
-              siteId in profile.siteIds);
+              ((('siteIds' in profile) && profile.siteIds != null && profile.siteIds is list && siteId in profile.siteIds) ||
+               (('siteId' in profile) && profile.siteId == siteId)));
     }
 
     function getSiteId(doc) {
@@ -111,11 +108,12 @@ service cloud.firestore {
         'planningContextSnapshot', 'startAt', 'expireAt', 'untilSwitchedOff',
         'priorityStatus', 'publishedAt', 'modifiedBy', 'modifiedDate', 'createdBy', 'createdDate',
         'title', 'actionRequired', 'priorityLevel', 'severity', 'destination', 'rank', 'sortOrder',
-        'targetTime', 'productionLine', 'department', 'stage', 'startTime', 'expiryTime', 'planningNotes', 'notes'
+        'targetTime', 'productionLine', 'department', 'stage', 'startTime', 'expiryTime', 'planningNotes', 'notes',
+        'progressQuantity', 'remainingQuantity', 'progressPercent', 'latestProgressNote', 'completedAt', 'cancelledAt'
       ];
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(plannerFields) &&
              (!(request.resource.data.diff(resource.data).affectedKeys().hasAny(['priorityStatus'])) || 
-              request.resource.data.priorityStatus in ['DRAFT', 'SCHEDULED', 'ACTIVE', 'CANCELLED', 'EXPIRED', 'ARCHIVED']);
+              request.resource.data.priorityStatus in ['DRAFT', 'SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE', 'COMPLETED', 'CANCELLED', 'EXPIRED', 'ARCHIVED']);
     }
     
     function isOnlyUpdatingWarehouseInventoryFields() {
@@ -179,7 +177,7 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId} {
-      allow read: if hasTenantAccess(tenantId) && getUserProfile() != null && getUserProfile().role != 'DISPLAY';
+      allow read: if hasTenantAccess(tenantId) && getUserProfile() != null;
       allow create, update, delete: if isSuperuser();
     }
     match /sites/{siteId} {
@@ -338,35 +336,24 @@ service cloud.firestore {
     }
     match /recommendations/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update, delete: if false;
-    }
-
-    match /currentRecommendations/{id} {
-      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update, delete: if false;
+      allow create, update: if isSuperuser() || 
+                               isTenantAdmin(request.resource.data.tenantId) ||
+                               ((isPlanner(request.resource.data.tenantId)) && 
+                                isAssignedToSite(getSiteId(request.resource)) && 
+                                (request.method == 'create' || ownershipFieldsUnchanged()));
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
 
     // ------------------------------------------------------------------------
     // Operational Data
     // ------------------------------------------------------------------------
-    match /recommendationGenerationJobs/{id} {
-      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update, delete: if false;
-    }
-    match /inventorySnapshots/{id} {
-      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
-      allow update, delete: if false;
-    }
     match /priorities/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create: if (isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))))
-                       && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION')
-                       && (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'system');
-      allow update: if (isSuperuser() || 
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
+      allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
-                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields()))
-                       && (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'SYSTEM_RECOMMENDATION');
+                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields()) ||
+                       (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseFields());
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     function isDisplaySafeProjection() {
@@ -419,12 +406,10 @@ service cloud.firestore {
     }
     match /exceptions/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
-      allow create: if (isSuperuser() || 
+      allow create: if isSuperuser() || 
                        isTenantAdmin(request.resource.data.tenantId) ||
                        ((isPlanner(request.resource.data.tenantId) || isWarehouseOperator(request.resource.data.tenantId)) && 
-                        isAssignedToSite(getSiteId(request.resource))))
-                       && (!('sourceArea' in request.resource.data) || request.resource.data.sourceArea != 'DECISION_ENGINE')
-                       && (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'system');
+                        isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
                        (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged()) ||
