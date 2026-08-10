@@ -10,12 +10,14 @@ interface LineDayHeaderCellProps {
   date: Date;
   summary: ProductionDayEventSummary;
   isToday?: boolean;
+  onClick?: () => void;
 }
 
 export const LineDayHeaderCell: React.FC<LineDayHeaderCellProps> = ({
   date,
   summary,
   isToday = false,
+  onClick,
 }) => {
   const [showTooltip, setShowTooltip] = useState<boolean>(false);
 
@@ -40,10 +42,22 @@ export const LineDayHeaderCell: React.FC<LineDayHeaderCellProps> = ({
       className="relative group cursor-pointer select-none"
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
-      onClick={() => setShowTooltip(prev => !prev)}
+      onClick={(e) => {
+        if (onClick) {
+          e.stopPropagation();
+          onClick();
+        } else {
+          setShowTooltip(prev => !prev);
+        }
+      }}
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') {
-          setShowTooltip(prev => !prev);
+          if (onClick) {
+            e.stopPropagation();
+            onClick();
+          } else {
+            setShowTooltip(prev => !prev);
+          }
         }
       }}
       tabIndex={0}
@@ -102,7 +116,7 @@ export const LineDayHeaderCell: React.FC<LineDayHeaderCellProps> = ({
 
           {!hasEvents && !summary.missingCategoryWarning && (
             <div className="text-slate-400 text-[11px]">
-              Normal scheduled production. No changeovers or cleans.
+              Normal scheduled production. No events.
             </div>
           )}
 
@@ -110,41 +124,23 @@ export const LineDayHeaderCell: React.FC<LineDayHeaderCellProps> = ({
             <div className="space-y-2">
               <div className="text-[11px] font-semibold text-brand-400 uppercase tracking-wider flex items-center gap-1">
                 <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>Automated Planning Note:</span>
+                <span>Planning Events & Notes:</span>
               </div>
               <div className="font-medium text-slate-200 bg-slate-950 px-2.5 py-1 rounded border border-slate-800 text-xs">
                 {summary.summaryNoteText}
               </div>
 
-              {/* Format Changes details */}
-              {summary.formatChanges.length > 0 && (
+              {/* Transitions (Format / Grade changes) */}
+              {summary.transitions && summary.transitions.length > 0 && (
                 <div className="space-y-1 pt-1">
-                  <div className="text-[10px] font-bold uppercase text-cyan-400 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: PRODUCTION_EVENT_COLOURS.FORMAT_CHANGE }} />
-                    Format Change Details:
-                  </div>
-                  {summary.formatChanges.map((fc, idx) => (
-                    <div key={idx} className="text-[11px] text-slate-300 font-mono bg-slate-950/60 p-1.5 rounded border border-slate-850">
-                      {fc.fromProductCode} → <span className="text-cyan-300 font-bold">{fc.toProductCode}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Grade Changes details */}
-              {summary.gradeChanges.length > 0 && (
-                <div className="space-y-1 pt-1">
-                  <div className="text-[10px] font-bold uppercase text-purple-400 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: PRODUCTION_EVENT_COLOURS.GRADE_CHANGE }} />
-                    Grade Change Details:
-                  </div>
-                  {summary.gradeChanges.map((gc, idx) => (
-                    <div key={idx} className="text-[11px] text-slate-300 font-mono bg-slate-950/60 p-1.5 rounded border border-slate-850">
-                      <div className="text-[10px] text-purple-300">
-                        {gc.fromCategoryName || gc.fromCategoryId} → {gc.toCategoryName || gc.toCategoryId}
+                  {summary.transitions.map((t, idx) => (
+                    <div key={idx} className="text-[11px] font-mono bg-slate-950/80 p-1.5 rounded border border-slate-800">
+                      <div className="text-[10px] font-bold uppercase flex items-center gap-1" style={{ color: PRODUCTION_EVENT_COLOURS[t.eventType] }}>
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: PRODUCTION_EVENT_COLOURS[t.eventType] }} />
+                        {t.eventType === 'FORMAT_CHANGE' ? 'Format Change' : 'Grade Change'}:
                       </div>
-                      <div>
-                        {gc.fromProductCode} → <span className="text-purple-300 font-bold">{gc.toProductCode}</span>
+                      <div className="text-[11px] text-slate-300 whitespace-pre-line mt-0.5">
+                        {t.reason}
                       </div>
                     </div>
                   ))}

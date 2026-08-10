@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { db } from '../../../config/firebase';
+import { logAuditEvent } from '../../../services/auditService';
 import {
   collection,
   query,
@@ -1265,6 +1266,44 @@ export const createImportPreview = async (
   };
 };
 
+// Batch Manager helper to prevent exceeding Firestore's 500 operations per batch limit
+class BatchManager {
+  private batch = writeBatch(db);
+  private count = 0;
+
+  async set(ref: any, data: any) {
+    this.batch.set(ref, data);
+    this.count++;
+    if (this.count >= 400) {
+      await this.flush();
+    }
+  }
+
+  async update(ref: any, data: any) {
+    this.batch.update(ref, data);
+    this.count++;
+    if (this.count >= 400) {
+      await this.flush();
+    }
+  }
+
+  async delete(ref: any) {
+    this.batch.delete(ref);
+    this.count++;
+    if (this.count >= 400) {
+      await this.flush();
+    }
+  }
+
+  async flush() {
+    if (this.count > 0) {
+      await this.batch.commit();
+      this.batch = writeBatch(db);
+      this.count = 0;
+    }
+  }
+}
+
 // 11. Commit Production Plan Import
 export const commitProductionPlanImport = async (
   preview: ParsedPlanPreview,
@@ -1288,18 +1327,18 @@ export const commitProductionPlanImport = async (
     modifiedDate: Timestamp.fromDate(new Date())
   };
 
-  const batch = writeBatch(db);
+  const batchMgr = new BatchManager();
 
-  batch.set(doc(importsRef, importId), importDoc);
+  await batchMgr.set(doc(importsRef, importId), importDoc);
 
-  preview.rows.forEach(row => {
+  for (const row of preview.rows) {
     const rowRef = doc(collection(db, `productionPlanImports/${importId}/rows`));
-    batch.set(rowRef, {
+    await batchMgr.set(rowRef, {
       ...row,
       importId,
       createdDate: serverTimestamp()
     });
-  });
+  }
 
   await supersedePreviousProductionPlan(
     preview.summary.tenantId,
@@ -1307,12 +1346,12 @@ export const commitProductionPlanImport = async (
     preview.summary.periodStart,
     preview.summary.periodEnd,
     importId,
-    batch
+    batchMgr
   );
 
   const entriesRef = collection(db, 'productionPlanEntries');
-  preview.rows.forEach(row => {
-    if (row.rowStatus === 'ERROR' || !row.matchedProductId || !row.productionLineCode) return;
+  for (const row of preview.rows) {
+    if (row.rowStatus === 'ERROR' || !row.matchedProductId || !row.productionLineCode) continue;
 
     const entryDoc: Omit<ProductionPlanEntry, 'createdDate' | 'modifiedDate'> = {
       tenantId: row.tenantId,
@@ -1336,14 +1375,36 @@ export const commitProductionPlanImport = async (
     };
 
     const newEntryRef = doc(entriesRef);
-    batch.set(newEntryRef, {
+    await batchMgr.set(newEntryRef, {
       ...entryDoc,
       createdDate: serverTimestamp(),
       modifiedDate: serverTimestamp()
     });
-  });
+  }
 
-  await batch.commit();
+  await batchMgr.flush();
+
+  // Log Audit Event for MPPS/SAP Ingestion
+  try {
+    await logAuditEvent({
+      tenantId: preview.summary.tenantId,
+      siteId: preview.summary.siteId,
+      eventType: 'PRODUCTION_PLAN_IMPORT_COMMIT',
+      entityType: 'ProductionPlanImport',
+      entityId: importId,
+      summary: `Committed SAP MPPS7 Plan Import ${importId} for period ${preview.summary.periodStart.toDate().toLocaleDateString()} to ${preview.summary.periodEnd.toDate().toLocaleDateString()}`,
+      newValue: {
+        importId,
+        fileName: preview.summary.fileName,
+        rowCount: preview.rows.length,
+        notes: notes || preview.summary.notes
+      },
+      performedBy: preview.summary.uploadedBy || 'System'
+    });
+  } catch (auditErr) {
+    console.warn('Failed to log import audit event:', auditErr);
+  }
+
   return importId;
 };
 
@@ -1354,7 +1415,7 @@ export const supersedePreviousProductionPlan = async (
   periodStart: Timestamp,
   periodEnd: Timestamp,
   newImportId: string,
-  batch: any
+  batchMgr: any
 ): Promise<void> => {
   if (!db) return;
 
@@ -1367,17 +1428,17 @@ export const supersedePreviousProductionPlan = async (
     );
 
     const snapEntries = await getDocs(qEntries);
-    snapEntries.forEach(docSnap => {
+    for (const docSnap of snapEntries.docs) {
       const entryData = docSnap.data();
       if (entryData.productionDate) {
         const pMillis = entryData.productionDate.toMillis();
         if (pMillis >= periodStart.toMillis() && pMillis <= periodEnd.toMillis()) {
           if (entryData.activeImportId !== newImportId && entryData.status === 'PLANNED') {
-            batch.delete(docSnap.ref);
+            await batchMgr.delete(docSnap.ref);
           }
         }
       }
-    });
+    }
 
     const importsRef = collection(db, 'productionPlanImports');
     const qImports = query(
@@ -1388,20 +1449,20 @@ export const supersedePreviousProductionPlan = async (
     );
 
     const snapImports = await getDocs(qImports);
-    snapImports.forEach(docSnap => {
+    for (const docSnap of snapImports.docs) {
       const impData = docSnap.data() as ProductionPlanImport;
       if (
         impData.id !== newImportId &&
         impData.periodStart.toMillis() <= periodEnd.toMillis() &&
         impData.periodEnd.toMillis() >= periodStart.toMillis()
       ) {
-        batch.update(docSnap.ref, {
+        await batchMgr.update(docSnap.ref, {
           status: 'SUPERSEDED',
           supersedesImportId: newImportId,
           modifiedDate: serverTimestamp()
         });
       }
-    });
+    }
   } catch (err) {
     console.warn('Error superseding previous plan entries:', err);
   }

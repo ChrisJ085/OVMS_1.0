@@ -87,9 +87,50 @@
         "completedAt": { "type": "string" }
       },
       "required": ["tenantId", "siteId", "status", "currentStep", "completedSteps"]
+    },
+    "NorthfleetStoRequirement": {
+      "title": "NorthfleetStoRequirement",
+      "description": "Committed dated STO requirement for Northfleet.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "stoNumber": { "type": "string" },
+        "productId": { "type": "string" },
+        "productCode": { "type": "string" },
+        "destinationId": { "type": "string" },
+        "destinationCode": { "type": "string" },
+        "pallets": { "type": "number" },
+        "cases": { "type": "number" },
+        "importId": { "type": "string" },
+        "status": { "type": "string", "enum": ["UPCOMING", "DUE_FOR_COLLECTION", "ASSUMED_DISPATCHED", "CANCELLED"] }
+      },
+      "required": ["tenantId", "siteId", "stoNumber", "productId", "productCode", "northfleetDeliveryDate", "barrowCollectionDate", "cases", "status"]
+    },
+    "NorthfleetStoImport": {
+      "title": "NorthfleetStoImport",
+      "description": "Batch paste import record for Northfleet STO requirements.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "importedBy": { "type": "string" },
+        "rowCount": { "type": "number" },
+        "validRowCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["VALIDATED", "COMMITTED", "FAILED"] }
+      },
+      "required": ["tenantId", "siteId", "importedBy", "rowCount", "status"]
     }
   },
   "firestore": {
+    "northfleetStoRequirements/{id}": {
+      "schema": "#/entities/NorthfleetStoRequirement",
+      "description": "Committed Northfleet STO requirements."
+    },
+    "northfleetStoImports/{importId}": {
+      "schema": "#/entities/NorthfleetStoImport",
+      "description": "Batch imports of Northfleet STO requirements."
+    },
     "productionPlanEntries/{entryId}": {
       "schema": "#/entities/ProductionPlanEntry",
       "description": "Active committed production plan entries."

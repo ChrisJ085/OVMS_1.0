@@ -37,18 +37,18 @@ export function useProductionImport(
     setImportState(prev => {
       if (isAllowedImportTransition(prev, nextState)) {
         return nextState;
-      } {
+      } else {
         console.warn(`Invalid import state transition requested: ${prev} -> ${nextState}`);
         return prev;
       }
     });
   }, []);
 
-  // Step mapping (1 = SELECT_FILE, 2 = VALIDATING/REVIEW_STATS, 3 = REVIEW_DETAILS, 4 = COMMITTED)
+  // Step mapping (1 = SELECT_FILE, 2 = VALIDATING, 3 = REVIEW, 4 = COMMITTED)
   const importStep = 
     importState === 'SELECT_FILE' ? 1 :
     importState === 'VALIDATING' ? 2 :
-    importState === 'REVIEW' || importState === 'READY_TO_COMMIT' || importState === 'COMMITTING' ? 3 : 4;
+    importState === 'COMMITTED' ? 4 : 3;
 
   const handleSelectFile = (fileOrEvent: File | ChangeEvent<HTMLInputElement>) => {
     let file: File | null = null;

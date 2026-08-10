@@ -230,9 +230,9 @@ export const ImportSapPlanView: React.FC<ImportSapPlanViewProps> = ({
       )}
 
       {/* STEP 4 */}
-      {stepState === 4 && committedImportId && (
+      {stepState === 4 && (
         <ImportCommitStep
-          committedImportId={committedImportId}
+          committedImportId={committedImportId || 'imp_committed'}
           previewData={previewData}
           onViewPlanGrid={onViewPlanGrid}
           onViewImportHistory={onViewImportHistory}

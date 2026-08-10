@@ -102,7 +102,7 @@ export function useProductionLineNotes(
   const handleDeactivateNote = async (noteId: string) => {
     if (!window.confirm('Are you sure you want to archive this note?')) return;
     try {
-      await productionNotesRepository.deactivateNote(noteId);
+      await productionNotesRepository.deactivateNote(noteId, userFullName);
       setNotesList(prev => prev.map(n => n.id === noteId ? { ...n, active: false } : n));
     } catch (err: any) {
       alert('Failed to archive note: ' + err.message);

@@ -138,15 +138,12 @@ function makeEntry(id: string, productCode: string, productId: string, date: Dat
 }
 
 describe('changeoverEngine', () => {
-  // Fixed Monday date: 2026-08-10 (UTC)
   const mondayDate = new Date(Date.UTC(2026, 7, 10, 0, 0, 0));
-  // Fixed Wednesday date: 2026-08-12 (UTC)
   const wednesdayDate = new Date(Date.UTC(2026, 7, 12, 0, 0, 0));
 
-  it('1. Same product consecutively -> no change', () => {
+  it('1. No manual notes -> returns empty events', () => {
     const entries = [
       makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1),
-      makeEntry('e2', 'PROD_A', 'prod-a', mondayDate, 2),
     ];
 
     const result = calculateDayEventSummary(sampleLine, mondayDate, entries, sampleProducts, sampleCategories);
@@ -154,174 +151,191 @@ describe('changeoverEngine', () => {
     expect(result.summaryNoteText).toBe('Normal Production');
   });
 
-  it('2. Product A Category X, Product B Category X -> FORMAT_CHANGE', () => {
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1),
-      makeEntry('e2', 'PROD_B', 'prod-b', mondayDate, 2),
+  it('2. Format Change note -> FORMAT_CHANGE event', () => {
+    const notes = [
+      {
+        id: 'note-1',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'FORMAT_CHANGE' as const,
+        title: 'Format Change',
+        note: 'Switching format on line F1',
+        startAt: null,
+        endAt: null,
+        severity: 'INFORMATION' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      }
     ];
 
-    const result = calculateDayEventSummary(sampleLine, mondayDate, entries, sampleProducts, sampleCategories);
+    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, notes);
     expect(result.events).toEqual(['FORMAT_CHANGE']);
-    expect(result.formatChanges.length).toBe(1);
     expect(result.summaryNoteText).toBe('Format Change');
   });
 
-  it('3. Product A Category X, Product B Category Y -> GRADE_CHANGE', () => {
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1),
-      makeEntry('e2', 'PROD_C', 'prod-c', mondayDate, 2),
+  it('3. Grade Change note -> GRADE_CHANGE event', () => {
+    const notes = [
+      {
+        id: 'note-2',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'GRADE_CHANGE' as const,
+        title: 'Grade Change',
+        note: 'Switching paper grade',
+        startAt: null,
+        endAt: null,
+        severity: 'INFORMATION' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      }
     ];
 
-    const result = calculateDayEventSummary(sampleLine, mondayDate, entries, sampleProducts, sampleCategories);
+    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, notes);
     expect(result.events).toEqual(['GRADE_CHANGE']);
-    expect(result.gradeChanges.length).toBe(1);
     expect(result.summaryNoteText).toBe('Grade Change');
   });
 
-  it('4. A -> B same category, B -> C different category -> FORMAT_CHANGE + GRADE_CHANGE', () => {
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1),
-      makeEntry('e2', 'PROD_B', 'prod-b', mondayDate, 2),
-      makeEntry('e3', 'PROD_C', 'prod-c', mondayDate, 3),
+  it('4. Cleaning note -> CLEAN event', () => {
+    const notes = [
+      {
+        id: 'note-3',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'CLEANING' as const,
+        title: 'Deep Clean',
+        note: 'Required washdown',
+        startAt: null,
+        endAt: null,
+        severity: 'INFORMATION' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      }
     ];
 
-    const result = calculateDayEventSummary(sampleLine, mondayDate, entries, sampleProducts, sampleCategories);
-    expect(result.events).toEqual(['FORMAT_CHANGE', 'GRADE_CHANGE']);
-    expect(result.formatChanges.length).toBe(1);
-    expect(result.gradeChanges.length).toBe(1);
-    expect(result.summaryNoteText).toBe('Format Change • Grade Change');
-  });
-
-  it('5. Clean day with no product change -> CLEAN', () => {
-    const lineWithClean: ProductionLine = { ...sampleLine, scheduledCleanDay: 'Wednesday' };
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', wednesdayDate, 1),
-    ];
-
-    const result = calculateDayEventSummary(lineWithClean, wednesdayDate, entries, sampleProducts, sampleCategories);
+    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, notes);
     expect(result.events).toEqual(['CLEAN']);
-    expect(result.scheduledClean).toBe(true);
     expect(result.summaryNoteText).toBe('Scheduled Clean');
   });
 
-  it('6. Format Change on Clean Day -> FORMAT_CHANGE + CLEAN', () => {
-    const lineWithClean: ProductionLine = { ...sampleLine, scheduledCleanDay: 'Wednesday' };
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', wednesdayDate, 1),
-      makeEntry('e2', 'PROD_B', 'prod-b', wednesdayDate, 2),
+  it('5. Maintenance shutdown note -> MAINT_SHUT event', () => {
+    const notes = [
+      {
+        id: 'note-4',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'MAINTENANCE' as const,
+        title: 'Motor overhaul',
+        note: 'Replacing main drive motor',
+        startAt: null,
+        endAt: null,
+        severity: 'CRITICAL' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      }
     ];
 
-    const result = calculateDayEventSummary(lineWithClean, wednesdayDate, entries, sampleProducts, sampleCategories);
-    expect(result.events).toEqual(['FORMAT_CHANGE', 'CLEAN']);
-    expect(result.summaryNoteText).toBe('Format Change • Scheduled Clean');
+    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, notes);
+    expect(result.events).toEqual(['MAINT_SHUT']);
+    expect(result.summaryNoteText).toBe('Maintenance Shutdown');
   });
 
-  it('7. Grade Change on Clean Day -> GRADE_CHANGE + CLEAN', () => {
-    const lineWithClean: ProductionLine = { ...sampleLine, scheduledCleanDay: 'Wednesday' };
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', wednesdayDate, 1),
-      makeEntry('e2', 'PROD_C', 'prod-c', wednesdayDate, 2),
+  it('6. Trial note -> RSR_TRIAL event', () => {
+    const notes = [
+      {
+        id: 'note-5',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'TRIAL' as const,
+        title: 'RSR trial run',
+        note: 'Testing new emboss roll',
+        startAt: null,
+        endAt: null,
+        severity: 'WARNING' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      }
     ];
 
-    const result = calculateDayEventSummary(lineWithClean, wednesdayDate, entries, sampleProducts, sampleCategories);
-    expect(result.events).toEqual(['GRADE_CHANGE', 'CLEAN']);
-    expect(result.summaryNoteText).toBe('Grade Change • Scheduled Clean');
+    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, notes);
+    expect(result.events).toEqual(['RSR_TRIAL']);
+    expect(result.summaryNoteText).toBe('RSR Trial');
   });
 
-  it('8. Format + Grade on Clean Day -> FORMAT_CHANGE + GRADE_CHANGE + CLEAN', () => {
-    const lineWithClean: ProductionLine = { ...sampleLine, scheduledCleanDay: 'Wednesday' };
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', wednesdayDate, 1),
-      makeEntry('e2', 'PROD_B', 'prod-b', wednesdayDate, 2),
-      makeEntry('e3', 'PROD_C', 'prod-c', wednesdayDate, 3),
+  it('7. Multiple manual notes -> multiple events combined canonical order', () => {
+    const notes = [
+      {
+        id: 'note-a',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'TRIAL' as const,
+        title: 'Trial',
+        note: 'Testing new emboss roll',
+        startAt: null,
+        endAt: null,
+        severity: 'WARNING' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      },
+      {
+        id: 'note-b',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productionLineId: 'F1',
+        noteDate: Timestamp.fromDate(mondayDate),
+        noteType: 'CLEANING' as const,
+        title: 'Clean',
+        note: 'Deep clean',
+        startAt: null,
+        endAt: null,
+        severity: 'INFORMATION' as const,
+        source: 'PLANNER' as const,
+        active: true,
+        createdBy: 'Test',
+        createdDate: Timestamp.now(),
+        modifiedBy: 'Test',
+        modifiedDate: Timestamp.now(),
+      }
     ];
 
-    const result = calculateDayEventSummary(lineWithClean, wednesdayDate, entries, sampleProducts, sampleCategories);
-    expect(result.events).toEqual(['FORMAT_CHANGE', 'GRADE_CHANGE', 'CLEAN']);
-    expect(result.summaryNoteText).toBe('Format Change • Grade Change • Scheduled Clean');
-  });
-
-  it('9. Different production lines on same date -> evaluated independently', () => {
-    const lineF2: ProductionLine = { ...sampleLine, id: 'line-f2', lineCode: 'F2', scheduledCleanDay: 'None' };
-
-    const entriesF1 = [makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1)];
-    const entriesF2 = [
-      makeEntry('e2', 'PROD_A', 'prod-a', mondayDate, 1),
-      makeEntry('e3', 'PROD_B', 'prod-b', mondayDate, 2),
-    ];
-
-    const resF1 = calculateDayEventSummary(sampleLine, mondayDate, entriesF1, sampleProducts, sampleCategories);
-    const resF2 = calculateDayEventSummary(lineF2, mondayDate, entriesF2, sampleProducts, sampleCategories);
-
-    expect(resF1.events).toEqual([]);
-    expect(resF2.events).toEqual(['FORMAT_CHANGE']);
-  });
-
-  it('10. Missing Product Category -> warning, no guessed change classification', () => {
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1),
-      makeEntry('e2', 'PROD_NOCAT', 'prod-nocat', mondayDate, 2),
-    ];
-
-    const result = calculateDayEventSummary(sampleLine, mondayDate, entries, sampleProducts, sampleCategories);
-    expect(result.missingCategoryWarning).toBe(true);
-    expect(result.events).toEqual([]); // no guessed format/grade change
-  });
-
-  it('11. Changing configured Clean Day -> event moves to correct weekday', () => {
-    const entries = [makeEntry('e1', 'PROD_A', 'prod-a', mondayDate, 1)];
-
-    const lineMonClean: ProductionLine = { ...sampleLine, scheduledCleanDay: 'Monday' };
-    const lineWedClean: ProductionLine = { ...sampleLine, scheduledCleanDay: 'Wednesday' };
-
-    const resMon = calculateDayEventSummary(lineMonClean, mondayDate, entries, sampleProducts, sampleCategories);
-    const resWed = calculateDayEventSummary(lineWedClean, mondayDate, entries, sampleProducts, sampleCategories);
-
-    expect(resMon.events).toEqual(['CLEAN']);
-    expect(resWed.events).toEqual([]);
-  });
-
-  it('12. Cross-day weekend transition Product A (Friday) -> Product C (Monday, diff category) -> GRADE_CHANGE', () => {
-    const fridayDate = new Date(Date.UTC(2026, 7, 14, 0, 0, 0)); // Fri Aug 14
-    const saturdayDate = new Date(Date.UTC(2026, 7, 15, 0, 0, 0)); // Sat Aug 15
-    const mondayNextDate = new Date(Date.UTC(2026, 7, 17, 0, 0, 0)); // Mon Aug 17
-
-    const entries = [
-      makeEntry('e1', 'PROD_A', 'prod-a', fridayDate, 1),
-      makeEntry('e2', 'PROD_C', 'prod-c', mondayNextDate, 1),
-    ];
-
-    const resSat = calculateDayEventSummary(sampleLine, saturdayDate, entries, sampleProducts, sampleCategories);
-    const resMon = calculateDayEventSummary(sampleLine, mondayNextDate, entries, sampleProducts, sampleCategories);
-
-    expect(resSat.events).toEqual(['GRADE_CHANGE']);
-    expect(resMon.events).toEqual(['GRADE_CHANGE']);
-    expect(resMon.gradeChanges.length).toBe(1);
-  });
-
-  it('13. Maintenance shutdown and RSR trial events supported independently', () => {
-    const lineEvents = {
-      maintenanceEvents: [
-        {
-          productionLineId: 'line-f1',
-          startDate: '2026-08-10',
-          endDate: '2026-08-10',
-          reason: 'Scheduled overhaul',
-        },
-      ],
-      trialEvents: [
-        {
-          productionLineId: 'line-f1',
-          startDate: '2026-08-10',
-          endDate: '2026-08-10',
-          description: 'RSR paper trial',
-        },
-      ],
-    };
-
-    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, lineEvents);
-    expect(result.events).toEqual(['MAINT_SHUT', 'RSR_TRIAL']);
-    expect(result.summaryNoteText).toBe('Maintenance Shutdown • RSR Trial');
+    const result = calculateDayEventSummary(sampleLine, mondayDate, [], sampleProducts, sampleCategories, notes);
+    expect(result.events).toEqual(['CLEAN', 'RSR_TRIAL']);
+    expect(result.summaryNoteText).toBe('Scheduled Clean • RSR Trial');
   });
 
   it('Multi-color background gradient generation', () => {

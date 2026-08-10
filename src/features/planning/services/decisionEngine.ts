@@ -74,6 +74,7 @@ export const generateDeterministicHash = (input: DecisionInputSnapshot): string 
         promotionMaximumOverride: p.rule.promotionMaximumOverride
       }
     })),
+    outstandingStoCases: input.outstandingStoCases || 0,
     configVersion: input.configuration?.configurationVersion || 'none'
   };
 
@@ -537,9 +538,9 @@ export const evaluateDecision = (
     const r = impact.rule;
     const p = impact.promotion;
 
-    if (r.promotionMinimumOverride !== null) minOverride = Math.max(minOverride ?? 0, r.promotionMinimumOverride);
-    if (r.promotionTargetOverride !== null) targetOverride = Math.max(targetOverride ?? 0, r.promotionTargetOverride);
-    if (r.promotionMaximumOverride !== null) maxOverride = Math.max(maxOverride ?? 0, r.promotionMaximumOverride);
+    if (r.promotionMinimumOverride !== null && r.promotionMinimumOverride !== undefined) minOverride = Math.max(minOverride ?? 0, r.promotionMinimumOverride);
+    if (r.promotionTargetOverride !== null && r.promotionTargetOverride !== undefined) targetOverride = Math.max(targetOverride ?? 0, r.promotionTargetOverride);
+    if (r.promotionMaximumOverride !== null && r.promotionMaximumOverride !== undefined) maxOverride = Math.max(maxOverride ?? 0, r.promotionMaximumOverride);
     if (r.retentionUpliftQuantity !== null) retentionUplift += r.retentionUpliftQuantity;
     if (r.destinationOverrideId && !promotionDestinationConflict) destOverride = r.destinationOverrideId;
     if (r.actionTypeOverrideId && !promotionActionConflict) actionOverride = r.actionTypeOverrideId;
@@ -566,21 +567,29 @@ export const evaluateDecision = (
   const ddxmBreakdown: ThresholdBreakdown = { baseValue: baseDDXM, promotionAdjustment: 0, effectiveValue: effDDXM };
 
   // 8. Determine Controlling Retention
-  let controllingRetention = 0;
+  let baseControllingRetention = 0;
   switch (planningRule!.controllingThresholdMode) {
     case 'HIGHEST_MANDATORY':
-      controllingRetention = Math.max(effMin, effDDXM);
+      baseControllingRetention = Math.max(effMin, effDDXM);
       break;
     case 'MINIMUM_ONLY':
-      controllingRetention = effMin;
+      baseControllingRetention = effMin;
       break;
     case 'DDXM_ONLY':
-      controllingRetention = effDDXM;
+      baseControllingRetention = effDDXM;
       break;
     case 'CUSTOM':
-      controllingRetention = (planningRule!.customControllingRetentionQuantity || 0) + retentionUplift;
+      baseControllingRetention = (planningRule!.customControllingRetentionQuantity || 0) + retentionUplift;
       break;
   }
+
+  const stoProtectedQuantity = input.outstandingStoCases || 0;
+  if (stoProtectedQuantity > 0) {
+    reasonCodes.push('NORTHFLEET_STO_PROTECTED' as any);
+  }
+
+  // Total Protected Stock = Base Protected Stock + STO Protected Stock
+  const controllingRetention = baseControllingRetention + stoProtectedQuantity;
 
   // 9. Calculate Stock Metrics
   const qoh = inventoryTotal;
@@ -720,10 +729,14 @@ export const evaluateDecision = (
   thresholdLines.push(`- Minimum Retention: ${effMin} (Base: ${baseMin}, Promo Adjust: +${effMin - baseMin})`);
   thresholdLines.push(`- Target Inventory: ${effTarget} (Base: ${baseTarget}, Promo Adjust: +${effTarget - baseTarget})`);
   thresholdLines.push(`- Maximum Inventory: ${effMax} (Base: ${baseMax}, Promo Adjust: +${effMax - baseMax})`);
-  thresholdLines.push(`- Controlling Retention Requirement: ${controllingRetention} pallets (${planningRule!.controllingThresholdMode})`);
-  thresholdLines.push(`- Available to Release: ${availableToRelease} pallets`);
-  thresholdLines.push(`- Shortfall Quantity: ${shortfallQuantity} pallets`);
-  thresholdLines.push(`- Headroom to Maximum: ${headroomToMaximum} pallets`);
+  thresholdLines.push(`- Base Retention Requirement: ${baseControllingRetention} (${planningRule!.controllingThresholdMode})`);
+  if (stoProtectedQuantity > 0) {
+    thresholdLines.push(`- Northfleet STO Protected Stock: ${stoProtectedQuantity} cases`);
+  }
+  thresholdLines.push(`- Total Protected Stock (Must Remain at Barrow): ${controllingRetention}`);
+  thresholdLines.push(`- Available to Overflow: ${availableToRelease}`);
+  thresholdLines.push(`- Shortfall Quantity: ${shortfallQuantity}`);
+  thresholdLines.push(`- Headroom to Maximum: ${headroomToMaximum}`);
 
   productionLines.push(`- Scheduled Status: ${isScheduled ? 'Scheduled' : 'Not Scheduled'}`);
   productionLines.push(`- Currently Running: ${isCurrentlyInProduction ? `Yes (Line: ${currentProductionLine || 'N/A'})` : 'No'}`);

@@ -241,11 +241,58 @@ export type ProductionLinePlanNoteType =
   | 'DELAY'
   | 'SHUTDOWN'
   | 'PRODUCT_RESTRICTION'
-  | 'OTHER';
+  | 'OTHER'
+  | 'LINE_NOTE';
 
 export type ProductionLinePlanNoteSeverity = 'INFORMATION' | 'WARNING' | 'CRITICAL';
 
+export type NorthfleetStoStatus = 'UPCOMING' | 'DUE_FOR_COLLECTION' | 'ASSUMED_DISPATCHED' | 'CANCELLED';
+
+export interface NorthfleetStoRequirement {
+  id: string;
+  tenantId: string;
+  siteId: string;
+  stoNumber: string;
+  productId: string;
+  productCode: string;
+  productDescriptionSnapshot?: string;
+  destinationId: string;
+  destinationCode: string;
+  northfleetDeliveryDate: Timestamp;
+  barrowCollectionDate: Timestamp;
+  pallets: number;
+  cases: number;
+  casesPerPalletSnapshot: number;
+  importId: string;
+  status: NorthfleetStoStatus;
+  createdBy: string;
+  createdDate: Timestamp;
+  modifiedBy: string;
+  modifiedDate: Timestamp;
+}
+
+export type NorthfleetStoImportStatus = 'VALIDATED' | 'COMMITTED' | 'FAILED';
+
+export interface NorthfleetStoImport {
+  id: string;
+  tenantId: string;
+  siteId: string;
+  importedAt: Timestamp;
+  importedBy: string;
+  rowCount: number;
+  validRowCount: number;
+  warningCount: number;
+  errorCount: number;
+  effectiveStartDate: Timestamp | null;
+  effectiveEndDate: Timestamp | null;
+  status: NorthfleetStoImportStatus;
+  notes?: string;
+  createdDate: Timestamp;
+  modifiedDate: Timestamp;
+}
+
 export interface ProductionLinePlanNote {
+  id: string;
   tenantId: string;
   siteId: string;
   productionLineId: string;

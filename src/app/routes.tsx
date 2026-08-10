@@ -22,6 +22,7 @@ import { ProductionPlanPage } from '../features/planning/pages/ProductionPlanPag
 import { PromotionsPage } from '../features/planning/pages/PromotionsPage';
 import { PromotionDetailPage } from '../features/planning/pages/PromotionDetailPage';
 import { DecisionEngineScenariosPage } from '../features/planning/pages/DecisionEngineScenariosPage';
+import { NorthfleetStoPage } from '../features/planning/pages/NorthfleetStoPage';
 import { RecommendationsWorkspacePage } from '../features/planning/pages/RecommendationsWorkspacePage';
 import { RecommendationDetailPage } from '../features/planning/pages/RecommendationDetailPage';
 import { OperationalPrioritiesPage } from '../features/operations/pages/OperationalPrioritiesPage';
@@ -62,6 +63,7 @@ export const router = createBrowserRouter([
       { path: 'planning/promotions', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionsPage /></PermissionRoute>, handle: { title: 'Promotions' } },
       { path: 'planning/promotions/:id', element: <PermissionRoute requiredPermissions="MANAGE_PROMOTIONS"><PromotionDetailPage /></PermissionRoute>, handle: { title: 'Promotion Detail' } },
       { path: 'planning/decision-engine-test', element: <PermissionRoute requiredPermissions="MANAGE_PLANNING_RULES"><DecisionEngineScenariosPage /></PermissionRoute>, handle: { title: 'Decision Scenarios' } },
+      { path: 'planning/northfleet-sto', element: <PermissionRoute requiredPermissions="VIEW_RECOMMENDATIONS"><NorthfleetStoPage /></PermissionRoute>, handle: { title: 'Northfleet STO Requirements' } },
       
       // Operations routes
       { path: 'operations/priorities', element: <PermissionRoute requiredPermissions="VIEW_PRIORITIES"><OperationalPrioritiesPage /></PermissionRoute>, handle: { title: 'Operational Priorities' } },

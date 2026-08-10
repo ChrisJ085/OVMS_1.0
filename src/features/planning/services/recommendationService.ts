@@ -14,6 +14,7 @@ import { buildDisplayPriorityDoc, logPriorityEvent, detectPriorityConflicts } fr
 import { Priority, PriorityConflict } from '../../../types/priority';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
+import { getOutstandingStoCasesForProduct } from './northfleetStoService';
 
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const PROMOTIONS_COLLECTION = 'promotions';
@@ -52,6 +53,7 @@ const generateFingerprint = (input: DecisionInputSnapshot): string => {
       sourceImportId: prod.sourceImportId
     } : null,
     promoCount: input.activePromotionImpacts.length,
+    stoCases: input.outstandingStoCases || 0,
     priorities: input.existingActivePriorities.length
   });
   
@@ -120,6 +122,7 @@ export const generateRecommendationForProduct = async (
     }
 
     const configuration = await getDecisionConfiguration(tenantId, siteId);
+    const outstandingStoCases = await getOutstandingStoCasesForProduct(tenantId, siteId, productId);
 
     const inputSnapshot: DecisionInputSnapshot = {
       tenantId,
@@ -133,6 +136,7 @@ export const generateRecommendationForProduct = async (
       productionContext,
       activePromotionImpacts,
       existingActivePriorities: [],
+      outstandingStoCases,
       evaluationTime: new Date(),
       configuration
     };

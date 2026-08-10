@@ -1,4 +1,5 @@
 import { db } from '../../../config/firebase';
+import { logAuditEvent } from '../../../services/auditService';
 import { 
   collection, 
   doc, 
@@ -140,6 +141,31 @@ export const adjustInventory = async (params: IncreaseDecreaseParams, type: 'INC
 
     // Trigger recommendation refresh for affected product
     generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+
+    // Log Audit Event
+    try {
+      await logAuditEvent({
+        tenantId: params.tenantId,
+        siteId: params.siteId,
+        eventType: `INVENTORY_${type}`,
+        entityType: 'InventoryBalance',
+        entityId: params.productId,
+        summary: `${type === 'INCREASE' ? 'Increased' : 'Decreased'} inventory for product ${params.productCodeSnapshot} by ${params.quantity} in location ${params.locationCodeSnapshot}. Reason: ${params.reason}. Ref: ${params.reference}`,
+        newValue: {
+          productId: params.productId,
+          productCode: params.productCodeSnapshot,
+          locationId: params.locationId,
+          locationCode: params.locationCodeSnapshot,
+          quantity: params.quantity,
+          adjustmentType: type,
+          reason: params.reason,
+          reference: params.reference
+        },
+        performedBy: params.performedBy
+      });
+    } catch (auditErr) {
+      console.warn('Failed to log inventory adjust audit event:', auditErr);
+    }
 
     return { success: true };
   } catch (error: any) {
@@ -285,6 +311,32 @@ export const transferInventory = async (params: TransferParams): Promise<Service
 
     // Trigger recommendation refresh for affected product
     generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+
+    // Log Audit Event
+    try {
+      await logAuditEvent({
+        tenantId: params.tenantId,
+        siteId: params.siteId,
+        eventType: 'INVENTORY_TRANSFER',
+        entityType: 'InventoryBalance',
+        entityId: params.productId,
+        summary: `Transferred ${params.quantity} of product ${params.productCodeSnapshot} from ${params.fromLocationCodeSnapshot} to ${params.toLocationCodeSnapshot}. Reason: ${params.reason}. Ref: ${params.reference}`,
+        newValue: {
+          productId: params.productId,
+          productCode: params.productCodeSnapshot,
+          fromLocationId: params.fromLocationId,
+          fromLocationCode: params.fromLocationCodeSnapshot,
+          toLocationId: params.toLocationId,
+          toLocationCode: params.toLocationCodeSnapshot,
+          quantity: params.quantity,
+          reason: params.reason,
+          reference: params.reference
+        },
+        performedBy: params.performedBy
+      });
+    } catch (auditErr) {
+      console.warn('Failed to log inventory transfer audit event:', auditErr);
+    }
 
     return { success: true };
   } catch (error: any) {

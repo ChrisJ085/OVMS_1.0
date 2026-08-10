@@ -1,5 +1,5 @@
 import { ProductPlanningRule, PlanningBandStatus } from './planning';
-import { ProductProductionContext } from './production';
+import { ProductProductionContext, NorthfleetStoRequirement } from './production';
 import { PromotionProductRule, PromotionWithPhase } from './promotion';
 import { InventoryBalance } from './inventory';
 
@@ -108,6 +108,8 @@ export interface DecisionInputSnapshot {
   productionContext: ProductProductionContext | null;
   activePromotionImpacts: { rule: PromotionProductRule; promotion: PromotionWithPhase }[];
   existingActivePriorities: any[]; 
+  outstandingStoCases?: number;
+  stoRequirements?: NorthfleetStoRequirement[];
   evaluationTime: Date;
   configuration?: DecisionConfiguration | null;
 }

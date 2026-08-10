@@ -223,21 +223,24 @@ describe('siteService - fetchUserPermittedSites', () => {
       tenantId: 'tenant-NCP',
     } as unknown as UserProfile;
 
+    const mockDocs = [
+      {
+        id: 's1',
+        data: () => ({ tenantId: 'tenant-NCP', siteName: 'Site 1', active: true }),
+      },
+      {
+        id: 's2',
+        data: () => ({ tenantId: 'tenant-NCP', siteName: 'Site 2', status: 'ACTIVE' }),
+      },
+      {
+        id: 's3',
+        data: () => ({ tenantId: 'tenant-OTHER', siteName: 'Other Tenant Site', active: true }),
+      },
+    ];
+
     vi.mocked(getDocs).mockResolvedValueOnce({
-      docs: [
-        {
-          id: 's1',
-          data: () => ({ tenantId: 'tenant-NCP', siteName: 'Site 1', active: true }),
-        },
-        {
-          id: 's2',
-          data: () => ({ tenantId: 'tenant-NCP', siteName: 'Site 2', status: 'ACTIVE' }),
-        },
-        {
-          id: 's3',
-          data: () => ({ tenantId: 'tenant-OTHER', siteName: 'Other Tenant Site', active: true }),
-        },
-      ],
+      docs: mockDocs,
+      forEach: (cb: any) => mockDocs.forEach(cb),
     } as any);
 
     const sites = await fetchUserPermittedSites(profile);
@@ -258,6 +261,6 @@ describe('siteService - fetchUserPermittedSites', () => {
 
     vi.mocked(getDoc).mockRejectedValueOnce(permErr);
 
-    await expect(fetchUserPermittedSites(profile)).rejects.toThrow('permission-denied');
+    await expect(fetchUserPermittedSites(profile)).rejects.toThrow('Missing or insufficient permissions');
   });
 });

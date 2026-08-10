@@ -43,6 +43,9 @@ let mockEntriesDocs: any[] = [];
 let mockQueryError: Error | null = null;
 
 vi.mock('firebase/firestore', () => ({
+  doc: vi.fn(),
+  getFirestore: vi.fn(),
+  getDoc: vi.fn(() => Promise.resolve({ exists: () => false })),
   collection: vi.fn(),
   query: vi.fn(),
   where: vi.fn(),
@@ -53,9 +56,9 @@ vi.mock('firebase/firestore', () => ({
       errCb(mockQueryError);
       return () => {};
     }
-    // Simulate initial snapshot
+    // Simulate initial snapshot supporting both collection and doc queries
     let docs = mockPrioritiesDocs;
-    cb({ docs });
+    cb({ docs, exists: () => false, data: () => ({}) });
     return () => {};
   },
   getDocs: async () => {
@@ -106,7 +109,7 @@ describe('OperationalOverviewPage Test Suite', () => {
     );
 
     expect(screen.getByText('Operational Overview')).toBeInTheDocument();
-    expect(screen.getByText(/Milton Keynes/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Milton Keynes/i)[0]).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review Recs/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Import SAP Plan/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Create Priority/i })).toBeInTheDocument();
@@ -183,7 +186,7 @@ describe('OperationalOverviewPage Test Suite', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText(/Northampton Hub/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Northampton Hub/i)[0]).toBeInTheDocument();
   });
 
   it('displays error state when queries fail', async () => {

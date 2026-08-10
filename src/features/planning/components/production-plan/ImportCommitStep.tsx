@@ -20,12 +20,16 @@ export const ImportCommitStep: React.FC<ImportCommitStepProps> = ({
   const { tenantId, siteId } = useSiteContext();
   const [generating, setGenerating] = useState(false);
   const [genMessage, setGenMessage] = useState<string | null>(null);
+  const [regenProgress, setRegenProgress] = useState<{ current: number; total: number; productCode?: string } | null>(null);
 
   const handleRegenerate = async () => {
     setGenerating(true);
     setGenMessage(null);
+    setRegenProgress({ current: 0, total: 1 });
     try {
-      const res = await refreshSiteRecommendations(tenantId, siteId, true);
+      const res = await refreshSiteRecommendations(tenantId, siteId, true, (progress) => {
+        setRegenProgress(progress);
+      });
       if (res.success) {
         setGenMessage(`Regenerated recommendations for ${res.data?.generatedCount || 0} product(s). The latest production plan is now active in the Recommendation Workspace and TV Dashboard!`);
       } else {
@@ -35,6 +39,7 @@ export const ImportCommitStep: React.FC<ImportCommitStepProps> = ({
       setGenMessage(`Error: ${e.message}`);
     } finally {
       setGenerating(false);
+      setRegenProgress(null);
     }
   };
 
@@ -69,6 +74,38 @@ export const ImportCommitStep: React.FC<ImportCommitStepProps> = ({
               </p>
             </div>
           </div>
+
+          {generating && regenProgress && (
+            <div className="space-y-2 p-3 bg-slate-900/90 rounded-lg border border-slate-800 animate-in fade-in duration-200">
+              <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 text-brand-400 animate-spin" />
+                  Evaluating product recommendations...
+                </span>
+                <span className="text-brand-400 font-mono font-semibold">
+                  {regenProgress.total > 0 ? Math.round((regenProgress.current / regenProgress.total) * 100) : 0}%
+                </span>
+              </div>
+
+              <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-brand-500 h-2 rounded-full transition-all duration-300 ease-out"
+                  style={{
+                    width: `${Math.min(100, Math.max(5, regenProgress.total > 0 ? Math.round((regenProgress.current / regenProgress.total) * 100) : 5))}%`
+                  }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>Product {regenProgress.current} of {regenProgress.total}</span>
+                {regenProgress.productCode && (
+                  <span className="font-mono text-slate-300 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+                    {regenProgress.productCode}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {genMessage && (
             <div className="p-2.5 bg-brand-500/10 border border-brand-500/30 rounded text-xs text-brand-300">

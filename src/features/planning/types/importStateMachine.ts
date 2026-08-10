@@ -29,14 +29,14 @@ export function isAllowedImportTransition(current: ImportState, next: ImportStat
     case 'VALIDATING':
       return next === 'REVIEW' || next === 'FAILED' || next === 'SELECT_FILE';
     case 'REVIEW':
-      return next === 'READY_TO_COMMIT' || next === 'VALIDATING' || next === 'SELECT_FILE' || next === 'FAILED';
+      return next === 'COMMITTING' || next === 'COMMITTED' || next === 'READY_TO_COMMIT' || next === 'VALIDATING' || next === 'SELECT_FILE' || next === 'FAILED';
     case 'READY_TO_COMMIT':
-      return next === 'COMMITTING' || next === 'REVIEW' || next === 'SELECT_FILE' || next === 'FAILED';
+      return next === 'COMMITTING' || next === 'COMMITTED' || next === 'REVIEW' || next === 'SELECT_FILE' || next === 'FAILED';
     case 'COMMITTING':
       return next === 'COMMITTED' || next === 'FAILED';
     case 'COMMITTED':
     case 'FAILED':
-      return next === 'SELECT_FILE';
+      return next === 'SELECT_FILE' || next === 'VALIDATING' || next === 'REVIEW';
     default:
       return false;
   }

@@ -100,6 +100,7 @@ export const ProductionPlanPage: React.FC = () => {
           onPrevWeek={prevWeek}
           onNextWeek={nextWeek}
           onResetWeek={resetToCurrentWeek}
+          onRefreshPlan={refreshPlan}
         />
       )}
 

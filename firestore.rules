@@ -325,6 +325,20 @@ service cloud.firestore {
                                 (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
+    match /northfleetStoRequirements/{id} {
+      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
+      allow create, update, delete: if isSuperuser() || 
+                                isTenantAdmin(request.resource.data.tenantId) ||
+                                ((isPlanner(request.resource.data.tenantId)) && 
+                                 isAssignedToSite(getSiteId(request.resource)));
+    }
+    match /northfleetStoImports/{id} {
+      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
+      allow create, update, delete: if isSuperuser() || 
+                                isTenantAdmin(request.resource.data.tenantId) ||
+                                ((isPlanner(request.resource.data.tenantId)) && 
+                                 isAssignedToSite(getSiteId(request.resource)));
+    }
     match /productionEvents/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
       allow create, update: if isSuperuser() || 

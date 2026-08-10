@@ -5,6 +5,8 @@ import { Product, ProductConfiguration } from '../../../../types/product';
 import { ProductCategory, UnitOfMeasure, Destination } from '../../../../types/configuration';
 import { createProduct, updateProduct } from '../../services/productService';
 import { useSiteContext } from '../../../../contexts/SiteContext';
+import { useAuth } from '../../../auth/context/AuthContext';
+import { logAuditEvent } from '../../../../services/auditService';
 import { Plus, Trash2 } from 'lucide-react';
 
 interface ProductModalProps {
@@ -20,6 +22,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   isOpen, onClose, item, categories, units, destinations 
 }) => {
   const { tenantId, siteId } = useSiteContext();
+  const { userProfile } = useAuth();
+  const userFullName = userProfile?.fullName || 'Production Planner';
   const [formData, setFormData] = useState<Partial<Product>>({
     operationallyRelevant: true,
     configurations: []
@@ -87,7 +91,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     setSubmitting(true);
     
     let result;
-    if (item?.id) {
+    const isUpdate = !!item?.id;
+    if (isUpdate) {
       result = await updateProduct(item.id, formData, tenantId);
     } else {
       result = await createProduct({
@@ -98,6 +103,24 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     
     setSubmitting(false);
     if (result.success) {
+      // Log Audit Event
+      try {
+        await logAuditEvent({
+          tenantId,
+          siteId,
+          eventType: isUpdate ? 'PRODUCT_UPDATE' : 'PRODUCT_CREATE',
+          entityType: 'Product',
+          entityId: isUpdate ? item.id : (result.data || ''),
+          summary: isUpdate
+            ? `Updated Product: ${formData.productCode || item.productCode} (${formData.description || item.description})`
+            : `Created Product: ${formData.productCode} (${formData.description})`,
+          newValue: formData,
+          performedBy: userFullName
+        });
+      } catch (auditErr) {
+        console.warn('Failed to log product audit event:', auditErr);
+      }
+
       onClose();
     } else {
       alert(result.error);

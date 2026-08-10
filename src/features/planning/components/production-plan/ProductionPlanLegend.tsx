@@ -35,6 +35,24 @@ export const ProductionPlanLegend: React.FC = () => {
         <span className="font-medium text-slate-200">Scheduled Clean</span>
       </div>
 
+      {/* Maintenance Shutdown */}
+      <div className="flex items-center gap-2">
+        <span
+          className="w-3.5 h-3.5 rounded-sm border border-slate-900 shadow-sm shrink-0"
+          style={{ backgroundColor: PRODUCTION_EVENT_COLOURS.MAINT_SHUT }}
+        />
+        <span className="font-medium text-slate-200">Maintenance Shutdown</span>
+      </div>
+
+      {/* RSR Trial */}
+      <div className="flex items-center gap-2">
+        <span
+          className="w-3.5 h-3.5 rounded-sm border border-slate-900 shadow-sm shrink-0"
+          style={{ backgroundColor: PRODUCTION_EVENT_COLOURS.RSR_TRIAL }}
+        />
+        <span className="font-medium text-slate-200">RSR Trial</span>
+      </div>
+
       {/* Multi Event Example */}
       <div className="flex items-center gap-2">
         <span

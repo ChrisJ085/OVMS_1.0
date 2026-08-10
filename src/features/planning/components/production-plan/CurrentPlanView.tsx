@@ -28,6 +28,7 @@ interface CurrentPlanViewProps {
   onPrevWeek: () => void;
   onNextWeek: () => void;
   onResetWeek: () => void;
+  onRefreshPlan?: () => void;
 }
 
 export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
@@ -40,7 +41,8 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
   categories = [],
   onPrevWeek,
   onNextWeek,
-  onResetWeek
+  onResetWeek,
+  onRefreshPlan
 }) => {
   const endWeekUTC = new Date(currentWeekStart.getTime() + 6 * 24 * 60 * 60 * 1000);
 
@@ -298,12 +300,14 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
       >
         <ProductionPlanGrid
           productionLines={filteredProductionLines}
-          activeEntries={filteredEntries}
+          fullActiveEntries={activeEntries}
+          displayEntries={filteredEntries}
           gridNotes={gridNotes}
           gridDates={gridDates}
           products={products}
           categories={categories}
           isFiltered={isFiltered}
+          onRefreshPlan={onRefreshPlan}
         />
       </SectionCard>
     </div>
