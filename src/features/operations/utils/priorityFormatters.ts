@@ -21,6 +21,24 @@ export const getDestinationLabel = (
   return isRawId(id) ? 'Destination' : id;
 };
 
+export const getDestinationCodeLabel = (
+  id: string | null | undefined, 
+  destinations: Destination[],
+  snapshot?: string
+): string => {
+  if (!id) return '-';
+  const match = destinations.find(d => d.id === id || d.destinationCode === id || d.destinationName === id);
+  if (match && match.destinationCode) {
+    return match.destinationCode.toUpperCase();
+  }
+  if (snapshot && !isRawId(snapshot)) {
+    const matchParen = snapshot.match(/\(([^)]+)\)/);
+    if (matchParen && matchParen[1]) return matchParen[1].trim().toUpperCase();
+    return snapshot.toUpperCase();
+  }
+  return isRawId(id) ? 'DEST' : id.toUpperCase();
+};
+
 export const getActionTypeLabel = (
   id: string | null | undefined, 
   actionTypes: ActionType[],
@@ -57,12 +75,9 @@ export const formatQuantityInPallets = (
   casesPerPallet: number | null | undefined
 ): string => {
   if (cases === null || cases === undefined || cases <= 0) return '0 Pallets';
-  const cpp = casesPerPallet && casesPerPallet > 0 ? casesPerPallet : 100;
-  const rawPallets = cases / cpp;
-  const floored = Math.floor(rawPallets);
-  // Round down to nearest even number
-  const evenPallets = Math.floor(floored / 2) * 2;
-  return `${evenPallets} ${evenPallets === 1 ? 'Pallet' : 'Pallets'}`;
+  if (!casesPerPallet || casesPerPallet <= 0) return `${cases.toLocaleString()} Cases`;
+  const rawPallets = Math.round(cases / casesPerPallet);
+  return `${rawPallets} ${rawPallets === 1 ? 'Pallet' : 'Pallets'}`;
 };
 
 export const isManualInstruction = (instruction?: string | null): boolean => {

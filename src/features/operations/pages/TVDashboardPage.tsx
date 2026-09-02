@@ -13,7 +13,8 @@ import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { 
   getActionTypeLabel, 
-  getDestinationLabel, 
+  getDestinationLabel,
+  getDestinationCodeLabel, 
   getPriorityLevelLabel, 
   formatQuantityInPallets, 
   isManualInstruction 
@@ -21,7 +22,7 @@ import {
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play, 
   LayoutGrid, AlertCircle, TrendingDown,
-  Wifi, WifiOff, Settings
+  Wifi, WifiOff, Settings, Package, Info
 } from 'lucide-react';
 
 // Constants
@@ -35,21 +36,114 @@ const PRIORITY_WEIGHTS: Record<string, number> = {
   LOW: 1
 };
 
-const PRIORITY_COLORS: Record<string, { border: string, bg: string, text: string }> = {
-  CRITICAL: { border: 'border-red-500/50', bg: 'bg-red-500/10', text: 'text-red-400' },
-  HIGH: { border: 'border-orange-500/50', bg: 'bg-orange-500/10', text: 'text-orange-400' },
-  NORMAL: { border: 'border-blue-500/30', bg: 'bg-blue-500/10', text: 'text-blue-400' },
-  LOW: { border: 'border-slate-600', bg: 'bg-slate-800/50', text: 'text-slate-400' },
+const getPriorityDisplayLabel = (
+  levelId: string, 
+  priorityLevels: PriorityLevel[], 
+  snapshot?: string
+): string => {
+  const rawLabel = getPriorityLevelLabel(levelId, priorityLevels, snapshot).toUpperCase();
+  if (rawLabel.includes('CRITICAL')) return 'CRITICAL';
+  if (rawLabel.includes('HIGH') || rawLabel.includes('URGENT')) return 'URGENT';
+  if (rawLabel.includes('NORMAL')) return 'STANDARD';
+  if (rawLabel.includes('LOW')) return 'LOW PRIORITY';
+  return rawLabel;
 };
 
-const STATUS_ICONS: Record<string, any> = {
-  ACTIVE: AlertCircle,
-  ACKNOWLEDGED: CheckCircle,
-  IN_PROGRESS: Play,
-  WAITING: Clock,
-  BLOCKED: Ban,
-  PARTIALLY_COMPLETE: TrendingDown,
-  COMPLETED: CheckCircle
+interface TileTheme {
+  border: string;
+  bg: string;
+  badgeBg: string;
+  actionBg: string;
+  productCodeText: string;
+  accentText: string;
+  iconContainer: string;
+  statusBadge: string;
+}
+
+const getTileTheme = (
+  levelLabel: string, 
+  priorityStatus: string
+): TileTheme => {
+  const isBlocked = priorityStatus === 'BLOCKED';
+  const isCompleted = priorityStatus === 'COMPLETED';
+
+  if (isBlocked) {
+    return {
+      border: 'border-red-500/90',
+      bg: 'bg-red-950/40',
+      badgeBg: 'bg-red-600 text-white',
+      actionBg: 'bg-red-600 text-white',
+      productCodeText: 'text-red-300',
+      accentText: 'text-red-400',
+      iconContainer: 'bg-red-900/50 text-red-300 border-red-700/60',
+      statusBadge: 'bg-red-900/80 text-red-200'
+    };
+  }
+
+  if (isCompleted) {
+    return {
+      border: 'border-emerald-500/70',
+      bg: 'bg-emerald-950/30',
+      badgeBg: 'bg-emerald-600 text-white',
+      actionBg: 'bg-emerald-600 text-white',
+      productCodeText: 'text-emerald-400',
+      accentText: 'text-emerald-400',
+      iconContainer: 'bg-emerald-900/50 text-emerald-300 border-emerald-700/60',
+      statusBadge: 'bg-emerald-900/80 text-emerald-200'
+    };
+  }
+
+  const normalized = levelLabel.toUpperCase();
+  if (normalized.includes('CRITICAL')) {
+    return {
+      border: 'border-red-500/80',
+      bg: 'bg-red-950/30',
+      badgeBg: 'bg-red-600 text-white',
+      actionBg: 'bg-red-600 text-white',
+      productCodeText: 'text-red-400',
+      accentText: 'text-red-400',
+      iconContainer: 'bg-red-900/50 text-red-300 border-red-700/60',
+      statusBadge: 'bg-red-900/80 text-red-200'
+    };
+  }
+
+  if (normalized.includes('HIGH') || normalized.includes('URGENT')) {
+    return {
+      border: 'border-amber-500/70',
+      bg: 'bg-amber-950/30',
+      badgeBg: 'bg-amber-600 text-white',
+      actionBg: 'bg-amber-600 text-white',
+      productCodeText: 'text-amber-400',
+      accentText: 'text-amber-400',
+      iconContainer: 'bg-amber-900/50 text-amber-300 border-amber-700/60',
+      statusBadge: 'bg-amber-900/80 text-amber-200'
+    };
+  }
+
+  if (normalized.includes('LOW')) {
+    return {
+      border: 'border-slate-700',
+      bg: 'bg-slate-900/80',
+      badgeBg: 'bg-slate-700 text-slate-200',
+      actionBg: 'bg-slate-700 text-slate-100',
+      productCodeText: 'text-slate-200',
+      accentText: 'text-slate-400',
+      iconContainer: 'bg-slate-800 text-slate-400 border-slate-700',
+      statusBadge: 'bg-slate-800 text-slate-300'
+    };
+  }
+
+  // NORMAL / STANDARD default
+  return {
+    border: 'border-blue-500/60',
+    bg: 'bg-blue-950/25',
+    badgeBg: 'bg-blue-600 text-white',
+    actionBg: 'bg-blue-600 text-white',
+    productCodeText: 'text-blue-400',
+    accentText: 'text-blue-400',
+    iconContainer: 'bg-blue-900/50 text-blue-300 border-blue-700/60',
+    statusBadge: 'bg-blue-900/80 text-blue-200'
+  };
 };
 
 export const TVDashboardPage: React.FC = () => {
@@ -264,11 +358,10 @@ export const TVDashboardPage: React.FC = () => {
     if (count <= 2) return { cols: 2, rows: 1, itemsPerPage: 2 };
     if (count <= 4) return { cols: 2, rows: 2, itemsPerPage: 4 };
     if (count <= 6) return { cols: 3, rows: 2, itemsPerPage: 6 };
-    if (count <= 8) return { cols: 4, rows: 2, itemsPerPage: 8 };
+    if (count <= 9) return { cols: 3, rows: 3, itemsPerPage: 9 };
     if (count <= 12) return { cols: 4, rows: 3, itemsPerPage: 12 };
     if (count <= 16) return { cols: 4, rows: 4, itemsPerPage: 16 };
-    if (count <= 20) return { cols: 5, rows: 4, itemsPerPage: 20 };
-    return { cols: 5, rows: 5, itemsPerPage: 25 };
+    return { cols: 4, rows: 4, itemsPerPage: 16 };
   }, [priorities.length]);
 
   const totalPages = Math.ceil(priorities.length / gridConfig.itemsPerPage) || 1;
@@ -288,6 +381,8 @@ export const TVDashboardPage: React.FC = () => {
     currentPage * gridConfig.itemsPerPage, 
     (currentPage + 1) * gridConfig.itemsPerPage
   );
+
+  const compactMode = gridConfig.cols >= 4 || gridConfig.rows >= 3;
 
   // Derived metrics
   const stats = useMemo(() => {
@@ -372,10 +467,10 @@ export const TVDashboardPage: React.FC = () => {
   return (
     <div className="h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden flex flex-col font-sans select-none">
       {/* Header */}
-      <header className="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 shrink-0">
+      <header className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex flex-col">
-            <h1 className="text-xl font-bold text-slate-100 uppercase tracking-wider">Operations Dashboard</h1>
+            <h1 className="text-lg font-bold text-slate-100 uppercase tracking-wider">Operations Dashboard</h1>
             <span className="text-brand-400 font-semibold text-xs tracking-widest">{displaySiteLabel}</span>
           </div>
           {!isConnected && (
@@ -410,7 +505,7 @@ export const TVDashboardPage: React.FC = () => {
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Priorities Grid */}
-        <div className="flex-1 p-4 flex flex-col overflow-hidden">
+        <div className="flex-1 p-3 sm:p-4 flex flex-col overflow-hidden">
           <div 
             className="flex-1 grid gap-3 overflow-hidden"
             style={{
@@ -420,104 +515,137 @@ export const TVDashboardPage: React.FC = () => {
           >
             {visiblePriorities.map(p => {
               const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
-              const pColor = PRIORITY_COLORS[levelLabel] || PRIORITY_COLORS[p.priorityLevelId] || PRIORITY_COLORS.NORMAL;
-              const StatusIcon = STATUS_ICONS[p.priorityStatus] || AlertCircle;
+              const displayLevelLabel = getPriorityDisplayLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+              const theme = getTileTheme(levelLabel, p.priorityStatus);
+
               const isBlocked = p.priorityStatus === 'BLOCKED';
               const isCompleted = p.priorityStatus === 'COMPLETED';
 
-              // Product CPP matching for pallet calculation
+              // Icon resolution based on priority and status
+              const IconComponent = isBlocked 
+                ? Ban 
+                : isCompleted 
+                ? CheckCircle 
+                : (levelLabel.toUpperCase().includes('CRITICAL') || levelLabel.toUpperCase().includes('HIGH')) 
+                ? AlertTriangle 
+                : Package;
+
+              // Product CPP matching for pallet calculation - CRITICAL: No fallback to 100!
               const productMatch = products.find(prod => 
                 (p.productId && prod.id === p.productId) || 
-                (prod.productCode === p.productCodeSnapshot)
+                (p.productCodeSnapshot && prod.productCode === p.productCodeSnapshot)
               );
               const cpp = productMatch?.casesPerPallet || 
                 productMatch?.configurations?.[0]?.casesPerPallet || 
-                100;
-              
-              const palletQuantityText = formatQuantityInPallets(p.requestedQuantity, cpp);
-              const hasManualInstruction = isManualInstruction(p.instruction);
+                null;
+
+              let qtyValue = '0';
+              let unitLabel = 'PALLETS';
+              let isCases = false;
+
+              if (p.requestedQuantity && p.requestedQuantity > 0) {
+                if (cpp && cpp > 0) {
+                  const pallets = Math.round(p.requestedQuantity / cpp);
+                  qtyValue = pallets.toLocaleString();
+                  unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
+                } else {
+                  qtyValue = p.requestedQuantity.toLocaleString();
+                  unitLabel = 'CASES';
+                  isCases = true;
+                }
+              }
+
+              const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
+              const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
+
+              const destLabel = p.destinationId
+                ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
+                : 'NO DESTINATION';
+
+              const hasManualNote = isManualInstruction(p.instruction);
 
               return (
                 <div 
                   key={p.id} 
                   className={`
-                    rounded-lg border-2 p-3 flex flex-col justify-between overflow-hidden transition-all
-                    ${isBlocked ? 'border-red-500 bg-red-950/30' : isCompleted ? 'border-green-500/30 bg-green-950/20' : `bg-slate-900 ${pColor.border}`}
+                    relative rounded-xl border-2 px-3 py-2 sm:px-4 sm:py-2.5 flex flex-col justify-between overflow-hidden transition-all shadow-md
+                    ${theme.border} ${theme.bg}
                   `}
                 >
-                  {/* Card Header: Product & Priority Level */}
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={`p-1.5 rounded-lg shrink-0 ${isBlocked ? 'bg-red-500 text-white animate-pulse' : isCompleted ? 'bg-green-500/20 text-green-400' : pColor.bg} ${isBlocked ? '' : pColor.text}`}>
-                        <StatusIcon className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-mono font-bold text-lg text-slate-100 leading-tight truncate">
-                          {p.productCodeSnapshot}
-                        </div>
-                        <div className="text-xs text-slate-400 font-medium truncate">
-                          {p.descriptionSnapshot}
-                        </div>
-                      </div>
+                  {/* Card Header: Top Right Priority Badge */}
+                  <div className="flex items-center justify-between gap-2 mb-1 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                      {/* Optional status badge for secondary status */}
+                      {p.priorityStatus !== 'ACTIVE' && p.priorityStatus !== 'COMPLETED' && p.priorityStatus !== 'BLOCKED' && (
+                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${theme.statusBadge}`}>
+                          {p.priorityStatus.replace(/_/g, ' ')}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className={`text-xs font-extrabold tracking-wider ${pColor.text}`}>
-                        {levelLabel}
-                      </div>
-                      <div className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded mt-0.5 inline-block
-                        ${isBlocked ? 'bg-red-500 text-white' : isCompleted ? 'bg-green-500 text-slate-900' : 'bg-slate-800 text-slate-300'}
-                      `}>
-                        {p.priorityStatus.replace(/_/g, ' ')}
-                      </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-auto">
+                      <span className={`text-xs font-extrabold uppercase px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md tracking-wider shadow-sm ${theme.badgeBg}`}>
+                        {p.priorityStatus === 'COMPLETED' ? 'READY' : isBlocked ? 'BLOCKED' : displayLevelLabel}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Card Core Details: Action, Quantity (in Pallets) & Destination */}
-                  <div className="grid grid-cols-2 gap-2 my-1 items-center">
-                    <div>
-                      <div className="text-slate-500 text-[9px] uppercase tracking-widest font-bold">Action</div>
-                      <div className="text-base font-semibold text-brand-300 truncate">
-                        {getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel)}
+                  {/* Card Main Body: Left (Product & Action) | Center (Quantity) | Right (Destination) */}
+                  <div className="grid grid-cols-1 md:grid-cols-[1.3fr_auto_1fr_1.3fr] items-center gap-2 sm:gap-3 my-auto min-h-0">
+                    
+                    {/* LEFT: Product Identity & Action */}
+                    <div className="flex flex-col justify-between space-y-1.5 min-w-0">
+                      <div className="min-w-0 flex-1">
+                        <div className={`font-mono font-black tracking-tight truncate ${compactMode ? 'text-2xl sm:text-3xl' : 'text-3xl sm:text-4xl lg:text-5xl'} ${theme.productCodeText}`}>
+                          {p.productCodeSnapshot || 'SKU'}
+                        </div>
+                        <div className={`text-slate-300 font-medium leading-tight line-clamp-2 mt-0.5 ${compactMode ? 'text-xs' : 'text-xs sm:text-sm'}`}>
+                          {p.descriptionSnapshot || 'Product Description'}
+                        </div>
+                      </div>
+
+                      <div className="pt-0.5">
+                        <span className={`inline-block font-extrabold uppercase ${compactMode ? 'px-2.5 py-0.5 text-xs' : 'px-3.5 py-1 text-xs sm:text-sm'} rounded-lg text-center tracking-wider shadow-sm select-none ${theme.actionBg}`}>
+                          {isBlocked ? 'BLOCKED' : actionText}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-slate-500 text-[9px] uppercase tracking-widest font-bold">Quantity & Dest</div>
-                      <div className="text-base font-mono font-bold text-slate-100 truncate" title={`${p.requestedQuantity || 0} cases`}>
-                        {palletQuantityText} {p.destinationId && (
-                          <span className="text-slate-300 text-xs ml-1 font-sans font-normal">
-                            → {getDestinationLabel(p.destinationId, destinations, p.destinationLabel)}
-                            {p.overflowDestinationId && (
-                              <span className="text-amber-400/80 text-[10px] ml-1" title="Overflow Destination">
-                                (OF: {getDestinationLabel(p.overflowDestinationId, destinations, p.overflowDestinationLabel)})
-                              </span>
-                            )}
-                          </span>
-                        )}
+
+                    {/* Vertical Separator Line */}
+                    <div className="hidden md:block w-px bg-slate-700/60 self-stretch my-0.5 shrink-0" />
+
+                    {/* CENTER: Quantity */}
+                    <div className="flex flex-col items-center justify-center text-center px-1">
+                      <div className={`font-mono font-black tracking-tight text-slate-100 leading-none ${compactMode ? 'text-3xl sm:text-4xl' : 'text-5xl sm:text-6xl'}`}>
+                        {qtyValue}
                       </div>
+                      <div className={`font-extrabold uppercase tracking-widest mt-1 ${compactMode ? 'text-[10px]' : 'text-xs sm:text-sm'} ${theme.accentText}`}>
+                        {unitLabel}
+                      </div>
+                      {isCases && (
+                        <span className="text-[10px] text-slate-400 font-normal mt-0.5">CPP unavailable</span>
+                      )}
                     </div>
+
+                    {/* RIGHT: Destination */}
+                    <div className="flex items-center justify-start md:justify-center gap-2 sm:gap-3 min-w-0">
+                      <span className={`font-black shrink-0 ${compactMode ? 'text-2xl' : 'text-3xl sm:text-4xl'} ${theme.accentText}`}>
+                        →
+                      </span>
+                      <span className={`font-black uppercase tracking-tight text-slate-100 truncate ${compactMode ? 'text-xl sm:text-2xl' : 'text-3xl sm:text-4xl lg:text-5xl'}`}>
+                        {destLabel}
+                      </span>
+                    </div>
+
                   </div>
 
-                  {/* Manual Instruction Box - Only rendered if manually added by user */}
-                  {hasManualInstruction && (
-                    <div className="bg-slate-950/70 p-2 rounded border border-slate-800/80 mt-1 shrink-0">
-                      <div className="flex justify-between items-center mb-0.5">
-                        <span className="text-slate-400 text-[9px] uppercase font-bold tracking-wider">Instruction</span>
-                        {p.requestedQuantity && p.progressQuantity > 0 && (
-                          <span className="text-[10px] font-mono font-bold text-brand-400">
-                            {p.progressPercent}% ({p.progressQuantity}/{p.requestedQuantity})
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-200 font-medium leading-snug line-clamp-2">
-                        {isBlocked ? (
-                          <span className="text-red-400 flex items-center gap-1.5">
-                            <Ban className="w-3.5 h-3.5 shrink-0" />
-                            Blocked
-                          </span>
-                        ) : (
-                          p.instruction
-                        )}
-                      </div>
+                  {/* Manual Instruction Strip - Only rendered if manual note exists */}
+                  {hasManualNote && (
+                    <div className="mt-1.5 pt-1.5 border-t border-slate-700/60 text-xs font-medium text-slate-200 flex items-center gap-2 bg-slate-950/60 rounded-lg p-1.5 px-2.5 shrink-0">
+                      <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="truncate">
+                        <strong className="text-amber-300 font-bold uppercase mr-1">NOTE:</strong>
+                        {p.instruction}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -547,8 +675,8 @@ export const TVDashboardPage: React.FC = () => {
           )}
         </div>
 
-        {/* Side Panel - Execution Summary (Compact Width) */}
-        <div className="w-56 lg:w-60 bg-slate-900 border-l border-slate-800 p-4 flex flex-col gap-4 shrink-0 z-10 overflow-y-auto">
+        {/* Side Panel - Execution Summary */}
+        <div className="w-48 lg:w-52 bg-slate-900 border-l border-slate-800 p-4 flex flex-col gap-4 shrink-0 z-10 overflow-y-auto">
           <div>
             <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
               <LayoutGrid className="w-3.5 h-3.5" />

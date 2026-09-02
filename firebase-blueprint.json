@@ -120,9 +120,37 @@
         "status": { "type": "string", "enum": ["VALIDATED", "COMMITTED", "FAILED"] }
       },
       "required": ["tenantId", "siteId", "importedBy", "rowCount", "status"]
+    },
+    "SiteRecommendationRun": {
+      "title": "SiteRecommendationRun",
+      "description": "Tracks active recommendation workspace generation runs and last generated timestamp/user for a site.",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "status": { "type": "string", "enum": ["IDLE", "IN_PROGRESS", "COMPLETED", "FAILED"] },
+        "startedAt": { "type": "string" },
+        "startedBy": { "type": "string" },
+        "startedByName": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "completedBy": { "type": "string" },
+        "completedByName": { "type": "string" },
+        "totalProducts": { "type": "number" },
+        "currentProductIndex": { "type": "number" },
+        "currentProductCode": { "type": "string" },
+        "generatedCount": { "type": "number" },
+        "conflictsCount": { "type": "number" },
+        "error": { "type": "string" },
+        "lastUpdatedAt": { "type": "string" }
+      },
+      "required": ["tenantId", "siteId", "status"]
     }
   },
   "firestore": {
+    "siteRecommendationRuns/{id}": {
+      "schema": "#/entities/SiteRecommendationRun",
+      "description": "Real-time state and last generation metadata for site recommendations."
+    },
     "northfleetStoRequirements/{id}": {
       "schema": "#/entities/NorthfleetStoRequirement",
       "description": "Committed Northfleet STO requirements."

@@ -136,76 +136,51 @@ export const subscribeToProductionEvents = (
   );
 };
 
-export const obtainCurrentProductionContext = async (
+export const buildProductProductionContext = (
   tenantId: string,
   siteId: string,
   productId: string,
+  entries: ProductionPlanEntry[],
+  activeProductionNotes: ProductionLinePlanNote[] = [],
+  importUploadedAtMap: Map<string, Date> = new Map(),
   evaluationDate?: Date
-): Promise<ProductProductionContext> => {
-  if (!db) {
-    return {
-      productId,
-      isScheduled: false,
-      isCurrentlyInProduction: false,
-      currentProductionLine: null,
-      currentProductionDate: null,
-      plannedCasesToday: 0,
-      plannedPalletsToday: 0,
-      plannedCasesNext7Days: 0,
-      plannedPalletsNext7Days: 0,
-      nextProductionDate: null,
-      daysUntilNextProduction: null,
-      lastProductionDate: null,
-      plannerProductionStatus: null,
-      activeProductionNotes: [],
-      hasDelay: false,
-      hasShutdown: false,
-      hasMaintenance: false,
-      hasTrial: false,
-      sourceImportId: null,
-      sourceUpdatedAt: null,
-      dataFreshnessStatus: 'MISSING',
-      productionRiskStatus: 'SOURCE_MISSING'
-    };
-  }
-
+): ProductProductionContext => {
   const evalDate = evaluationDate || new Date();
   const evalStartOfDay = new Date(Date.UTC(evalDate.getUTCFullYear(), evalDate.getUTCMonth(), evalDate.getUTCDate(), 0, 0, 0, 0));
   const evalTimeMs = evalStartOfDay.getTime();
   const oneDayMs = 24 * 60 * 60 * 1000;
 
-  // 1. Fetch production entries for this product
-  const entriesRef = collection(db, 'productionPlanEntries');
-  const qEntries = query(
-    entriesRef,
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId),
-    where('productId', '==', productId)
-  );
-
-  const snapEntries = await getDocs(qEntries);
-  const entries = snapEntries.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as ProductionPlanEntry));
-
   // Partition entries
   const todayEntries = entries.filter(e => {
-    const d = e.productionDate.toDate();
+    const d = (e.productionDate as any)?.toDate ? (e.productionDate as any).toDate() : new Date(e.productionDate as any);
     const dStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
     return dStart.getTime() === evalTimeMs;
   });
 
   const futureEntries = entries.filter(e => {
-    const d = e.productionDate.toDate();
+    const d = (e.productionDate as any)?.toDate ? (e.productionDate as any).toDate() : new Date(e.productionDate as any);
     const dStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
     return dStart.getTime() > evalTimeMs;
-  }).sort((a, b) => a.productionDate.toMillis() - b.productionDate.toMillis());
+  }).sort((a, b) => {
+    const timeA = (a.productionDate as any)?.toMillis ? (a.productionDate as any).toMillis() : new Date(a.productionDate as any).getTime();
+    const timeB = (b.productionDate as any)?.toMillis ? (b.productionDate as any).toMillis() : new Date(b.productionDate as any).getTime();
+    return timeA - timeB;
+  });
 
   const pastEntries = entries.filter(e => {
-    const d = e.productionDate.toDate();
+    const d = (e.productionDate as any)?.toDate ? (e.productionDate as any).toDate() : new Date(e.productionDate as any);
     const dStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
     return dStart.getTime() < evalTimeMs || e.status === 'COMPLETE';
-  }).sort((a, b) => b.productionDate.toMillis() - a.productionDate.toMillis());
+  }).sort((a, b) => {
+    const timeA = (a.productionDate as any)?.toMillis ? (a.productionDate as any).toMillis() : new Date(a.productionDate as any).getTime();
+    const timeB = (b.productionDate as any)?.toMillis ? (b.productionDate as any).toMillis() : new Date(b.productionDate as any).getTime();
+    return timeB - timeA;
+  });
 
-  const isScheduled = entries.some(e => e.status === 'PLANNED' && e.productionDate.toDate().getTime() >= evalTimeMs);
+  const isScheduled = entries.some(e => {
+    const d = (e.productionDate as any)?.toDate ? (e.productionDate as any).toDate() : new Date(e.productionDate as any);
+    return e.status === 'PLANNED' && d.getTime() >= evalTimeMs;
+  });
   const isCurrentlyInProduction = todayEntries.some(e => e.status === 'RUNNING') || entries.some(e => e.status === 'RUNNING');
 
   const activeEntry = todayEntries.find(e => e.status === 'RUNNING' || e.status === 'DELAYED' || e.status === 'STOPPED') || 
@@ -214,14 +189,14 @@ export const obtainCurrentProductionContext = async (
                       null;
 
   const currentProductionLine = activeEntry ? activeEntry.productionLineCodeSnapshot : null;
-  const currentProductionDate = activeEntry ? activeEntry.productionDate.toDate() : null;
+  const currentProductionDate = activeEntry ? ((activeEntry.productionDate as any)?.toDate ? (activeEntry.productionDate as any).toDate() : new Date(activeEntry.productionDate as any)) : null;
 
   const plannedCasesToday = todayEntries.reduce((sum, e) => sum + (e.plannedCases || 0), 0);
   const plannedPalletsToday = todayEntries.reduce((sum, e) => sum + (e.plannedPallets || 0), 0);
 
   const sevenDaysLaterMs = evalTimeMs + 7 * oneDayMs;
   const next7DaysEntries = entries.filter(e => {
-    const t = e.productionDate.toMillis();
+    const t = (e.productionDate as any)?.toMillis ? (e.productionDate as any).toMillis() : new Date(e.productionDate as any).getTime();
     return t > evalTimeMs && t <= sevenDaysLaterMs;
   });
 
@@ -229,7 +204,7 @@ export const obtainCurrentProductionContext = async (
   const plannedPalletsNext7Days = next7DaysEntries.reduce((sum, e) => sum + (e.plannedPallets || 0), 0);
 
   const nextEntry = futureEntries.find(e => e.status === 'PLANNED' || e.status === 'RUNNING');
-  const nextProductionDate = nextEntry ? nextEntry.productionDate.toDate() : null;
+  const nextProductionDate = nextEntry ? ((nextEntry.productionDate as any)?.toDate ? (nextEntry.productionDate as any).toDate() : new Date(nextEntry.productionDate as any)) : null;
 
   let daysUntilNextProduction = null;
   if (nextProductionDate) {
@@ -238,7 +213,7 @@ export const obtainCurrentProductionContext = async (
   }
 
   const lastEntry = pastEntries[0];
-  const lastProductionDate = lastEntry ? lastEntry.productionDate.toDate() : null;
+  const lastProductionDate = lastEntry ? ((lastEntry.productionDate as any)?.toDate ? (lastEntry.productionDate as any).toDate() : new Date(lastEntry.productionDate as any)) : null;
 
   const plannerProductionStatus = (activeEntry ? activeEntry.status : (nextEntry ? nextEntry.status : null)) as string | null;
 
@@ -249,44 +224,20 @@ export const obtainCurrentProductionContext = async (
       .filter(Boolean)
   ));
 
-  let activeProductionNotes: ProductionLinePlanNote[] = [];
-  if (lineIds.length > 0) {
-    const notesRef = collection(db, 'productionLinePlanNotes');
-    const qNotes = query(
-      notesRef,
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('active', '==', true)
-    );
-    const snapNotes = await getDocs(qNotes);
-    activeProductionNotes = snapNotes.docs
-      .map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote))
-      .filter(note => lineIds.includes(note.productionLineId));
-  }
+  const relevantNotes = activeProductionNotes.filter(note => lineIds.includes(note.productionLineId));
 
   const hasDelay = plannerProductionStatus === 'DELAYED' || 
-                   activeProductionNotes.some(n => n.noteType === 'DELAY' || n.severity === 'CRITICAL');
-  const hasShutdown = activeProductionNotes.some(n => n.noteType === 'SHUTDOWN');
-  const hasMaintenance = activeProductionNotes.some(n => n.noteType === 'MAINTENANCE');
-  const hasTrial = activeProductionNotes.some(n => n.noteType === 'TRIAL');
+                   relevantNotes.some(n => n.noteType === 'DELAY' || n.severity === 'CRITICAL');
+  const hasShutdown = relevantNotes.some(n => n.noteType === 'SHUTDOWN');
+  const hasMaintenance = relevantNotes.some(n => n.noteType === 'MAINTENANCE');
+  const hasTrial = relevantNotes.some(n => n.noteType === 'TRIAL');
 
   const sourceImportId = activeEntry?.activeImportId || nextEntry?.activeImportId || (entries.length > 0 ? entries[0].activeImportId : null);
-  const sourceUpdatedAt = activeEntry?.sourceUpdatedAt?.toDate() || 
-                          nextEntry?.sourceUpdatedAt?.toDate() || 
-                          (entries.length > 0 ? entries[0].sourceUpdatedAt?.toDate() : null);
+  const sourceUpdatedAt = (activeEntry?.sourceUpdatedAt as any)?.toDate ? (activeEntry!.sourceUpdatedAt as any).toDate() : 
+                          ((nextEntry?.sourceUpdatedAt as any)?.toDate ? (nextEntry!.sourceUpdatedAt as any).toDate() : 
+                          (entries.length > 0 && (entries[0].sourceUpdatedAt as any)?.toDate ? (entries[0].sourceUpdatedAt as any).toDate() : null));
 
-  let importUploadedAt: Date | null = null;
-  if (sourceImportId) {
-    try {
-      const importDocRef = doc(db, 'productionPlanImports', sourceImportId);
-      const importSnap = await getDoc(importDocRef);
-      if (importSnap.exists()) {
-        importUploadedAt = (importSnap.data() as any).uploadedAt?.toDate() || null;
-      }
-    } catch (err) {
-      console.warn('Failed to fetch import upload time:', err);
-    }
-  }
+  const importUploadedAt = sourceImportId ? (importUploadedAtMap.get(sourceImportId) || null) : null;
   const finalSourceUpdatedAt = importUploadedAt || sourceUpdatedAt;
 
   let dataFreshnessStatus: 'FRESH' | 'STALE' | 'MISSING' = 'MISSING';
@@ -336,7 +287,7 @@ export const obtainCurrentProductionContext = async (
     actualQuantity: null,
     unitOfMeasureId: 'cases',
     delayReason: hasDelay ? 'Delayed run or note' : null,
-    notes: activeProductionNotes.map(n => n.note).join(' | '),
+    notes: relevantNotes.map(n => n.note).join(' | '),
     tenantId,
     siteId,
     status: 'active',
@@ -385,7 +336,7 @@ export const obtainCurrentProductionContext = async (
     daysUntilNextProduction,
     lastProductionDate,
     plannerProductionStatus,
-    activeProductionNotes,
+    activeProductionNotes: relevantNotes,
     hasDelay,
     hasShutdown,
     hasMaintenance,
@@ -403,6 +354,122 @@ export const obtainCurrentProductionContext = async (
     nextProductionStart: nextProductionDate,
     hoursUntilNextProduction: daysUntilNextProduction !== null ? daysUntilNextProduction * 24 : null
   };
+};
+
+export const obtainCurrentProductionContext = async (
+  tenantId: string,
+  siteId: string,
+  productId: string,
+  evaluationDate?: Date
+): Promise<ProductProductionContext> => {
+  if (!db) {
+    return {
+      productId,
+      isScheduled: false,
+      isCurrentlyInProduction: false,
+      currentProductionLine: null,
+      currentProductionDate: null,
+      plannedCasesToday: 0,
+      plannedPalletsToday: 0,
+      plannedCasesNext7Days: 0,
+      plannedPalletsNext7Days: 0,
+      nextProductionDate: null,
+      daysUntilNextProduction: null,
+      lastProductionDate: null,
+      plannerProductionStatus: null,
+      activeProductionNotes: [],
+      hasDelay: false,
+      hasShutdown: false,
+      hasMaintenance: false,
+      hasTrial: false,
+      sourceImportId: null,
+      sourceUpdatedAt: null,
+      dataFreshnessStatus: 'MISSING',
+      productionRiskStatus: 'SOURCE_MISSING'
+    };
+  }
+
+  // 1. Fetch production entries for this product
+  const entriesRef = collection(db, 'productionPlanEntries');
+  const qEntries = query(
+    entriesRef,
+    where('tenantId', '==', tenantId),
+    where('siteId', '==', siteId),
+    where('productId', '==', productId)
+  );
+
+  const snapEntries = await getDocs(qEntries);
+  const entries = snapEntries.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as ProductionPlanEntry));
+
+  const evalDate = evaluationDate || new Date();
+  const evalStartOfDay = new Date(Date.UTC(evalDate.getUTCFullYear(), evalDate.getUTCMonth(), evalDate.getUTCDate(), 0, 0, 0, 0));
+  const evalTimeMs = evalStartOfDay.getTime();
+
+  const todayEntries = entries.filter(e => {
+    const d = (e.productionDate as any)?.toDate ? (e.productionDate as any).toDate() : new Date(e.productionDate as any);
+    const dStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+    return dStart.getTime() === evalTimeMs;
+  });
+
+  const futureEntries = entries.filter(e => {
+    const d = (e.productionDate as any)?.toDate ? (e.productionDate as any).toDate() : new Date(e.productionDate as any);
+    const dStart = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+    return dStart.getTime() > evalTimeMs;
+  });
+
+  const lineIds = Array.from(new Set(
+    [...todayEntries, ...futureEntries]
+      .map(e => e.productionLineId)
+      .filter(Boolean)
+  ));
+
+  let activeProductionNotes: ProductionLinePlanNote[] = [];
+  if (lineIds.length > 0) {
+    const notesRef = collection(db, 'productionLinePlanNotes');
+    const qNotes = query(
+      notesRef,
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId),
+      where('active', '==', true)
+    );
+    const snapNotes = await getDocs(qNotes);
+    activeProductionNotes = snapNotes.docs
+      .map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote))
+      .filter(note => lineIds.includes(note.productionLineId));
+  }
+
+  const importUploadedAtMap = new Map<string, Date>();
+  const activeEntry = todayEntries.find(e => e.status === 'RUNNING' || e.status === 'DELAYED' || e.status === 'STOPPED') || 
+                      todayEntries.find(e => e.status === 'PLANNED') || 
+                      entries.find(e => e.status === 'RUNNING') ||
+                      null;
+  const nextEntry = futureEntries.find(e => e.status === 'PLANNED' || e.status === 'RUNNING');
+  const sourceImportId = activeEntry?.activeImportId || nextEntry?.activeImportId || (entries.length > 0 ? entries[0].activeImportId : null);
+
+  if (sourceImportId) {
+    try {
+      const importDocRef = doc(db, 'productionPlanImports', sourceImportId);
+      const importSnap = await getDoc(importDocRef);
+      if (importSnap.exists()) {
+        const uploaded = (importSnap.data() as any).uploadedAt?.toDate ? (importSnap.data() as any).uploadedAt.toDate() : null;
+        if (uploaded) {
+          importUploadedAtMap.set(sourceImportId, uploaded);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch import upload time:', err);
+    }
+  }
+
+  return buildProductProductionContext(
+    tenantId,
+    siteId,
+    productId,
+    entries,
+    activeProductionNotes,
+    importUploadedAtMap,
+    evaluationDate
+  );
 };
 
 export const getProductProductionContext = async (

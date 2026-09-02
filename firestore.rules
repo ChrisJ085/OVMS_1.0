@@ -30,7 +30,12 @@ service cloud.firestore {
     function isRole(tenantId, roleName) {
       let profile = getUserProfile();
       return isAccountActive() &&
-             profile != null && profile.role == roleName &&
+             profile != null && 
+             (profile.role == roleName || 
+              (roleName == 'PLANNER' && (profile.role == 'PLANNER' || profile.role == 'planner')) ||
+              (roleName == 'TENANT_ADMIN' && (profile.role == 'TENANT_ADMIN' || profile.role == 'tenant_admin' || profile.role == 'admin')) ||
+              (roleName == 'WAREHOUSE_OPERATOR' && (profile.role == 'WAREHOUSE_OPERATOR' || profile.role == 'warehouse_operator' || profile.role == 'operator')) ||
+              (roleName == 'VIEWER' && (profile.role == 'VIEWER' || profile.role == 'viewer'))) &&
              tenantId != null &&
              profile.tenantId == tenantId &&
              isTenantActiveForWrites(tenantId);
@@ -59,12 +64,12 @@ service cloud.firestore {
     function isAssignedToSite(siteId) {
       let profile = getUserProfile();
       return isSuperuser() ||
-             (profile != null && profile.role == 'TENANT_ADMIN' && profile.tenantId != null) ||
+             (profile != null && (profile.role == 'TENANT_ADMIN' || profile.role == 'tenant_admin' || profile.role == 'admin') && profile.tenantId != null) ||
              (profile != null &&
-              siteId != null &&
-              siteId != '' &&
-              ((('siteIds' in profile) && profile.siteIds != null && profile.siteIds is list && siteId in profile.siteIds) ||
-               (('siteId' in profile) && profile.siteId == siteId)));
+              (siteId == null || siteId == '' ||
+               (('siteIds' in profile) && profile.siteIds != null && profile.siteIds is list && (siteId in profile.siteIds || profile.siteIds.size() == 0)) ||
+               (('siteId' in profile) && profile.siteId == siteId) ||
+               !('siteIds' in profile) || profile.siteIds == null));
     }
 
     function getSiteId(doc) {
@@ -217,48 +222,75 @@ service cloud.firestore {
     // ------------------------------------------------------------------------
     match /products/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /locations/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /destinations/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /productionLines/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /unitsOfMeasure/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /productCategories/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /storageAreas/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /actionTypes/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /priorityLevels/{id} {
       allow read: if hasTenantAccess(resource.data.tenantId);
-      allow create, update: if isSuperuser() || (isTenantAdmin(request.resource.data.tenantId) && (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser();
+      allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || isPlanner(request.resource.data.tenantId);
+      allow update: if isSuperuser() || 
+                       (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
+                       (isPlanner(resource.data.tenantId) && ownershipFieldsUnchanged());
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     
     // ------------------------------------------------------------------------
@@ -274,7 +306,7 @@ service cloud.firestore {
                        (isTenantAdmin(resource.data.tenantId) && ownershipFieldsUnchanged()) ||
                        (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged()) ||
                        (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseInventoryFields());
-      allow delete: if isSuperuser();
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     match /inventoryMovements/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
@@ -282,8 +314,8 @@ service cloud.firestore {
                        isTenantAdmin(request.resource.data.tenantId) ||
                        (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))) ||
                        (isWarehouseOperator(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
-      allow update: if isSuperuser();
-      allow delete: if isSuperuser();
+      allow update: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId);
     }
 
     // ------------------------------------------------------------------------
@@ -299,21 +331,20 @@ service cloud.firestore {
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     match /promotions/{id} {
-      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
+      allow read: if hasTenantAccess(resource.data.tenantId) && getUserProfile().role != 'DISPLAY';
       allow create, update: if isSuperuser() || 
                                isTenantAdmin(request.resource.data.tenantId) ||
                                ((isPlanner(request.resource.data.tenantId)) && 
-                                isAssignedToSite(getSiteId(request.resource)) && 
-                                (request.method == 'create' || ownershipFieldsUnchanged()));
-      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
+                                 (request.method == 'create' || ownershipFieldsUnchanged()));
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId);
     }
     match /promotionProductRules/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
       allow create, update: if isSuperuser() || 
                                isTenantAdmin(request.resource.data.tenantId) ||
                                ((isPlanner(request.resource.data.tenantId)) && 
-                                isAssignedToSite(getSiteId(request.resource)) && 
-                                (request.method == 'create' || ownershipFieldsUnchanged()));
+                                 isAssignedToSite(getSiteId(request.resource)) && 
+                                 (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     match /decisionConfigurations/{id} {
@@ -327,17 +358,27 @@ service cloud.firestore {
     }
     match /northfleetStoRequirements/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update, delete: if isSuperuser() || 
-                                isTenantAdmin(request.resource.data.tenantId) ||
-                                ((isPlanner(request.resource.data.tenantId)) && 
-                                 isAssignedToSite(getSiteId(request.resource)));
+      allow create, update: if isSuperuser() || 
+                               isTenantAdmin(request.resource.data.tenantId) ||
+                               ((isPlanner(request.resource.data.tenantId)) && 
+                                isAssignedToSite(getSiteId(request.resource)) &&
+                                (request.method == 'create' || ownershipFieldsUnchanged()));
+      allow delete: if isSuperuser() || 
+                       isTenantAdmin(resource.data.tenantId) ||
+                       ((isPlanner(resource.data.tenantId)) && 
+                        isAssignedToSite(getSiteId(resource)));
     }
     match /northfleetStoImports/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
-      allow create, update, delete: if isSuperuser() || 
-                                isTenantAdmin(request.resource.data.tenantId) ||
-                                ((isPlanner(request.resource.data.tenantId)) && 
-                                 isAssignedToSite(getSiteId(request.resource)));
+      allow create, update: if isSuperuser() || 
+                               isTenantAdmin(request.resource.data.tenantId) ||
+                               ((isPlanner(request.resource.data.tenantId)) && 
+                                isAssignedToSite(getSiteId(request.resource)) &&
+                                (request.method == 'create' || ownershipFieldsUnchanged()));
+      allow delete: if isSuperuser() || 
+                       isTenantAdmin(resource.data.tenantId) ||
+                       ((isPlanner(resource.data.tenantId)) && 
+                        isAssignedToSite(getSiteId(resource)));
     }
     match /productionEvents/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
@@ -357,6 +398,17 @@ service cloud.firestore {
                                 (request.method == 'create' || ownershipFieldsUnchanged()));
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
+    match /siteRecommendationRuns/{id} {
+      allow read: if isSuperuser() || 
+                    (resource == null && hasTenantAccess(id.split('_')[0])) ||
+                    (resource != null && hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)));
+      allow create, update: if isSuperuser() || 
+                               isTenantAdmin(request.resource.data.tenantId) ||
+                               ((isPlanner(request.resource.data.tenantId) || isWarehouseOperator(request.resource.data.tenantId)) && 
+                                isAssignedToSite(getSiteId(request.resource)) && 
+                                (request.method == 'create' || ownershipFieldsUnchanged()));
+      allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId);
+    }
 
     // ------------------------------------------------------------------------
     // Operational Data
@@ -366,26 +418,15 @@ service cloud.firestore {
       allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
-                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyPlannerApprovedFields()) ||
+                       (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged()) ||
                        (isWarehouseOperator(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)) && ownershipFieldsUnchanged() && isOnlyUpdatingWarehouseFields());
       allow delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId) || (isPlanner(resource.data.tenantId) && isAssignedToSite(getSiteId(resource)));
     }
     function isDisplaySafeProjection() {
-      let allowedDisplayFields = [
-        'tenantId', 'siteId', 'sourcePriorityId', 'priorityCode', 'productCodeSnapshot',
-        'descriptionSnapshot', 'title', 'instruction', 'priorityStatus', 'priorityLevelId',
-        'priorityLevelLabel', 'actionTypeId', 'actionTypeLabel', 'requestedQuantity',
-        'progressQuantity', 'progressPercent', 'destinationId', 'destinationLabel',
-        'overflowDestinationId', 'overflowDestinationLabel', 'startAt', 'createdDate',
-        'completedAt', 'expireAt', 'untilSwitchedOff', 'modifiedDate'
-      ];
-      return request.resource.data.keys().hasOnly(allowedDisplayFields) &&
-             !('planningContextSnapshot' in request.resource.data) &&
+      return !('planningContextSnapshot' in request.resource.data) &&
              !('latestProgressNote' in request.resource.data) &&
              !('supportingReasons' in request.resource.data) &&
-             !('plannerReason' in request.resource.data) &&
-             !('sourceRecommendationId' in request.resource.data) &&
-             !('createdBy' in request.resource.data);
+             !('plannerReason' in request.resource.data);
     }
 
     match /displayPriorities/{id} {
@@ -399,7 +440,7 @@ service cloud.firestore {
                        isTenantAdmin(request.resource.data.tenantId) || 
                        (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource))) ||
                        (isWarehouseOperator(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
-      allow update, delete: if isSuperuser();
+      allow update, delete: if isSuperuser() || isTenantAdmin(resource.data.tenantId);
     }
     match /announcements/{id} {
       allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
@@ -498,9 +539,6 @@ service cloud.firestore {
                       (isTenantAdmin(resource.data.tenantId) || isPlanner(resource.data.tenantId) || isWarehouseOperator(resource.data.tenantId)));
       allow create: if isSuperuser() || 
                      (isAccountActive() &&
-                      (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
-                      (!('performedBy' in request.resource.data) || request.resource.data.performedBy == request.auth.uid) &&
-                      ('userId' in request.resource.data || 'performedBy' in request.resource.data) &&
                       request.resource.data.tenantId == getUserProfile().tenantId &&
                       (!('siteId' in request.resource.data) || request.resource.data.siteId == null || isAssignedToSite(request.resource.data.siteId)));
       allow update: if false;

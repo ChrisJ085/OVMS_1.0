@@ -4,6 +4,28 @@ import { Timestamp } from 'firebase/firestore';
 
 export type RecommendationStatus = 'AWAITING_REVIEW' | 'APPROVED' | 'AUTO_PUBLISHED' | 'OVERRIDDEN' | 'DISMISSED' | 'SUPERSEDED' | 'EXPIRED';
 
+export type SiteRecommendationRunStatus = 'IDLE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+
+export interface SiteRecommendationRun {
+  id?: string;
+  tenantId: string;
+  siteId: string;
+  status: SiteRecommendationRunStatus;
+  startedAt: Timestamp | null;
+  startedBy: string | null;
+  startedByName: string | null;
+  completedAt: Timestamp | null;
+  completedBy: string | null;
+  completedByName: string | null;
+  totalProducts: number;
+  currentProductIndex: number;
+  currentProductCode: string;
+  generatedCount: number;
+  conflictsCount: number;
+  error?: string | null;
+  lastUpdatedAt: Timestamp | null;
+}
+
 export interface PlannerDecision {
   actionTypeId: string | null;
   quantity: number;

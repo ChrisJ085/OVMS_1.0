@@ -5,9 +5,9 @@ import { Recommendation } from '../../../types/recommendation';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw, Wand2, Factory, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw, Wand2, Factory, ShieldAlert, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { generateRecommendationForProduct, refreshSiteRecommendations } from '../services/recommendationService';
+import { generateRecommendationForProduct } from '../services/recommendationService';
 import { seedTestDataForTesting } from '../services/testDataSeeder';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { subscribeToCollection } from '../../../services/firestoreBase';
@@ -18,6 +18,8 @@ import { Product } from '../../../types/product';
 import { PriorityConflict } from '../../../types/priority';
 import { detectPriorityConflicts } from '../../operations/services/priorityService';
 import { PriorityConflictModal } from '../../operations/components/PriorityConflictModal';
+import { useRecommendationGeneration } from '../context/RecommendationGenerationContext';
+import { DataFreshnessHoverCard } from '../../../components/layout/DataFreshnessHoverCard';
 
 const SUMMARY_TILES = [
   { id: 'requires-review', label: 'Requires Review', color: 'bg-blue-900 text-blue-100 border-blue-700' },
@@ -28,32 +30,33 @@ const SUMMARY_TILES = [
   { id: 'stale-missing-data', label: 'Stale/Missing Data', color: 'bg-slate-800 text-slate-300 border-slate-700' },
 ];
 
-interface GenerationProgress {
-  total: number;
-  current: number;
-  currentProductCode: string;
-  successCount: number;
-  errorCount: number;
-  statusText: string;
-}
-
 export const RecommendationsWorkspacePage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
   const navigate = useNavigate();
+  const {
+    isGenerating,
+    isLocallyGenerating,
+    generatorName,
+    lastGeneratedText,
+    progress,
+    startGeneration,
+    conflicts,
+    isConflictModalOpen,
+    setIsConflictModalOpen,
+    lastRefreshTimestamp,
+  } = useRecommendationGeneration();
+
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('requires-review');
   const [showSuperseded, setShowSuperseded] = useState(false);
-  const [generating, setGenerating] = useState(false);
   const [seeding, setSeeding] = useState(false);
-  const [progress, setProgress] = useState<GenerationProgress | null>(null);
+  const [localConflicts, setLocalConflicts] = useState<PriorityConflict[]>([]);
 
   const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [priorityLevels, setPriorityLevels] = useState<PriorityLevel[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [conflicts, setConflicts] = useState<PriorityConflict[]>([]);
-  const [isConflictModalOpen, setIsConflictModalOpen] = useState(false);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -178,7 +181,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
 
       // Check for active priority conflicts
       const activeConflicts = await detectPriorityConflicts(tenantId, siteId);
-      setConflicts(activeConflicts);
+      setLocalConflicts(activeConflicts);
     } catch (e) {
       console.error('Error fetching recommendations:', e);
     } finally {
@@ -188,61 +191,11 @@ export const RecommendationsWorkspacePage: React.FC = () => {
 
   useEffect(() => {
     fetchRecs();
-  }, [tenantId, siteId]);
+  }, [tenantId, siteId, lastRefreshTimestamp]);
 
   const handleGenerateAll = async () => {
     if (!tenantId || !siteId) return;
-    setGenerating(true);
-    try {
-      setProgress({
-        total: 100,
-        current: 0,
-        currentProductCode: 'Initializing',
-        successCount: 0,
-        errorCount: 0,
-        statusText: 'Starting Recommendation Workspace generation & operational priorities sync...'
-      });
-
-      const res = await refreshSiteRecommendations(tenantId, siteId, true, (prog) => {
-        setProgress({
-          total: prog.total,
-          current: prog.current,
-          currentProductCode: prog.productCode || '',
-          successCount: prog.current,
-          errorCount: 0,
-          statusText: `Evaluating product ${prog.current} of ${prog.total}: ${prog.productCode || ''}`
-        });
-      });
-
-      if (res.success && res.data) {
-        const detectedConflicts = res.data.conflicts || [];
-        setConflicts(detectedConflicts);
-
-        setProgress({
-          total: 100,
-          current: 100,
-          currentProductCode: 'Complete',
-          successCount: res.data.generatedCount,
-          errorCount: 0,
-          statusText: `Recommendation Workspace Generation Complete! Evaluated ${res.data.generatedCount} products.`
-        });
-
-        if (detectedConflicts.length > 0) {
-          setIsConflictModalOpen(true);
-        }
-      } else {
-        alert(`Workspace generation failed: ${res.error}`);
-      }
-
-      await fetchRecs();
-      await new Promise(resolve => setTimeout(resolve, 600));
-    } catch (e: any) {
-      console.error(e);
-      alert(`Failed to generate recommendations: ${e?.message || 'Error generating recommendations'}`);
-    } finally {
-      setProgress(null);
-      setGenerating(false);
-    }
+    await startGeneration(tenantId, siteId, true);
   };
 
   const handleSeedTestData = async () => {
@@ -309,17 +262,31 @@ export const RecommendationsWorkspacePage: React.FC = () => {
     return 0;
   };
 
+  const activePriorityConflicts = conflicts.length > 0 ? conflicts : localConflicts;
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
         <PageHeader 
           title="Recommendation Workspace" 
           description="Review, approve, or override system recommendations."
         />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <DataFreshnessHoverCard />
+
+          {lastGeneratedText && lastGeneratedText !== 'Not yet generated' && (
+            <div 
+              title="Last evaluated recommendation run for this site"
+              className="flex items-center gap-1.5 text-xs text-slate-300 bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-lg shadow-sm"
+            >
+              <Clock className="w-3.5 h-3.5 text-brand-400 shrink-0" />
+              <span className="font-medium">{lastGeneratedText}</span>
+            </div>
+          )}
+
           <button 
             onClick={handleSeedTestData} 
-            disabled={seeding || loading}
+            disabled={seeding || loading || isGenerating}
             className="flex items-center gap-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
             <Wand2 className={`w-4 h-4 text-brand-400 ${seeding ? 'animate-pulse' : ''}`} />
@@ -328,16 +295,17 @@ export const RecommendationsWorkspacePage: React.FC = () => {
 
           <button 
             onClick={handleGenerateAll} 
-            disabled={generating}
-            className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors disabled:opacity-50"
+            disabled={isGenerating || loading}
+            title={isGenerating ? (generatorName ? `Generation is currently being run by ${generatorName}` : 'Recommendation generation in progress') : 'Evaluate rules and generate recommendations for all active products'}
+            className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <RefreshCw className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
-            {generating ? 'Generating...' : 'Generate All'}
+            <RefreshCw className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
+            {isGenerating ? (isLocallyGenerating ? 'Generating...' : (generatorName ? `Running by ${generatorName}` : 'Generating...')) : 'Generate All'}
           </button>
         </div>
       </div>
 
-      {progress && (
+      {isGenerating && progress && (
         <div className="bg-slate-800/90 border border-brand-500/40 rounded-xl p-4 shadow-2xl space-y-3 transition-all animate-fadeIn">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -388,7 +356,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
       )}
 
       {/* Operational Priority Conflicts Banner */}
-      {conflicts.length > 0 && (
+      {activePriorityConflicts.length > 0 && (
         <div className="bg-amber-950/80 border border-amber-800/90 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg animate-fade-in">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg shrink-0">
@@ -396,7 +364,7 @@ export const RecommendationsWorkspacePage: React.FC = () => {
             </div>
             <div>
               <h4 className="text-sm font-bold text-amber-200">
-                {conflicts.length} Operational Priority Conflict{conflicts.length > 1 ? 's' : ''} Identified
+                {activePriorityConflicts.length} Operational Priority Conflict{activePriorityConflicts.length > 1 ? 's' : ''} Identified
               </h4>
               <p className="text-xs text-amber-300/80 mt-0.5">
                 System driven recommendations match active manually created operational priorities. Choose whether to replace manual priorities or keep them.

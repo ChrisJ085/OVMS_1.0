@@ -1,11 +1,24 @@
 import React from 'react';
-import { Building2, Settings2, LogOut, User, Shield } from 'lucide-react';
+import { Building2, Settings2, LogOut, RefreshCw, CheckCircle, AlertCircle, X, Clock } from 'lucide-react';
 import { useAuth } from '../../features/auth/context/AuthContext';
 import { useSiteContext } from '../../contexts/SiteContext';
+import { useRecommendationGeneration } from '../../features/planning/context/RecommendationGenerationContext';
+import { useNavigate } from 'react-router-dom';
+import { DataFreshnessHoverCard } from './DataFreshnessHoverCard';
 
 export const Header: React.FC = () => {
   const { userProfile, logout } = useAuth();
   const { siteId, siteName, availableSites, setSite } = useSiteContext();
+  const { 
+    isGenerating, 
+    progress, 
+    isCompletedRecently, 
+    completionInfo, 
+    dismissCompletion,
+    generatorName,
+    lastGeneratedText
+  } = useRecommendationGeneration();
+  const navigate = useNavigate();
   const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
 
   const handleLogout = async () => {
@@ -63,9 +76,98 @@ export const Header: React.FC = () => {
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 md:gap-4">
+        {/* System Data Updates & Freshness Hover Container */}
+        <DataFreshnessHoverCard />
+
+        {/* Recommendation Generation Global Sticky Container (Live Progress / Recent Completion / Last Generated Status) */}
+        {isGenerating ? (
+          <div 
+            onClick={() => navigate('/planning/recommendations')}
+            title="Click to open Recommendation Workspace"
+            className="flex items-center gap-2.5 bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/40 hover:border-brand-500/60 px-3 py-1.5 rounded-lg text-brand-200 cursor-pointer transition-all shadow-sm group"
+          >
+            <RefreshCw className="w-4 h-4 text-brand-400 animate-spin shrink-0" />
+            <div className="flex items-center gap-1.5 text-xs font-medium">
+              <span className="hidden sm:inline font-semibold">
+                {generatorName ? `${generatorName} generating recs` : 'Generating recommendations'}
+              </span>
+              <span className="sm:hidden font-semibold">Generating</span>
+              {progress && progress.total > 0 && (
+                <span className="bg-brand-500/30 text-brand-100 px-1.5 py-0.5 rounded text-[11px] font-mono font-bold">
+                  {progress.current}/{progress.total}
+                </span>
+              )}
+              {progress?.currentProductCode && progress.currentProductCode !== 'Initializing' && progress.currentProductCode !== 'Complete' && (
+                <span className="hidden md:inline font-mono text-[11px] text-brand-200/90 truncate max-w-[100px]">
+                  • {progress.currentProductCode}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : isCompletedRecently && completionInfo ? (
+          <div 
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all shadow-sm ${
+              completionInfo.error 
+                ? 'bg-red-500/10 border-red-500/30 text-red-300' 
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+            }`}
+          >
+            {completionInfo.error ? (
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            ) : (
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
+            
+            <button
+              type="button"
+              onClick={() => navigate('/planning/recommendations')}
+              className="text-left font-medium hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              {completionInfo.error ? (
+                <span>Generation failed: {completionInfo.error}</span>
+              ) : (
+                <>
+                  <span className="font-semibold">Recommendations Complete</span>
+                  <span className="hidden sm:inline text-emerald-200/90">
+                    ({completionInfo.generatedCount} evaluated)
+                  </span>
+                  {completionInfo.conflictsCount > 0 && (
+                    <span className="ml-1 text-amber-400 font-bold text-[11px] bg-amber-500/20 px-1.5 py-0.5 rounded">
+                      {completionInfo.conflictsCount} conflict{completionInfo.conflictsCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                dismissCompletion();
+              }}
+              title="Dismiss notification"
+              className="p-0.5 hover:bg-slate-800/60 rounded text-slate-400 hover:text-slate-200 transition-colors ml-1 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : lastGeneratedText && lastGeneratedText !== 'Not yet generated' ? (
+          <div
+            onClick={() => navigate('/planning/recommendations')}
+            title="Recommendation status • Click to open Workspace"
+            className="hidden sm:flex items-center gap-2 bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-lg text-slate-300 cursor-pointer transition-all shadow-sm group"
+          >
+            <Clock className="w-3.5 h-3.5 text-slate-400 group-hover:text-brand-400 transition-colors shrink-0" />
+            <span className="text-xs font-medium text-slate-300 group-hover:text-white transition-colors">
+              {lastGeneratedText}
+            </span>
+          </div>
+        ) : null}
+
         {developmentMode && (
-          <div className="hidden md:flex items-center gap-1 text-[10px] font-medium text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded uppercase tracking-wider">
+          <div className="hidden lg:flex items-center gap-1 text-[10px] font-medium text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded uppercase tracking-wider">
             <Settings2 className="w-3 h-3 animate-pulse" />
             Sandbox Mode
           </div>
@@ -116,3 +218,4 @@ export const Header: React.FC = () => {
     </header>
   );
 };
+
