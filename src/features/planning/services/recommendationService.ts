@@ -498,6 +498,9 @@ export const generateRecommendationForProduct = async (
       const actLabel = actionObj?.name || actionObj?.code || actionId;
       const destLabel = destObj?.name || destObj?.code || destId;
       const levelLabel = levelObj?.name || levelObj?.code || levelId;
+      const finalRequestedQty = decisionOutput.recommendedQuantity || 0;
+      const finalInstruction = decisionOutput.explanationLines?.[0] || `Auto-pushed action: ${actionId}`;
+      const explanationText = decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.recommendation?.join(' | ') || '';
 
       snapshot = {
         recommendationId: recId,
@@ -508,26 +511,26 @@ export const generateRecommendationForProduct = async (
         action: actLabel,
         actionTypeId: actionId,
         actionTypeLabel: actLabel,
-        requestedQuantity: requestedQty,
+        requestedQuantity: finalRequestedQty,
         quantityUnit: (product as any).unitOfMeasure || (product as any).uom || 'pallets',
         destinationId: destId,
         destinationCode: destObj?.code || destId,
         destinationName: destLabel,
         priorityLevel: levelLabel,
         priorityLevelId: levelId,
-        instruction: instructionText,
-        reason: decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.summary || '',
-        explanation: decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.summary || '',
+        instruction: finalInstruction,
+        reason: explanationText,
+        explanation: explanationText,
         supportingReasons: decisionOutput.explanationLines || [],
         sourceType: 'RECOMMENDATION',
         createdAt: new Date().toISOString(),
         decisionContext: {
           inventoryTotal: inventory?.totalQuantity || 0,
-          controllingThresholdMode: decisionOutput.controllingRuleMode || null,
+          controllingThresholdMode: planningRule?.controllingThresholdMode || null,
           belowTargetBehavior: planningRule?.belowTargetBehavior || null,
           outstandingStoCases: inputSnapshot.outstandingStoCases || 0,
           plannedCasesNext7Days: inputSnapshot.productionContext?.plannedCasesNext7Days || 0,
-          planningBand: decisionOutput.planningBand || null
+          planningBand: (decisionOutput as any).planningBandStatus || (decisionOutput as any).planningBand || null
         }
       };
     }

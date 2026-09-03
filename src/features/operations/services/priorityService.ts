@@ -4,7 +4,6 @@ import { Priority, PriorityEvent, PriorityStatus, PriorityEventType, PriorityCon
 import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
-import { deductProductInventory } from '../../inventory/services/inventoryService';
 
 const PRIORITIES_COLLECTION = 'priorities';
 const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';
@@ -283,25 +282,6 @@ export const updatePriorityStatus = async (
       return { success: false, error: `Invalid transition from ${priority.priorityStatus} to ${newStatus}` };
     }
 
-    if (newStatus === 'COMPLETED') {
-      const remaining = (priority.requestedQuantity || 0) - (priority.progressQuantity || 0);
-      if (remaining > 0) {
-        const deductRes = await deductProductInventory({
-          tenantId: priority.tenantId,
-          siteId: priority.siteId,
-          productId: priority.productId,
-          productCodeSnapshot: priority.productCodeSnapshot,
-          quantity: remaining,
-          reason: 'Priority Completed',
-          reference: `Priority completed: ${priorityId}`,
-          performedBy: userId
-        });
-        if (!deductRes.success) {
-          return { success: false, error: deductRes.error || 'Failed to update inventory balance' };
-        }
-      }
-    }
-
     const batch = writeBatch(db);
     
     const updateData: any = {
@@ -358,16 +338,12 @@ export interface PriorityUpdateParams {
 
 export const executePriorityUpdate = async (params: PriorityUpdateParams): Promise<ServiceResult<void>> => {
   try {
-    let deductionQty = 0;
-    let priorityObj: Priority | null = null;
-
     await runTransaction(db, async (transaction) => {
       const ref = doc(db, PRIORITIES_COLLECTION, params.priorityId);
       const snap = await transaction.get(ref);
       if (!snap.exists()) throw new Error('Priority not found');
 
       const priority = snap.data() as Priority;
-      priorityObj = priority;
       const newStatus = params.newStatus || priority.priorityStatus;
       
       if (params.newStatus && !VALID_TRANSITIONS[priority.priorityStatus].includes(params.newStatus)) {
@@ -379,21 +355,6 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
       }
       if (params.newStatus === 'WAITING' && !params.note?.trim()) {
         throw new Error('Waiting status requires a note');
-      }
-
-      // Calculate deduction quantity
-      if (params.progressQuantity !== undefined) {
-        const delta = params.progressQuantity - (priority.progressQuantity || 0);
-        if (delta > 0) {
-          deductionQty += delta;
-        }
-      }
-      if (params.newStatus === 'COMPLETED') {
-        const effectiveProgressQty = params.progressQuantity !== undefined ? params.progressQuantity : (priority.progressQuantity || 0);
-        const remaining = (priority.requestedQuantity || 0) - effectiveProgressQty;
-        if (remaining > 0) {
-          deductionQty += remaining;
-        }
       }
 
       const updateData: any = {
@@ -491,20 +452,6 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
       }
     });
 
-    if (deductionQty > 0 && priorityObj) {
-      const p = priorityObj as Priority;
-      await deductProductInventory({
-        tenantId: p.tenantId,
-        siteId: p.siteId,
-        productId: p.productId,
-        productCodeSnapshot: p.productCodeSnapshot,
-        quantity: deductionQty,
-        reason: params.newStatus === 'COMPLETED' ? 'Priority Completed' : 'Priority Progress Updated',
-        reference: `Priority action: ${params.priorityId}`,
-        performedBy: params.userId
-      });
-    }
-
     return { success: true };
   } catch (e: any) {
     console.error(e);
@@ -514,31 +461,13 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
 
 export const deletePriority = async (
   priorityId: string,
-  userId: string,
-  completedQty?: number
+  _userId: string,
+  _completedQty?: number
 ): Promise<ServiceResult<void>> => {
   try {
     const ref = doc(db, PRIORITIES_COLLECTION, priorityId);
     const snap = await getDoc(ref);
     if (!snap.exists()) return { success: false, error: 'Priority not found' };
-
-    const priority = snap.data() as Priority;
-
-    if (completedQty && completedQty > 0) {
-      const deductRes = await deductProductInventory({
-        tenantId: priority.tenantId,
-        siteId: priority.siteId,
-        productId: priority.productId,
-        productCodeSnapshot: priority.productCodeSnapshot,
-        quantity: completedQty,
-        reason: 'Priority Deletion (Partial Completion)',
-        reference: `Priority deletion: ${priorityId}`,
-        performedBy: userId
-      });
-      if (!deductRes.success) {
-        return { success: false, error: deductRes.error || 'Failed to update inventory balance' };
-      }
-    }
 
     const batch = writeBatch(db);
     const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, priorityId);
