@@ -17,6 +17,8 @@ import { InventoryBalance } from '../../../types/inventory';
 import { ProductPlanningRule } from '../../../types/planning';
 import { ProductionPlanEntry, ProductionLinePlanNote, ProductProductionContext } from '../../../types/production';
 import { NorthfleetStoRequirement } from '../../../types/production';
+import { logAuditEvent } from '../../../services/auditService';
+import { RecommendationAuditSnapshot } from '../../../types/audit';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { getOutstandingStoCasesForProduct } from './northfleetStoService';
@@ -43,8 +45,18 @@ export interface RecommendationPreloadContext {
   configuration: any;
   activeRecommendationsByProductId: Map<string, any>;
   activePrioritiesByProductId: Map<string, Priority[]>;
+  actionTypesMap?: Map<string, any>;
+  destinationsMap?: Map<string, any>;
+  priorityLevelsMap?: Map<string, any>;
   evaluationDate?: Date;
 }
+
+export interface GenerateRecommendationResponse extends ServiceResult<string | null> {
+  snapshot?: RecommendationAuditSnapshot | null;
+  hasAction?: boolean;
+  priorityId?: string | null;
+}
+
 
 export const getSiteRecommendationRunRef = (tenantId: string, siteId: string) => {
   return doc(db, SITE_RECOMMENDATION_RUNS_COLLECTION, `${tenantId}_${siteId}`);
@@ -143,7 +155,7 @@ export const generateRecommendationForProduct = async (
   productId: string,
   forceReevaluate = false,
   preloadedContext?: RecommendationPreloadContext
-): Promise<ServiceResult<string | null>> => {
+): Promise<GenerateRecommendationResponse> => {
   try {
     // 1. Gather Inputs
     let product: Product | null = null;
@@ -474,7 +486,59 @@ export const generateRecommendationForProduct = async (
     batch.set(newRef, newRecommendation);
     await batch.commit();
 
-    return { success: true, data: newRef.id };
+    let snapshot: RecommendationAuditSnapshot | null = null;
+    if (hasRecommendedAction && targetPriorityId) {
+      const destId = decisionOutput.recommendedDestinationId || null;
+      const destObj = destId && preloadedContext?.destinationsMap ? preloadedContext.destinationsMap.get(destId) : null;
+      const actionId = decisionOutput.recommendedActionTypeId!;
+      const actionObj = preloadedContext?.actionTypesMap ? preloadedContext.actionTypesMap.get(actionId) : null;
+      const levelId = decisionOutput.recommendedPriorityLevelId || 'NORMAL';
+      const levelObj = preloadedContext?.priorityLevelsMap ? preloadedContext.priorityLevelsMap.get(levelId) : null;
+
+      const actLabel = actionObj?.name || actionObj?.code || actionId;
+      const destLabel = destObj?.name || destObj?.code || destId;
+      const levelLabel = levelObj?.name || levelObj?.code || levelId;
+
+      snapshot = {
+        recommendationId: recId,
+        operationalPriorityId: targetPriorityId,
+        productId,
+        productCode: product.productCode || (product as any).code || product.id,
+        productDescription: product.description || (product as any).productName || product.productCode || '',
+        action: actLabel,
+        actionTypeId: actionId,
+        actionTypeLabel: actLabel,
+        requestedQuantity: requestedQty,
+        quantityUnit: (product as any).unitOfMeasure || (product as any).uom || 'pallets',
+        destinationId: destId,
+        destinationCode: destObj?.code || destId,
+        destinationName: destLabel,
+        priorityLevel: levelLabel,
+        priorityLevelId: levelId,
+        instruction: instructionText,
+        reason: decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.summary || '',
+        explanation: decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.summary || '',
+        supportingReasons: decisionOutput.explanationLines || [],
+        sourceType: 'RECOMMENDATION',
+        createdAt: new Date().toISOString(),
+        decisionContext: {
+          inventoryTotal: inventory?.totalQuantity || 0,
+          controllingThresholdMode: decisionOutput.controllingRuleMode || null,
+          belowTargetBehavior: planningRule?.belowTargetBehavior || null,
+          outstandingStoCases: inputSnapshot.outstandingStoCases || 0,
+          plannedCasesNext7Days: inputSnapshot.productionContext?.plannedCasesNext7Days || 0,
+          planningBand: decisionOutput.planningBand || null
+        }
+      };
+    }
+
+    return {
+      success: true,
+      data: newRef.id,
+      snapshot,
+      hasAction: hasRecommendedAction,
+      priorityId: targetPriorityId
+    };
   } catch (error: any) {
     console.error('Failed to generate recommendation:', error);
     return { success: false, error: error.message };

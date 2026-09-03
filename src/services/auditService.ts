@@ -1,14 +1,31 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { AuditEvent } from '../types/audit';
+
+function cleanUndefined(obj: any): any {
+  if (obj === undefined) return null;
+  if (obj === null) return null;
+  if (Array.isArray(obj)) return obj.map(cleanUndefined);
+  if (typeof obj === 'object' && !(obj instanceof Date) && !obj.toDate && !obj._methodName) {
+    const res: any = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) {
+        res[k] = cleanUndefined(v);
+      }
+    }
+    return res;
+  }
+  return obj;
+}
 
 export const logAuditEvent = async (
   event: Omit<AuditEvent, 'id' | 'timestamp'>
 ): Promise<string | null> => {
   if (!db) return null;
   try {
+    const sanitized = cleanUndefined(event);
     const docRef = await addDoc(collection(db, 'auditLogs'), {
-      ...event,
+      ...sanitized,
       timestamp: serverTimestamp()
     });
     return docRef.id;
@@ -17,3 +34,4 @@ export const logAuditEvent = async (
     return null;
   }
 };
+

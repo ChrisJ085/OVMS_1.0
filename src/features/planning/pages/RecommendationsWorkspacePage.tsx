@@ -5,11 +5,13 @@ import { Recommendation } from '../../../types/recommendation';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw, Wand2, Factory, ShieldAlert, Clock } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ArrowRight, RefreshCw, Wand2, Factory, ShieldAlert, Clock, History } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { generateRecommendationForProduct } from '../services/recommendationService';
 import { seedTestDataForTesting } from '../services/testDataSeeder';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { useAuth } from '../../auth/context/AuthContext';
+import { hasPermission } from '../../../config/rolePermissions';
 import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
@@ -32,6 +34,7 @@ const SUMMARY_TILES = [
 
 export const RecommendationsWorkspacePage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
+  const { userProfile } = useAuth();
   const navigate = useNavigate();
   const {
     isGenerating,
@@ -292,6 +295,17 @@ export const RecommendationsWorkspacePage: React.FC = () => {
             <Wand2 className={`w-4 h-4 text-brand-400 ${seeding ? 'animate-pulse' : ''}`} />
             {seeding ? 'Seeding...' : 'Seed Test Data'}
           </button>
+
+          {hasPermission(userProfile?.role, 'VIEW_AUDIT_LOG') && (
+            <button 
+              onClick={() => navigate('/admin/audit-log')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-200 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors"
+              title="View Recommendation Generation Audit Logs & Snapshots"
+            >
+              <History className="w-4 h-4 text-indigo-400" />
+              Audit Logs
+            </button>
+          )}
 
           <button 
             onClick={handleGenerateAll} 
