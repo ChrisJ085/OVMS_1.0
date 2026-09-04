@@ -42,6 +42,8 @@ export interface ValidatedStoRow extends ParsedStoRow {
   matchedDestinationId: string | null;
   matchedDestinationCode: string | null;
   existingRequirementId?: string | null;
+  previousProductId?: string | null;
+  previousProductCode?: string | null;
   derivedStatus: NorthfleetStoStatus;
 }
 
@@ -366,6 +368,8 @@ export const validateNorthfleetStoRows = async (
       matchedDestinationId: northfleetDestId,
       matchedDestinationCode: northfleetDestCode,
       existingRequirementId: existingReqId,
+      previousProductId: existing?.productId || null,
+      previousProductCode: existing?.productCode || null,
       derivedStatus
     });
   }
@@ -426,11 +430,19 @@ export const commitNorthfleetStoRequirements = async (
 
     for (const row of validRowsToProcess) {
       affectedProductIds.add(row.matchedProductId!);
+      if (row.previousProductId && row.previousProductId !== row.matchedProductId) {
+        affectedProductIds.add(row.previousProductId);
+      }
 
       if (row.existingRequirementId && row.validationStatus === 'EXISTING_STO_CHANGED') {
-        // Update existing STO record
+        // Update existing STO record with updated product details, dates, and quantities
         const stoRef = doc(db, STO_REQUIREMENTS_COLLECTION, row.existingRequirementId);
         batch.update(stoRef, {
+          productId: row.matchedProductId!,
+          productCode: row.productCode,
+          productDescriptionSnapshot: row.matchedProductDescription || row.productCode,
+          destinationId: row.matchedDestinationId || 'DEST_NORTHFLEET',
+          destinationCode: row.matchedDestinationCode || 'NORTHFLEET',
           northfleetDeliveryDate: Timestamp.fromDate(row.northfleetDeliveryDate!),
           barrowCollectionDate: Timestamp.fromDate(row.barrowCollectionDate!),
           pallets: row.pallets,
@@ -547,9 +559,9 @@ export const getOutstandingStoCasesForProduct = async (
     });
 
     return totalCases;
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Error calculating STO cases for product ${productId}:`, error);
-    return 0;
+    throw new Error(`Failed to retrieve Northfleet STO requirements for product ${productId}: ${error?.message || error}`);
   }
 };
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { 
   parseNorthfleetStoPaste, 
   parseDeliveryDate, 
@@ -7,6 +7,45 @@ import {
 import { evaluateDecision, DEFAULT_DECISION_CONFIG } from './decisionEngine';
 import { DecisionInputSnapshot } from '../../../types/decision';
 import { ProductPlanningRule } from '../../../types/planning';
+
+const mockCollectionSpy = vi.fn((_database: any, path: string) => ({ path }));
+const mockDocSpy = vi.fn((_databaseOrCollection: any, pathOrId?: string, id?: string) => {
+  if (typeof _databaseOrCollection === 'object' && _databaseOrCollection !== null && 'path' in _databaseOrCollection) {
+    return { path: `${_databaseOrCollection.path}/${pathOrId}`, id: pathOrId };
+  }
+  return { path: `${pathOrId}/${id}`, id };
+});
+
+const mockBatchSet = vi.fn();
+const mockBatchUpdate = vi.fn();
+const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('firebase/firestore', async () => {
+  const actual = await vi.importActual<any>('firebase/firestore');
+  return {
+    ...actual,
+    collection: (db: any, path: string) => mockCollectionSpy(db, path),
+    doc: (a: any, b?: any, c?: any) => mockDocSpy(a, b, c),
+    writeBatch: () => ({
+      set: mockBatchSet,
+      update: mockBatchUpdate,
+      commit: mockBatchCommit,
+      delete: vi.fn()
+    }),
+    getDocs: vi.fn(),
+    getDoc: vi.fn(),
+    query: vi.fn((coll: any, ...constraints: any[]) => ({ coll, constraints })),
+    where: vi.fn((field: string, op: string, value: any) => ({ field, op, value })),
+    Timestamp: {
+      now: () => ({ toMillis: () => Date.now(), toDate: () => new Date() }),
+      fromDate: (d: Date) => ({ toMillis: () => d.getTime(), toDate: () => d })
+    }
+  };
+});
+
+vi.mock('../../../config/firebase', () => ({
+  db: { type: 'mocked-firestore' }
+}));
 
 describe('Northfleet STO Service & Decision Logic Suite', () => {
   const basePlanningRule: ProductPlanningRule = {
@@ -179,6 +218,154 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
       expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.releaseActionId);
       expect(output.recommendedQuantity).toBe(1500);
+    });
+  });
+
+  describe('3. Existing STO Product-Change & Recalculation Behavior', () => {
+    it('Scenario 10: Existing STO changes product from PRODUCT_A to PRODUCT_B (updating STO record and triggering both products)', async () => {
+      const { validateNorthfleetStoRows, commitNorthfleetStoRequirements } = await import('./northfleetStoService');
+      const { getDocs, writeBatch } = await import('firebase/firestore');
+
+      // Mock DB lookups for Products and existing STO requirement
+      const mockProdA = { id: 'prod-A', code: 'PRODUCT_A', description: 'Product A Desc', preferredDestinationId: 'DEST_CHORLEY' };
+      const mockProdB = { id: 'prod-B', code: 'PRODUCT_B', description: 'Product B Desc', preferredDestinationId: 'DEST_CHORLEY' };
+
+      const existingStoInDb = {
+        id: 'sto-doc-123',
+        stoNumber: '4505115590',
+        productId: 'prod-A',
+        productCode: 'PRODUCT_A',
+        productDescriptionSnapshot: 'Product A Desc',
+        destinationId: 'DEST_NORTHFLEET',
+        destinationCode: 'NORTHFLEET',
+        northfleetDeliveryDate: new Date(2026, 7, 14, 12, 0, 0),
+        barrowCollectionDate: new Date(2026, 7, 13, 12, 0, 0),
+        pallets: 2,
+        cases: 100,
+        casesPerPalletSnapshot: 50,
+        status: 'UPCOMING'
+      };
+
+      vi.mocked(getDocs).mockImplementation(async (q: any) => {
+        // Mock products query
+        if (q?.constraints?.[0]?.field === 'tenantId' && q?.coll?.path === 'products') {
+          return {
+            docs: [
+              { id: 'prod-A', data: () => mockProdA },
+              { id: 'prod-B', data: () => mockProdB }
+            ]
+          } as any;
+        }
+        // Mock destinations query
+        if (q?.coll?.path === 'destinations') {
+          return { docs: [{ id: 'DEST_NORTHFLEET', data: () => ({ destinationCode: 'NORTHFLEET' }) }] } as any;
+        }
+        // Mock existing STO query
+        if (q?.coll?.path === 'northfleetStoRequirements') {
+          return {
+            docs: [
+              { id: 'sto-doc-123', data: () => existingStoInDb }
+            ]
+          } as any;
+        }
+        return { docs: [] } as any;
+      });
+
+      // 1. Parse new paste where STO 4505115590 is now PRODUCT_B with 150 cases
+      const newPaste = `15-Aug-2026\t4505115590\tPRODUCT_B\t3\t150\t50`;
+      const parsedRows = parseNorthfleetStoPaste(newPaste, 2026);
+      expect(parsedRows.length).toBe(1);
+
+      // 2. Validate against existing DB
+      const validated = await validateNorthfleetStoRows(parsedRows, 'tenant-1', 'site-1');
+      expect(validated.length).toBe(1);
+      expect(validated[0].validationStatus).toBe('EXISTING_STO_CHANGED');
+      expect(validated[0].existingRequirementId).toBe('sto-doc-123');
+      expect(validated[0].previousProductId).toBe('prod-A');
+      expect(validated[0].matchedProductId).toBe('prod-B');
+
+      // 3. Commit the STO changes
+      mockBatchUpdate.mockClear();
+      mockBatchSet.mockClear();
+      mockBatchCommit.mockClear();
+
+      const commitResult = await commitNorthfleetStoRequirements('tenant-1', 'site-1', validated, 'test-planner');
+      expect(commitResult.success).toBe(true);
+      expect(commitResult.data?.updatedCount).toBe(1);
+
+      // Assert batch update updated existing record 'sto-doc-123' with Product B details
+      expect(mockBatchUpdate).toHaveBeenCalled();
+      const updateCall = mockBatchUpdate.mock.calls.find(c => c[0].path === 'northfleetStoRequirements/sto-doc-123' || c[0].id === 'sto-doc-123');
+      expect(updateCall).toBeDefined();
+      expect(updateCall[1]).toMatchObject({
+        productId: 'prod-B',
+        productCode: 'PRODUCT_B',
+        productDescriptionSnapshot: 'Product B Desc',
+        cases: 150,
+        pallets: 3
+      });
+
+      // 4. Verify Decision Logic: Product A now has 0 STO cases (stale protection removed)
+      const inputProdA = createBaseInput({
+        productId: 'prod-A',
+        productCodeSnapshot: 'PRODUCT_A',
+        inventoryTotal: 5000,
+        outstandingStoCases: 0 // Old STO protection removed
+      });
+      const decisionProdA = evaluateDecision(inputProdA);
+      expect(decisionProdA.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.releaseActionId);
+      expect(decisionProdA.recommendedQuantity).toBe(4000); // 5000 - 1000 base min
+      expect(decisionProdA.reasonCodes).not.toContain('NORTHFLEET_STO_PROTECTED' as any);
+
+      // 5. Verify Decision Logic: Product B now receives 150 STO protection cases
+      const inputProdB = createBaseInput({
+        productId: 'prod-B',
+        productCodeSnapshot: 'PRODUCT_B',
+        inventoryTotal: 5000,
+        outstandingStoCases: 150 // New STO protection applied
+      });
+      const decisionProdB = evaluateDecision(inputProdB);
+      expect(decisionProdB.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.releaseActionId);
+      expect(decisionProdB.recommendedQuantity).toBe(3850); // 5000 - (1000 min + 150 STO)
+      expect(decisionProdB.reasonCodes).toContain('NORTHFLEET_STO_PROTECTED' as any);
+    });
+  });
+
+  describe('4. STO Read Failure Fail-Safe Behavior (Fail Closed)', () => {
+    it('Scenario 11: getOutstandingStoCasesForProduct throws on Firestore read failure and does not return 0', async () => {
+      const { getOutstandingStoCasesForProduct } = await import('./northfleetStoService');
+      const { getDocs } = await import('firebase/firestore');
+
+      // Simulate a network / Firestore read failure
+      vi.mocked(getDocs).mockRejectedValueOnce(new Error('Firestore network timeout or permission denied'));
+
+      await expect(
+        getOutstandingStoCasesForProduct('tenant-1', 'site-1', 'prod-error')
+      ).rejects.toThrow(/Failed to retrieve Northfleet STO requirements for product prod-error/);
+    });
+
+    it('Scenario 12: Recommendation generation fails safely on STO read error without creating unsafe recommendation', async () => {
+      const { generateRecommendationForProduct } = await import('./recommendationService');
+      const { getDocs, getDoc } = await import('firebase/firestore');
+
+      // Mock getProduct to return valid product
+      vi.mocked(getDoc).mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ id: 'prod-fail', productCode: 'SKU-FAIL', description: 'Product Fail' })
+      } as any);
+
+      // STO lookup fails
+      vi.mocked(getDocs).mockImplementation(async (q: any) => {
+        if (q?.coll?.path === 'northfleetStoRequirements') {
+          throw new Error('Connection lost while reading STO requirements');
+        }
+        return { docs: [], empty: true } as any;
+      });
+
+      const res = await generateRecommendationForProduct('tenant-1', 'site-1', 'prod-fail', true);
+
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/Failed to retrieve Northfleet STO requirements/);
     });
   });
 });
