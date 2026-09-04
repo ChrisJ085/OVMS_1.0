@@ -15,7 +15,8 @@ import {
   ArrowRight,
   Clock,
   Trash2,
-  Edit2
+  Edit2,
+  AlertCircle
 } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
@@ -48,6 +49,7 @@ export const NorthfleetStoPage: React.FC = () => {
   // Active requirements list state
   const [requirements, setRequirements] = useState<NorthfleetStoRequirement[]>([]);
   const [isLoadingRequirements, setIsLoadingRequirements] = useState(true);
+  const [requirementsError, setRequirementsError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [activeTab, setActiveTab] = useState<'REQUIREMENTS' | 'PASTE_IMPORT' | 'PRODUCT_SUMMARY'>('REQUIREMENTS');
@@ -60,9 +62,16 @@ export const NorthfleetStoPage: React.FC = () => {
   // Load requirements on mount or site change
   const fetchRequirements = async () => {
     setIsLoadingRequirements(true);
-    const data = await getNorthfleetStoRequirements(tenantId, siteId);
-    setRequirements(data);
-    setIsLoadingRequirements(false);
+    setRequirementsError(null);
+    try {
+      const data = await getNorthfleetStoRequirements(tenantId, siteId);
+      setRequirements(data);
+    } catch (err: any) {
+      console.error('Failed to load Northfleet STO requirements:', err);
+      setRequirementsError(err?.message || 'Unable to load Northfleet STO requirements');
+    } finally {
+      setIsLoadingRequirements(false);
+    }
   };
 
   useEffect(() => {
@@ -274,6 +283,29 @@ export const NorthfleetStoPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* STO Read Failure Alert */}
+        {requirementsError && (
+          <div className="mt-4 p-4 bg-rose-950/70 border border-rose-800/80 rounded-lg text-sm text-rose-200 flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-rose-200">Unable to load Northfleet STO requirements</p>
+                <p className="text-xs text-rose-300/90 mt-0.5">{requirementsError}</p>
+                <p className="text-xs text-rose-300/70 mt-1">
+                  Stock protection and STO commitment figures cannot be determined until database connectivity is restored.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={fetchRequirements}
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-rose-800 hover:bg-rose-700 text-rose-100 rounded-md transition-colors shadow-sm"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Retry
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Metrics Summary Cards */}
@@ -283,7 +315,7 @@ export const NorthfleetStoPage: React.FC = () => {
             <span className="text-xs font-semibold uppercase tracking-wider">Active STOs</span>
             <Truck className="w-4 h-4 text-indigo-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-100">{metrics.count}</div>
+          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.count}</div>
           <div className="text-xs text-slate-400 mt-1">Outstanding commitments</div>
         </div>
 
@@ -292,7 +324,7 @@ export const NorthfleetStoPage: React.FC = () => {
             <span className="text-xs font-semibold uppercase tracking-wider">Affected Products</span>
             <Package className="w-4 h-4 text-blue-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-100">{metrics.affectedProducts}</div>
+          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.affectedProducts}</div>
           <div className="text-xs text-slate-400 mt-1">SKUs with STO protection</div>
         </div>
 
@@ -301,7 +333,7 @@ export const NorthfleetStoPage: React.FC = () => {
             <span className="text-xs font-semibold uppercase tracking-wider">Protected Cases</span>
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-100">{metrics.totalCases.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.totalCases.toLocaleString()}</div>
           <div className="text-xs text-slate-400 mt-1">Cases held at Barrow</div>
         </div>
 
@@ -310,7 +342,7 @@ export const NorthfleetStoPage: React.FC = () => {
             <span className="text-xs font-semibold uppercase tracking-wider">Protected Pallets</span>
             <Package className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-100">{metrics.totalPallets.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.totalPallets.toLocaleString()}</div>
           <div className="text-xs text-slate-400 mt-1">Pallets reserved</div>
         </div>
 
@@ -320,7 +352,7 @@ export const NorthfleetStoPage: React.FC = () => {
             <Calendar className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-lg font-bold text-slate-100">
-            {metrics.nextCollection ? formatDate(metrics.nextCollection) : 'None'}
+            {requirementsError ? '—' : (metrics.nextCollection ? formatDate(metrics.nextCollection) : 'None')}
           </div>
           <div className="text-xs text-slate-400 mt-1">Barrow collection date</div>
         </div>
@@ -337,7 +369,7 @@ export const NorthfleetStoPage: React.FC = () => {
           }`}
         >
           <Truck className="w-4 h-4" />
-          Active STO Requirements ({requirements.length})
+          Active STO Requirements {requirementsError ? '(!)' : `(${requirements.length})`}
         </button>
         <button
           onClick={() => setActiveTab('PASTE_IMPORT')}
@@ -406,6 +438,21 @@ export const NorthfleetStoPage: React.FC = () => {
             <div className="p-8 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
               <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
               <span>Loading Northfleet STO requirements...</span>
+            </div>
+          ) : requirementsError ? (
+            <div className="p-12 text-center text-rose-300 bg-rose-950/40 rounded-xl border border-rose-800/80 space-y-3">
+              <AlertCircle className="w-10 h-10 mx-auto text-rose-400" />
+              <p className="font-semibold text-lg text-rose-200">Unable to load Northfleet STO requirements</p>
+              <p className="text-sm text-rose-300/80 max-w-md mx-auto">
+                {requirementsError}
+              </p>
+              <button
+                onClick={fetchRequirements}
+                className="mt-2 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-rose-700 hover:bg-rose-600 rounded-lg transition-colors shadow-sm"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Retry Loading
+              </button>
             </div>
           ) : filteredRequirements.length === 0 ? (
             <div className="p-12 text-center text-slate-400 bg-slate-900/50 rounded-xl border border-dashed border-slate-700">
@@ -756,7 +803,25 @@ export const NorthfleetStoPage: React.FC = () => {
             </p>
           </div>
 
-          {productSummaries.length === 0 ? (
+          {isLoadingRequirements ? (
+            <div className="p-8 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+              <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
+              <span>Loading Northfleet STO requirements...</span>
+            </div>
+          ) : requirementsError ? (
+            <div className="p-12 text-center text-rose-300 bg-rose-950/40 rounded-xl border border-rose-800/80 space-y-3">
+              <AlertCircle className="w-10 h-10 mx-auto text-rose-400" />
+              <p className="font-semibold text-lg text-rose-200">Unable to load Northfleet STO requirements</p>
+              <p className="text-sm text-rose-300/80 max-w-md mx-auto">{requirementsError}</p>
+              <button
+                onClick={fetchRequirements}
+                className="mt-2 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-rose-700 hover:bg-rose-600 rounded-lg transition-colors shadow-sm"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Retry Loading
+              </button>
+            </div>
+          ) : productSummaries.length === 0 ? (
             <div className="p-8 text-center text-slate-400">
               No active STO requirements loaded.
             </div>

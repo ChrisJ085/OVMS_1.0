@@ -618,9 +618,9 @@ export const getNorthfleetStoRequirements = async (
     });
 
     return list;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to fetch STO requirements:', error);
-    return [];
+    throw new Error(`Failed to retrieve Northfleet STO requirements: ${error?.message || error}`);
   }
 };
 

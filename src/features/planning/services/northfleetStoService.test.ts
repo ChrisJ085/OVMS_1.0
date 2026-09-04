@@ -367,5 +367,105 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       expect(res.success).toBe(false);
       expect(res.error).toMatch(/Failed to retrieve Northfleet STO requirements/);
     });
+
+    it('Scenario 13: getNorthfleetStoRequirements returns STO requirements normally on successful retrieval', async () => {
+      const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
+      const { getDocs, Timestamp } = await import('firebase/firestore');
+
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 2);
+
+      const mockDocs = [
+        {
+          id: 'sto-doc-1',
+          data: () => ({
+            stoNumber: '4505115590',
+            productCode: '3414254',
+            cases: 100,
+            pallets: 2,
+            status: 'UPCOMING',
+            barrowCollectionDate: Timestamp.fromDate(futureDate),
+            tenantId: 'tenant-1',
+            siteId: 'site-1'
+          })
+        },
+        {
+          id: 'sto-doc-2',
+          data: () => ({
+            stoNumber: '4505115591',
+            productCode: '3414255',
+            cases: 200,
+            pallets: 4,
+            status: 'UPCOMING',
+            barrowCollectionDate: Timestamp.fromDate(futureDate),
+            tenantId: 'tenant-1',
+            siteId: 'site-1'
+          })
+        }
+      ];
+
+      vi.mocked(getDocs).mockResolvedValueOnce({
+        docs: mockDocs,
+        empty: false,
+        size: 2
+      } as any);
+
+      const requirements = await getNorthfleetStoRequirements('tenant-1', 'site-1');
+
+      expect(requirements).toHaveLength(2);
+      expect(requirements[0].stoNumber).toBe('4505115590');
+      expect(requirements[0].cases).toBe(100);
+      expect(requirements[0].status).toBe('UPCOMING');
+      expect(requirements[1].stoNumber).toBe('4505115591');
+      expect(requirements[1].cases).toBe(200);
+    });
+
+    it('Scenario 14: getNorthfleetStoRequirements throws on Firestore read failure and does not return []', async () => {
+      const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
+      const { getDocs } = await import('firebase/firestore');
+
+      // Simulate network / Firestore read failure
+      vi.mocked(getDocs).mockRejectedValueOnce(new Error('Firestore read network failure or timeout'));
+
+      let didThrow = false;
+      let returnedValue: any = null;
+
+      try {
+        returnedValue = await getNorthfleetStoRequirements('tenant-1', 'site-1');
+      } catch (err: any) {
+        didThrow = true;
+        expect(err).toBeInstanceOf(Error);
+        expect(err.message).toMatch(/Failed to retrieve Northfleet STO requirements: Firestore read network failure or timeout/);
+      }
+
+      // Proves failure is thrown and NEVER returned as an empty array
+      expect(didThrow).toBe(true);
+      expect(returnedValue).not.toEqual([]);
+      expect(returnedValue).toBeNull();
+    });
+
+    it('Scenario 15: Firestore read failure is surfaced to caller/UI handler without masking as empty STOs', async () => {
+      const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
+      const { getDocs } = await import('firebase/firestore');
+
+      vi.mocked(getDocs).mockRejectedValueOnce(new Error('Unavailable / Deadline Exceeded'));
+
+      // Emulate the UI state handler
+      let requirementsState: any[] | null = null;
+      let errorState: string | null = null;
+
+      try {
+        const data = await getNorthfleetStoRequirements('tenant-1', 'site-1');
+        requirementsState = data;
+      } catch (err: any) {
+        errorState = err?.message || 'Unable to load Northfleet STO requirements';
+      }
+
+      // UI state does not receive [] (which would falsely show "No STO Requirements Found")
+      expect(requirementsState).toBeNull();
+      // UI state receives the propagated failure
+      expect(errorState).toContain('Failed to retrieve Northfleet STO requirements');
+      expect(errorState).toContain('Unavailable / Deadline Exceeded');
+    });
   });
 });
