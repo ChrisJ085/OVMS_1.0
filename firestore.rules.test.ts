@@ -1229,6 +1229,11 @@ describe('Firestore Security Rules', () => {
   });
 
   describe('Tenant Deletion Protection', () => {
+    beforeEach(async () => {
+      await setupUser('admin1', 'TENANT_ADMIN', 'tenant1');
+      await setupUser('super1', 'PLATFORM_SUPERUSER', null);
+    });
+
     it('prevents normal writes when tenant is DELETION_PENDING', async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         const db = context.firestore();

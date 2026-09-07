@@ -11,12 +11,14 @@ service cloud.firestore {
     }
 
     function getUserProfile() {
-      return (request.auth != null && request.auth.uid != null) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data : null;
+      return (request.auth != null && request.auth.uid != null && exists(/databases/$(database)/documents/users/$(request.auth.uid))) 
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data 
+        : null;
     }
 
     function isAccountActive() {
       let p = getUserProfile();
-      return isAuthenticated() && p != null && (p.accountStatus == 'ACTIVE' || !('accountStatus' in p) || p.accountStatus == 'active');
+      return p != null && (p.accountStatus == 'ACTIVE' || !('accountStatus' in p) || p.accountStatus == 'active');
     }
 
     // ------------------------------------------------------------------------
@@ -24,13 +26,14 @@ service cloud.firestore {
     // ------------------------------------------------------------------------
     function isSuperuser() {
       let p = getUserProfile();
-      return isAuthenticated() && p != null && p.role == 'PLATFORM_SUPERUSER' && ('accountStatus' in p) && (p.accountStatus == 'ACTIVE' || p.accountStatus == 'active');
+      return (p != null && p.role == 'PLATFORM_SUPERUSER' && ('accountStatus' in p) && (p.accountStatus == 'ACTIVE' || p.accountStatus == 'active')) ||
+             (request.auth != null && 'role' in request.auth.token && request.auth.token.role == 'PLATFORM_SUPERUSER');
     }
 
     function isRole(tenantId, roleName) {
       let profile = getUserProfile();
-      return isAccountActive() &&
-             profile != null && 
+      return profile != null &&
+             (profile.accountStatus == 'ACTIVE' || !('accountStatus' in profile) || profile.accountStatus == 'active') &&
              (profile.role == roleName || 
               (roleName == 'PLANNER' && (profile.role == 'PLANNER' || profile.role == 'planner')) ||
               (roleName == 'TENANT_ADMIN' && (profile.role == 'TENANT_ADMIN' || profile.role == 'tenant_admin' || profile.role == 'admin')) ||
@@ -52,7 +55,7 @@ service cloud.firestore {
     // ------------------------------------------------------------------------
     function belongsToUserTenant(tenantId) {
       let profile = getUserProfile();
-      return isAccountActive() && (isSuperuser() || (tenantId != null && profile.tenantId == tenantId));
+      return isAccountActive() && (isSuperuser() || (tenantId != null && profile != null && profile.tenantId == tenantId));
     }
 
     function isTenantActiveForWrites(tenantId) {
@@ -63,13 +66,13 @@ service cloud.firestore {
 
     function isAssignedToSite(siteId) {
       let profile = getUserProfile();
-      return isSuperuser() ||
-             (profile != null && (profile.role == 'TENANT_ADMIN' || profile.role == 'tenant_admin' || profile.role == 'admin') && profile.tenantId != null) ||
-             (profile != null &&
-              (siteId == null || siteId == '' ||
-               (('siteIds' in profile) && profile.siteIds != null && profile.siteIds is list && (siteId in profile.siteIds || profile.siteIds.size() == 0)) ||
-               (('siteId' in profile) && profile.siteId == siteId) ||
-               !('siteIds' in profile) || profile.siteIds == null));
+      return profile != null && (
+        (profile.role == 'PLATFORM_SUPERUSER' && (profile.accountStatus == 'ACTIVE' || profile.accountStatus == 'active')) ||
+        ((profile.role == 'TENANT_ADMIN' || profile.role == 'tenant_admin' || profile.role == 'admin') && profile.tenantId != null) ||
+        (siteId != null && siteId != '' &&
+          ((('siteIds' in profile) && profile.siteIds != null && profile.siteIds is list && (siteId in profile.siteIds)) ||
+           (('siteId' in profile) && profile.siteId == siteId)))
+      );
     }
 
     function getSiteId(doc) {
@@ -96,7 +99,7 @@ service cloud.firestore {
     // 4. Warehouse & Exception Allow-Lists
     // ------------------------------------------------------------------------
     function isOnlyUpdatingWarehouseFields() {
-      let allowedFields = ['priorityStatus', 'progressQuantity', 'remainingQuantity', 'progressPercent', 'latestProgressNote', 'completedAt', 'cancelledAt', 'modifiedBy', 'modifiedDate'];
+      let allowedFields = ['priorityStatus', 'status', 'warehouseProgress', 'progressQuantity', 'remainingQuantity', 'progressPercent', 'latestProgressNote', 'completedAt', 'cancelledAt', 'modifiedBy', 'modifiedDate'];
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields) &&
              (!('modifiedBy' in request.resource.data) || request.resource.data.modifiedBy == request.auth.uid) &&
              (!('progressPercent' in request.resource.data) || (request.resource.data.progressPercent >= 0 && request.resource.data.progressPercent <= 100)) &&
@@ -149,7 +152,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSuperuser() ||
                      (isAuthenticated() && request.auth.uid == userId) ||
-                     (isAuthenticated() && hasTenantAccess(resource.data.tenantId) && getUserProfile() != null && getUserProfile().role != 'DISPLAY');
+                     (isTenantAdmin(resource.data.tenantId) && resource.data.role != 'PLATFORM_SUPERUSER');
                      
       allow create: if isSuperuser() ||
                       (isAuthenticated() && request.auth.uid == userId) ||
@@ -414,7 +417,7 @@ service cloud.firestore {
     // Operational Data
     // ------------------------------------------------------------------------
     match /priorities/{id} {
-      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource)) && getUserProfile().role != 'DISPLAY';
+      allow read: if hasAssignedSiteAccess(resource.data.tenantId, getSiteId(resource));
       allow create: if isSuperuser() || isTenantAdmin(request.resource.data.tenantId) || (isPlanner(request.resource.data.tenantId) && isAssignedToSite(getSiteId(request.resource)));
       allow update: if isSuperuser() || 
                        isTenantAdmin(resource.data.tenantId) ||
@@ -540,7 +543,10 @@ service cloud.firestore {
       allow create: if isSuperuser() || 
                      (isAccountActive() &&
                       request.resource.data.tenantId == getUserProfile().tenantId &&
-                      (!('siteId' in request.resource.data) || request.resource.data.siteId == null || isAssignedToSite(request.resource.data.siteId)));
+                      (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
+                      (!('performedBy' in request.resource.data) || request.resource.data.performedBy == request.auth.uid) &&
+                      (!('siteId' in request.resource.data) || request.resource.data.siteId == null || isAssignedToSite(request.resource.data.siteId)) &&
+                      (!('createdDate' in request.resource.data) || request.resource.data.createdDate == request.time || request.resource.data.createdDate is timestamp));
       allow update: if false;
       allow delete: if false;
     }
