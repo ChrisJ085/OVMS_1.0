@@ -3,7 +3,6 @@ import { ShieldAlert, Trash2, AlertTriangle, AlertOctagon, Info, RefreshCw, X } 
 import { useAuth } from '../../../auth/context/AuthContext';
 import { db } from '../../../../config/firebase';
 import { collection, query, where, getDocs, getCountFromServer, doc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface TenantDeletionWorkflowProps {
   tenant: any;

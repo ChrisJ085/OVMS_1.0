@@ -56,6 +56,27 @@ function firestoreValueToJs(val: any): any {
   return null;
 }
 
+async function safeVerifyCallerToken(callerToken: string): Promise<{ uid: string; email?: string }> {
+  try {
+    const decoded = await auth.verifyIdToken(callerToken);
+    return { uid: decoded.uid, email: decoded.email };
+  } catch (adminErr: any) {
+    console.info('[Server Auth Verification] Admin SDK verifyIdToken fallback to Identity Toolkit lookup:', adminErr?.message || adminErr);
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_API_KEY}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: callerToken })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.users || data.users.length === 0) {
+      throw new Error(data.error?.message || 'Invalid or expired Firebase ID token.');
+    }
+    const user = data.users[0];
+    return { uid: user.localId, email: user.email };
+  }
+}
+
 async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ exists: boolean; data?: any }> {
   try {
     const callerDoc = await db.collection("users").doc(uid).get();
@@ -179,6 +200,21 @@ async function safeCreateAuthUser(email: string, password?: string, displayName?
       }
       throw new Error(`Failed to create Auth account via REST: ${data.error?.message || JSON.stringify(data)}`);
     }
+    if (displayName && data.idToken) {
+      try {
+        await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${FIREBASE_API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idToken: data.idToken,
+            displayName,
+            returnSecureToken: false
+          })
+        });
+      } catch (updErr) {
+        console.warn('Failed to update displayName on Auth account:', updErr);
+      }
+    }
     return { uid: data.localId, email: data.email || email };
   }
 }
@@ -191,17 +227,25 @@ async function safeCreateUserProfileDoc(uid: string, profilePayload: any, caller
       console.info(`[Server REST Integration] Writing user profile doc via Firestore REST API.`);
       const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
       const restPayload = { ...profilePayload };
-      const nowIso = new Date().toISOString();
+      const now = new Date();
       for (const k of Object.keys(restPayload)) {
         if (restPayload[k] && typeof restPayload[k] === 'object' && ('_isServerTimestamp' in restPayload[k] || restPayload[k].methodName === 'serverTimestamp' || typeof restPayload[k].isEqual === 'function')) {
-          restPayload[k] = nowIso;
+          restPayload[k] = now;
         }
       }
-      const res = await fetch(url, {
+      let res = await fetch(url, {
         method: "PATCH",
         headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
       });
+      if (!res.ok && res.status === 404) {
+        const createUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users?documentId=${uid}`;
+        res = await fetch(createUrl, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
+        });
+      }
       if (!res.ok) {
         const errJson = await res.json();
         throw new Error(`Firestore REST set profile failed (${res.status}): ${errJson.error?.message || JSON.stringify(errJson)}`);
@@ -220,10 +264,10 @@ async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Prom
       console.info(`[Server REST Integration] Creating audit log entry via Firestore REST API.`);
       const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/auditLogs`;
       const restPayload = { ...auditPayload };
-      const nowIso = new Date().toISOString();
+      const now = new Date();
       for (const k of Object.keys(restPayload)) {
         if (restPayload[k] && typeof restPayload[k] === 'object' && ('_isServerTimestamp' in restPayload[k] || restPayload[k].methodName === 'serverTimestamp' || typeof restPayload[k].isEqual === 'function')) {
-          restPayload[k] = nowIso;
+          restPayload[k] = now;
         }
       }
       const res = await fetch(url, {
@@ -432,7 +476,7 @@ router.get("/admin/firebase-diagnostics", async (req, res) => {
     const callerToken = authHeader.split('Bearer ')[1];
     let verifiedToken;
     try {
-      verifiedToken = await auth.verifyIdToken(callerToken);
+      verifiedToken = await safeVerifyCallerToken(callerToken);
     } catch (error: any) {
       return res.status(401).json({ error: `Unauthorized: Invalid token (${error.message})` });
     }
@@ -472,9 +516,9 @@ router.post("/tenant-deletion", async (req, res) => {
     const callerToken = authHeader.split('Bearer ')[1];
     let verifiedToken;
     try {
-      verifiedToken = await auth.verifyIdToken(callerToken);
-    } catch (error) {
-      return res.status(401).json({ error: "Unauthorized: Invalid token" });
+      verifiedToken = await safeVerifyCallerToken(callerToken);
+    } catch (error: any) {
+      return res.status(401).json({ error: `Unauthorized: Invalid token (${error.message})` });
     }
 
     const verifiedUid = verifiedToken.uid;
@@ -550,9 +594,9 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     const callerToken = authHeader.split('Bearer ')[1];
     let verifiedToken;
     try {
-      verifiedToken = await auth.verifyIdToken(callerToken);
-    } catch (error) {
-      return res.status(401).json({ error: "Unauthorized: Invalid token" });
+      verifiedToken = await safeVerifyCallerToken(callerToken);
+    } catch (error: any) {
+      return res.status(401).json({ error: `Unauthorized: Invalid token (${error.message})` });
     }
 
     const verifiedUid = verifiedToken.uid;
@@ -595,7 +639,7 @@ router.post("/admin/provision-user", async (req, res) => {
     const callerToken = authHeader.split('Bearer ')[1];
     let verifiedToken;
     try {
-      verifiedToken = await auth.verifyIdToken(callerToken);
+      verifiedToken = await safeVerifyCallerToken(callerToken);
     } catch (error: any) {
       return res.status(401).json({ success: false, error: `Unauthorized: Invalid token (${error.message})` });
     }

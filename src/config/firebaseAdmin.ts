@@ -1,4 +1,4 @@
-import { applicationDefault, getApps, initializeApp, App } from 'firebase-admin/app';
+import { applicationDefault, cert, getApps, initializeApp, App } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getStorage, Storage } from 'firebase-admin/storage';
@@ -22,11 +22,36 @@ if (getApps().length > 0) {
   adminApp = getApps()[0];
 } else {
   try {
-    adminApp = initializeApp({
-      credential: applicationDefault(),
-      projectId,
-      storageBucket: `${projectId}.firebasestorage.app`
-    });
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      let serviceAccount: any;
+      try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      } catch {
+        const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT, 'base64').toString('utf8');
+        serviceAccount = JSON.parse(decoded);
+      }
+      adminApp = initializeApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id || projectId,
+        storageBucket: `${projectId}.firebasestorage.app`
+      });
+    } else if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+      adminApp = initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        }),
+        projectId,
+        storageBucket: `${projectId}.firebasestorage.app`
+      });
+    } else {
+      adminApp = initializeApp({
+        credential: applicationDefault(),
+        projectId,
+        storageBucket: `${projectId}.firebasestorage.app`
+      });
+    }
   } catch (err) {
     adminApp = initializeApp({
       projectId,

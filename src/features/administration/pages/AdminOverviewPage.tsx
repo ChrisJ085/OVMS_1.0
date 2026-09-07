@@ -18,10 +18,7 @@ import {
   addDoc,
   Timestamp
 } from 'firebase/firestore';
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { db, auth, app, firebaseConfig } from '../../../config/firebase';
+import { db, auth } from '../../../config/firebase';
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -322,29 +319,19 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Handle Account Unlock
   const handleUnlockUser = async (targetUid: string) => {
-    if (!app || !db) return;
+    if (!db) return;
     try {
-      // 1. Try secure Cloud Function first
-      const functionsInstance = getFunctions(app);
-      const unlockFunc = httpsCallable(functionsInstance, 'unlockUser');
-      await unlockFunc({ targetUid });
+      await updateDoc(doc(db, 'users', targetUid), {
+        accountStatus: 'ACTIVE',
+        failedLoginAttempts: 0,
+        failedAttemptWindowStartedAt: null,
+        lockedAt: null,
+        modifiedBy: userProfile?.uid || 'ADMIN',
+        modifiedDate: serverTimestamp()
+      });
       alert('User account unlocked successfully.');
-    } catch (err: any) {
-      console.warn('Cloud Function unlock failed, falling back to direct write:', err);
-      // 2. Direct Firestore write fallback
-      try {
-        await updateDoc(doc(db, 'users', targetUid), {
-          accountStatus: 'ACTIVE',
-          failedLoginAttempts: 0,
-          failedAttemptWindowStartedAt: null,
-          lockedAt: null,
-          modifiedBy: userProfile?.uid || 'ADMIN',
-          modifiedDate: serverTimestamp()
-        });
-        alert('User account unlocked successfully (via direct database sync).');
-      } catch (directErr: any) {
-        alert(`Unlock failed: ${directErr.message}`);
-      }
+    } catch (directErr: any) {
+      alert(`Unlock failed: ${directErr.message}`);
     }
     fetchUsers();
   };
@@ -368,7 +355,7 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Handle Password Reset to Temp Pass
   const handleResetPassword = async (targetUid: string) => {
-    if (!app || !db) return;
+    if (!db) return;
     const tempPass = prompt('Enter new temporary password for user (minimum 8 characters):', 'TempPass123!');
     if (!tempPass) return;
     if (tempPass.length < 8) {
@@ -377,28 +364,18 @@ export const AdminOverviewPage: React.FC = () => {
     }
 
     try {
-      // 1. Try secure Cloud Function first
-      const functionsInstance = getFunctions(app);
-      const resetFunc = httpsCallable(functionsInstance, 'resetUserPassword');
-      await resetFunc({ targetUid, newPassword: tempPass });
-      alert('User password has been reset. First-login reset is forced.');
-    } catch (err: any) {
-      console.warn('Cloud Function reset failed, falling back to direct write:', err);
-      // 2. Direct write fallback (updates profile only; actual Auth change should be done by user or admin console)
-      try {
-        await updateDoc(doc(db, 'users', targetUid), {
-          requiresPasswordChange: true,
-          accountStatus: 'ACTIVE',
-          failedLoginAttempts: 0,
-          failedAttemptWindowStartedAt: null,
-          lockedAt: null,
-          modifiedBy: userProfile?.uid || 'ADMIN',
-          modifiedDate: serverTimestamp()
-        });
-        alert(`User profile updated. Please instruct user to log in and change their password. Temporary password configured in profile reset: ${tempPass}`);
-      } catch (directErr: any) {
-        alert(`Reset failed: ${directErr.message}`);
-      }
+      await updateDoc(doc(db, 'users', targetUid), {
+        requiresPasswordChange: true,
+        accountStatus: 'ACTIVE',
+        failedLoginAttempts: 0,
+        failedAttemptWindowStartedAt: null,
+        lockedAt: null,
+        modifiedBy: userProfile?.uid || 'ADMIN',
+        modifiedDate: serverTimestamp()
+      });
+      alert(`User profile updated. Please instruct user to log in and change their password. Temporary password configured in profile reset: ${tempPass}`);
+    } catch (directErr: any) {
+      alert(`Reset failed: ${directErr.message}`);
     }
     fetchUsers();
   };
@@ -431,7 +408,6 @@ export const AdminOverviewPage: React.FC = () => {
     try {
       const token = await user?.getIdToken();
 
-      // 1. Try secure REST endpoint first
       const apiRes = await fetch('/api/admin/provision-user', {
         method: 'POST',
         headers: {
@@ -449,7 +425,17 @@ export const AdminOverviewPage: React.FC = () => {
         })
       });
 
-      const apiData = await apiRes.json();
+      const resText = await apiRes.text();
+      let apiData: any;
+      try {
+        apiData = JSON.parse(resText);
+      } catch {
+        if (!apiRes.ok) {
+          throw new Error(`Server returned HTTP ${apiRes.status}. If deployed to Vercel, ensure the latest build is deployed.`);
+        }
+        throw new Error(`Unexpected server response: ${resText.slice(0, 150)}`);
+      }
+
       if (!apiRes.ok || !apiData.success) {
         throw new Error(apiData.error || apiData.message || 'Failed to provision account');
       }
@@ -463,44 +449,14 @@ export const AdminOverviewPage: React.FC = () => {
       setSelectedSites([]);
       setNewUserTempPass('TempPass123!');
     } catch (apiErr: any) {
-      console.warn('REST provisioning failed, attempting Firebase Function fallback:', apiErr);
-
-      // 2. Fallback to Cloud Function if REST fails
-      try {
-        const functionsInstance = getFunctions(app!);
-        const createUserFunc = httpsCallable(functionsInstance, 'createOvmsUser');
-        const response = await createUserFunc({
-          email: newUserEmail.toLowerCase().trim(),
-          displayName: newUserDisplayName.trim(),
-          jobTitle: newUserJobTitle.trim(),
-          role: newUserRole,
-          tenantId: actualTenantId,
-          siteIds: sitesArray,
-          temporaryPassword: newUserTempPass,
-          accountStatus: 'ACTIVE'
-        });
-
-        const resData = response.data as any;
-        setCreatingUserMsg(`Success! ${resData.message || `User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
-
-        // Reset form
-        setNewUserEmail('');
-        setNewUserDisplayName('');
-        setNewUserJobTitle('');
-        setSelectedSites([]);
-        setNewUserTempPass('TempPass123!');
-      } catch (funcErr: any) {
-        console.error('Error provisioning user:', funcErr);
-        let errorText = apiErr.message || funcErr.message || 'Failed to create user account.';
-        if (funcErr.code === 'already-exists' || funcErr.message?.includes('already exists') || apiErr.message?.includes('already exists')) {
-          errorText = 'An account with this email address already exists in Firebase Authentication or Firestore.';
-        } else if (funcErr.code === 'permission-denied' || funcErr.message?.includes('permission-denied') || apiErr.message?.includes('Forbidden')) {
-          errorText = `Permission denied: ${funcErr.message || apiErr.message || 'You do not have the required permissions.'}`;
-        } else if (funcErr.code === 'invalid-argument' || funcErr.message?.includes('invalid-argument')) {
-          errorText = `Invalid argument: ${funcErr.message || 'Please verify that all fields are correct.'}`;
-        }
-        setCreatingUserMsg(`Error: ${errorText}`);
+      console.error('Provisioning user failed:', apiErr);
+      let errorText = apiErr.message || 'Failed to create user account.';
+      if (apiErr.message?.includes('already exists') || apiErr.code === 'already-exists') {
+        errorText = 'An account with this email address already exists in Firebase Authentication or Firestore.';
+      } else if (apiErr.message?.includes('Forbidden') || apiErr.message?.includes('permission-denied')) {
+        errorText = `Permission denied: ${apiErr.message}`;
       }
+      setCreatingUserMsg(`Error: ${errorText}`);
     } finally {
       setCreatingUser(false);
       fetchUsers();
