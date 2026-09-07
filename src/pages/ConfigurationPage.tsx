@@ -6,10 +6,9 @@ import { DataTable } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../components/ui/States';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
-import { Settings, Plus, RotateCcw, Building2, Filter, Sparkles } from 'lucide-react';
+import { Plus, RotateCcw, Building2, Filter, Sparkles } from 'lucide-react';
 import { 
   collections, 
-  seedDevelopmentConfiguration,
   deactivateConfigItem,
   reactivateConfigItem,
   createConfigItem,
@@ -42,12 +41,10 @@ export const ConfigurationPage: React.FC = () => {
   const { onboarding, canComplete, isComplete, canModifyConfig } = useSiteOnboarding();
   const { handleOpenOnboardingWizard } = useOutletContext<{ handleOpenOnboardingWizard: () => void }>() || {};
 
-  const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
   const [activeTab, setActiveTab] = useState(TABS[0]);
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [seeding, setSeeding] = useState(false);
   
   // Super User tenant selection state
   const [tenantsList, setTenantsList] = useState<{ id: string; name: string }[]>([]);
@@ -143,16 +140,6 @@ export const ConfigurationPage: React.FC = () => {
 
     return () => unsubscribe();
   }, [tenantId, siteId, activeTab, isSuperUser, selectedTenantFilter]);
-
-  const handleSeed = async () => {
-    setSeeding(true);
-    const targetTenant = (isSuperUser && selectedTenantFilter !== 'ALL') ? selectedTenantFilter : tenantId;
-    const result = await seedDevelopmentConfiguration(targetTenant, siteId);
-    setSeeding(false);
-    if (!result.success) {
-      alert(result.error);
-    }
-  };
 
   const confirmAction = async () => {
     if (!actionItem) return;
@@ -326,16 +313,6 @@ export const ConfigurationPage: React.FC = () => {
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Reopen Site Onboarding
-              </button>
-            )}
-            {developmentMode && (
-              <button
-                onClick={handleSeed}
-                disabled={seeding}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-900 bg-brand-500 hover:bg-brand-400 border border-transparent rounded-md transition-colors disabled:opacity-50"
-              >
-                {seeding ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
-                Load Development Configuration
               </button>
             )}
           </div>

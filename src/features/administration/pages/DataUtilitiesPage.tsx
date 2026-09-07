@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
-import { Download, Upload, Database, CheckCircle, AlertTriangle, XCircle, RotateCcw } from 'lucide-react';
+import { Download, Upload, CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
 import Papa from 'papaparse';
 import { ValidationResult } from '../../../types/importExport';
 import { validateImportData, commitImportData } from '../services/importExportService';
-import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -16,7 +15,6 @@ type ImportType = 'PRODUCTS' | 'LOCATIONS' | 'INVENTORY' | 'PLANNING_RULES' | 'P
 export const DataUtilitiesPage: React.FC = () => {
   const { currentUser } = useAuth();
   const { tenantId, siteId } = useSiteContext();
-  const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
   const [activeTab, setActiveTab] = useState<'imports' | 'history' | 'exports'>('imports');
 
   const [selectedType, setSelectedType] = useState<ImportType>('PRODUCTS');
@@ -27,7 +25,6 @@ export const DataUtilitiesPage: React.FC = () => {
   
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [importSummary, setImportSummary] = useState<any>(null);
-  const [seeding, setSeeding] = useState(false);
   
   const [exportType, setExportType] = useState<ImportType | 'PRIORITIES' | 'RECOMMENDATIONS' | 'AUDIT_LOGS'>('PRODUCTS');
   const [isExporting, setIsExporting] = useState(false);
@@ -185,17 +182,6 @@ export const DataUtilitiesPage: React.FC = () => {
     }
   };
 
-  const handleSeed = async () => {
-    setSeeding(true);
-    const result = await seedDevelopmentConfiguration(tenantId, siteId);
-    setSeeding(false);
-    if (!result.success) {
-      alert(result.error);
-    } else {
-      alert("UAT Example Data loaded successfully.");
-    }
-  };
-
   const validCount = validationResults.filter(r => r.action === 'CREATE' || r.action === 'UPDATE').length;
   const errorCount = validationResults.filter(r => r.action === 'ERROR').length;
   const warningCount = validationResults.filter(r => r.warnings.length > 0).length;
@@ -205,18 +191,6 @@ export const DataUtilitiesPage: React.FC = () => {
       <PageHeader 
         title="Data Utilities" 
         description="Bulk data import, export, and migration tools."
-        actions={
-          developmentMode ? (
-            <button
-              onClick={handleSeed}
-              disabled={seeding}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-900 bg-amber-500 hover:bg-amber-400 border border-transparent rounded-md transition-colors disabled:opacity-50"
-            >
-              {seeding ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-              Load UAT Example Data
-            </button>
-          ) : undefined
-        }
       />
       
       <div className="mb-6 border-b border-slate-700 flex-shrink-0">

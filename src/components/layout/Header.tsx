@@ -2,6 +2,7 @@ import React from 'react';
 import { Building2, Settings2, LogOut, RefreshCw, CheckCircle, AlertCircle, X, Clock } from 'lucide-react';
 import { useAuth } from '../../features/auth/context/AuthContext';
 import { useSiteContext } from '../../contexts/SiteContext';
+import { useEnvironmentMode } from '../../contexts/EnvironmentModeContext';
 import { useRecommendationGeneration } from '../../features/planning/context/RecommendationGenerationContext';
 import { useNavigate } from 'react-router-dom';
 import { DataFreshnessHoverCard } from './DataFreshnessHoverCard';
@@ -9,6 +10,7 @@ import { DataFreshnessHoverCard } from './DataFreshnessHoverCard';
 export const Header: React.FC = () => {
   const { userProfile, logout } = useAuth();
   const { siteId, siteName, availableSites, setSite } = useSiteContext();
+  const { isDevelopmentMode } = useEnvironmentMode();
   const { 
     isGenerating, 
     progress, 
@@ -19,7 +21,6 @@ export const Header: React.FC = () => {
     lastGeneratedText
   } = useRecommendationGeneration();
   const navigate = useNavigate();
-  const developmentMode = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
 
   const handleLogout = async () => {
     try {
@@ -166,7 +167,7 @@ export const Header: React.FC = () => {
           </div>
         ) : null}
 
-        {developmentMode && (
+        {isDevelopmentMode && (
           <div className="hidden lg:flex items-center gap-1 text-[10px] font-medium text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded uppercase tracking-wider">
             <Settings2 className="w-3 h-3 animate-pulse" />
             Sandbox Mode
