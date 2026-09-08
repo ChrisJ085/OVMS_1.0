@@ -205,9 +205,10 @@ describe('apiApp Express routing tests', () => {
 
     expect(statusCode).toBe(401);
     expect(jsonBody.error).toContain('Unauthorized');
+    expect(jsonBody.stage).toBe('PROVISION_START');
   });
 
-  it('routes POST /admin/provision-user correctly (expecting 401 when unauthenticated)', async () => {
+  it('routes POST /admin/provision-user correctly (expecting 401 and stage PROVISION_START when unauthenticated)', async () => {
     let statusCode = 200;
     let jsonBody: any = null;
 
@@ -250,6 +251,58 @@ describe('apiApp Express routing tests', () => {
 
     expect(statusCode).toBe(401);
     expect(jsonBody.error).toContain('Unauthorized');
+    expect(jsonBody.stage).toBe('PROVISION_START');
+  });
+
+  it('reports stage CALLER_TOKEN_VERIFICATION when bearer token is invalid', async () => {
+    let statusCode = 200;
+    let jsonBody: any = null;
+
+    const req: any = {
+      method: 'POST',
+      url: '/api/admin/provision-user',
+      headers: {
+        'content-type': 'application/json',
+        'authorization': 'Bearer invalid-token-12345'
+      },
+      body: {
+        email: 'test@example.com',
+        displayName: 'Test User',
+        role: 'PLANNER'
+      }
+    };
+
+    const res: any = {
+      statusCode: 200,
+      status(code: number) {
+        statusCode = code;
+        this.statusCode = code;
+        return this;
+      },
+      setHeader() {
+        return this;
+      },
+      json(data: any) {
+        jsonBody = data;
+        return this;
+      },
+      end() {
+        return this;
+      }
+    };
+
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        resolve();
+        return res;
+      };
+      (apiApp as any)(req, res);
+    });
+
+    expect(statusCode).toBe(401);
+    expect(jsonBody.error).toContain('Unauthorized');
+    expect(jsonBody.stage).toBe('CALLER_TOKEN_VERIFICATION');
   });
 
   it('routes POST with x-matched-path header when URL is rewritten to /api', async () => {

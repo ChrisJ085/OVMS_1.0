@@ -1,9 +1,17 @@
 import express from "express";
 import { FieldValue, Query, DocumentReference } from 'firebase-admin/firestore';
-import { adminAuth as auth, adminDb as db, resolvedAdminProjectId } from "../config/firebaseAdmin";
+import { adminAuth as auth, adminDb as db, resolvedAdminProjectId, hasAdminCredentials } from "../config/firebaseAdmin";
 
 const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY || "AIzaSyBi4tywQk5WaNIvalD3uSrz4Au7WxolJlM";
 const FIREBASE_PROJECT_ID = resolvedAdminProjectId || "ovms-ad209";
+
+function isServerTimestamp(val: any): boolean {
+  if (!val || typeof val !== 'object') return false;
+  if ('_isServerTimestamp' in val) return true;
+  if (val.methodName === 'serverTimestamp' || val.methodName === 'FieldValue.serverTimestamp') return true;
+  if (val.constructor && (val.constructor.name === 'ServerTimestampTransform' || val.constructor.name === 'FieldValue')) return true;
+  return false;
+}
 
 function jsToFirestoreFields(obj: any): any {
   const fields: Record<string, any> = {};
@@ -17,6 +25,7 @@ function jsToFirestoreFields(obj: any): any {
 
 function jsToFirestoreValue(val: any): any {
   if (val === null || val === undefined) return { nullValue: null };
+  if (isServerTimestamp(val)) return { timestampValue: new Date().toISOString() };
   if (typeof val === "boolean") return { booleanValue: val };
   if (typeof val === "number") return Number.isInteger(val) ? { integerValue: String(val) } : { doubleValue: val };
   if (typeof val === "string") return { stringValue: val };
@@ -78,195 +87,267 @@ async function safeVerifyCallerToken(callerToken: string): Promise<{ uid: string
 }
 
 async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ exists: boolean; data?: any }> {
-  try {
-    const callerDoc = await db.collection("users").doc(uid).get();
-    if (callerDoc.exists) {
-      return { exists: true, data: callerDoc.data() };
-    } else {
-      return { exists: false };
-    }
-  } catch (err: any) {
-    if (callerToken) {
-      try {
-        console.info(`[Server REST Integration] Fetching user profile via Firestore REST API.`);
-        const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
-        const res = await fetch(url, {
-          headers: { "Authorization": `Bearer ${callerToken}` }
-        });
-        if (res.status === 200) {
-          const json = await res.json();
-          return { exists: true, data: firestoreFieldsToJs(json.fields) };
-        } else if (res.status === 404) {
-          return { exists: false };
-        }
-      } catch (restErr) {
-        console.warn(`[Server REST Integration] Fetch profile REST error:`, restErr);
+  if (hasAdminCredentials) {
+    try {
+      const callerDoc = await db.collection("users").doc(uid).get();
+      if (callerDoc.exists) {
+        return { exists: true, data: callerDoc.data() };
+      } else {
+        return { exists: false };
       }
+    } catch (adminErr: any) {
+      console.warn('[Server Admin SDK] Admin getUserProfile failed, falling back to REST:', adminErr?.message || adminErr);
     }
-    return { exists: false };
   }
+
+  if (callerToken) {
+    try {
+      console.info(`[Server REST Integration] Fetching user profile via Firestore REST API for uid: ${uid}`);
+      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
+      const res = await fetch(url, {
+        headers: { "Authorization": `Bearer ${callerToken}` }
+      });
+      if (res.status === 200) {
+        const json = await res.json();
+        return { exists: true, data: firestoreFieldsToJs(json.fields) };
+      } else if (res.status === 404) {
+        return { exists: false };
+      } else {
+        console.warn(`[Server REST Integration] Fetch profile returned status ${res.status}`);
+      }
+    } catch (restErr) {
+      console.warn(`[Server REST Integration] Fetch profile REST error:`, restErr);
+    }
+  }
+  return { exists: false };
 }
 
 async function safeCheckUserExistsByEmailInFirestore(email: string, callerToken?: string, tenantId?: string | null): Promise<boolean> {
-  try {
-    let q: any = db.collection("users").where("email", "==", email);
-    if (tenantId) {
-      q = q.where("tenantId", "==", tenantId);
+  if (hasAdminCredentials) {
+    try {
+      let q: any = db.collection("users").where("email", "==", email);
+      if (tenantId) {
+        q = q.where("tenantId", "==", tenantId);
+      }
+      const snap = await q.get();
+      return !snap.empty;
+    } catch (adminErr: any) {
+      console.warn('[Server Admin SDK] Admin query users failed, falling back to REST:', adminErr?.message || adminErr);
     }
-    const snap = await q.get();
-    return !snap.empty;
-  } catch (err: any) {
-    if (callerToken) {
-      try {
-        console.info(`[Server REST Integration] Querying user profile via Firestore REST API.`);
-        const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`;
-        
-        const filters: any[] = [
-          {
-            fieldFilter: {
-              field: { fieldPath: "email" },
-              op: "EQUAL",
-              value: { stringValue: email }
-            }
+  }
+
+  if (callerToken) {
+    try {
+      console.info(`[Server REST Integration] Querying user profile via Firestore REST API for email: ${email}`);
+      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`;
+      
+      const filters: any[] = [
+        {
+          fieldFilter: {
+            field: { fieldPath: "email" },
+            op: "EQUAL",
+            value: { stringValue: email }
           }
-        ];
-
-        if (tenantId) {
-          filters.push({
-            fieldFilter: {
-              field: { fieldPath: "tenantId" },
-              op: "EQUAL",
-              value: { stringValue: tenantId }
-            }
-          });
         }
+      ];
 
-        const whereClause = filters.length === 1 
-          ? filters[0] 
-          : { compositeFilter: { op: "AND", filters } };
-
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            structuredQuery: {
-              from: [{ collectionId: "users" }],
-              where: whereClause
-            }
-          })
+      if (tenantId) {
+        filters.push({
+          fieldFilter: {
+            field: { fieldPath: "tenantId" },
+            op: "EQUAL",
+            value: { stringValue: tenantId }
+          }
         });
-        if (res.ok) {
-          const results = await res.json();
-          return Array.isArray(results) && results.some((r: any) => r.document);
-        } else {
-          console.warn(`[Server REST Integration] runQuery returned status ${res.status}`);
-          return false;
-        }
-      } catch (restErr) {
-        console.warn(`[Server REST Integration] runQuery REST exception:`, restErr);
+      }
+
+      const whereClause = filters.length === 1 
+        ? filters[0] 
+        : { compositeFilter: { op: "AND", filters } };
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: "users" }],
+            where: whereClause
+          }
+        })
+      });
+      if (res.ok) {
+        const results = await res.json();
+        return Array.isArray(results) && results.some((r: any) => r.document);
+      } else {
+        console.warn(`[Server REST Integration] runQuery returned status ${res.status}`);
         return false;
       }
+    } catch (restErr) {
+      console.warn(`[Server REST Integration] runQuery REST exception:`, restErr);
+      return false;
     }
-    return false;
   }
+  return false;
 }
 
 async function safeCreateAuthUser(email: string, password?: string, displayName?: string): Promise<{ uid: string; email: string }> {
-  try {
-    const userRecord = await auth.createUser({
-      email,
-      password: password || 'TempPass123!',
-      displayName,
-    });
-    return { uid: userRecord.uid, email: userRecord.email || email };
-  } catch (err: any) {
-    console.info(`[Server REST Integration] Creating Auth account via Identity Toolkit REST API.`);
-    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+  if (hasAdminCredentials) {
+    try {
+      const userRecord = await auth.createUser({
         email,
         password: password || 'TempPass123!',
-        returnSecureToken: true
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      if (data.error?.message === 'EMAIL_EXISTS') {
-        const dupErr: any = new Error(`An account with email '${email}' already exists in Firebase Authentication.`);
-        dupErr.code = 'auth/email-already-exists';
-        throw dupErr;
+        displayName,
+      });
+      return { uid: userRecord.uid, email: userRecord.email || email };
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-exists') {
+        throw err;
       }
-      throw new Error(`Failed to create Auth account via REST: ${data.error?.message || JSON.stringify(data)}`);
+      console.warn('[Server Admin SDK] Admin createUser failed, falling back to REST:', err?.message || err);
     }
-    if (displayName && data.idToken) {
-      try {
-        await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${FIREBASE_API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            idToken: data.idToken,
-            displayName,
-            returnSecureToken: false
-          })
-        });
-      } catch (updErr) {
-        console.warn('Failed to update displayName on Auth account:', updErr);
-      }
+  }
+
+  console.info(`[Server REST Integration] Creating Auth account via Identity Toolkit REST API.`);
+  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email,
+      password: password || 'TempPass123!',
+      returnSecureToken: true
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    if (data.error?.message === 'EMAIL_EXISTS') {
+      const dupErr: any = new Error(`An account with email '${email}' already exists in Firebase Authentication.`);
+      dupErr.code = 'auth/email-already-exists';
+      throw dupErr;
     }
-    return { uid: data.localId, email: data.email || email };
+    throw new Error(`Failed to create Auth account via REST: ${data.error?.message || JSON.stringify(data)}`);
+  }
+  if (displayName && data.idToken) {
+    try {
+      await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${FIREBASE_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idToken: data.idToken,
+          displayName,
+          returnSecureToken: false
+        })
+      });
+    } catch (updErr) {
+      console.warn('Failed to update displayName on Auth account:', updErr);
+    }
+  }
+  return { uid: data.localId, email: data.email || email };
+}
+
+async function safeDeleteAuthUser(uid: string): Promise<void> {
+  if (hasAdminCredentials) {
+    try {
+      await auth.deleteUser(uid);
+      console.info(`[Server Admin SDK] Successfully deleted Auth user ${uid} during rollback`);
+    } catch (delErr: any) {
+      console.warn('Failed to delete auth user during rollback via Admin SDK:', delErr?.message || delErr);
+    }
   }
 }
 
 async function safeCreateUserProfileDoc(uid: string, profilePayload: any, callerToken?: string): Promise<void> {
-  try {
-    await db.collection("users").doc(uid).set(profilePayload);
-  } catch (err: any) {
-    if (callerToken) {
-      console.info(`[Server REST Integration] Writing user profile doc via Firestore REST API.`);
-      const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
-      const restPayload = { ...profilePayload };
-      const now = new Date();
-      for (const k of Object.keys(restPayload)) {
-        if (restPayload[k] && typeof restPayload[k] === 'object' && ('_isServerTimestamp' in restPayload[k] || restPayload[k].methodName === 'serverTimestamp' || typeof restPayload[k].isEqual === 'function')) {
-          restPayload[k] = now;
-        }
-      }
-      let res = await fetch(url, {
-        method: "PATCH",
-        headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
-      });
-      if (!res.ok && res.status === 404) {
-        const createUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users?documentId=${uid}`;
-        res = await fetch(createUrl, {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${callerToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
-        });
-      }
-      if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(`Firestore REST set profile failed (${res.status}): ${errJson.error?.message || JSON.stringify(errJson)}`);
-      }
+  if (hasAdminCredentials) {
+    try {
+      await db.collection("users").doc(uid).set(profilePayload);
       return;
+    } catch (adminErr: any) {
+      console.warn('[Server Admin SDK] Admin set user profile doc failed, falling back to REST:', adminErr?.message || adminErr);
     }
-    throw err;
   }
+
+  if (!callerToken) {
+    throw new Error('Unable to create user profile: Admin credentials not configured and caller token is missing');
+  }
+
+  console.info(`[Server REST Integration] Writing user profile doc via Firestore REST API for uid: ${uid}`);
+  const restPayload = { ...profilePayload };
+  const now = new Date();
+  for (const k of Object.keys(restPayload)) {
+    if (isServerTimestamp(restPayload[k])) {
+      restPayload[k] = now;
+    }
+  }
+
+  const fields = jsToFirestoreFields(restPayload);
+
+  // Use POST with documentId to create a new document in Firestore REST API
+  // This explicitly maps to the 'create' operation in Firestore Security Rules
+  const createUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users?documentId=${uid}`;
+  let res = await fetch(createUrl, {
+    method: "POST",
+    headers: { 
+      "Authorization": `Bearer ${callerToken}`, 
+      "Content-Type": "application/json" 
+    },
+    body: JSON.stringify({ fields })
+  });
+
+  if (res.ok) {
+    console.info(`[Server REST Integration] Successfully created user profile doc via POST for uid: ${uid}`);
+    return;
+  }
+
+  // If POST returned non-ok (for instance 409 Conflict if doc already exists), fallback to PATCH
+  const postErrText = await res.text();
+  console.warn(`[Server REST Integration] POST create doc returned status ${res.status}: ${postErrText.slice(0, 150)}. Attempting PATCH...`);
+
+  const patchUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${uid}`;
+  res = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: { 
+      "Authorization": `Bearer ${callerToken}`, 
+      "Content-Type": "application/json" 
+    },
+    body: JSON.stringify({ fields })
+  });
+
+  if (res.ok) {
+    console.info(`[Server REST Integration] Successfully updated user profile doc via PATCH for uid: ${uid}`);
+    return;
+  }
+
+  const patchErrText = await res.text();
+  let errMsg = `Firestore REST set profile failed with status ${res.status}`;
+  try {
+    const errJson = JSON.parse(patchErrText);
+    if (errJson.error?.message) {
+      errMsg = `Firestore REST set profile failed: ${errJson.error.message}`;
+    }
+  } catch {
+    errMsg = `${errMsg}: ${patchErrText.slice(0, 200)}`;
+  }
+  throw new Error(errMsg);
 }
 
 async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Promise<void> {
-  try {
-    await db.collection("auditLogs").add(auditPayload);
-  } catch (err: any) {
-    if (callerToken) {
+  if (hasAdminCredentials) {
+    try {
+      await db.collection("auditLogs").add(auditPayload);
+      return;
+    } catch (adminErr: any) {
+      console.warn('[Server Admin SDK] Admin add audit log failed, falling back to REST:', adminErr?.message || adminErr);
+    }
+  }
+
+  if (callerToken) {
+    try {
       console.info(`[Server REST Integration] Creating audit log entry via Firestore REST API.`);
       const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/auditLogs`;
       const restPayload = { ...auditPayload };
       const now = new Date();
       for (const k of Object.keys(restPayload)) {
-        if (restPayload[k] && typeof restPayload[k] === 'object' && ('_isServerTimestamp' in restPayload[k] || restPayload[k].methodName === 'serverTimestamp' || typeof restPayload[k].isEqual === 'function')) {
+        if (isServerTimestamp(restPayload[k])) {
           restPayload[k] = now;
         }
       }
@@ -276,11 +357,12 @@ async function safeCreateAuditLog(auditPayload: any, callerToken?: string): Prom
         body: JSON.stringify({ fields: jsToFirestoreFields(restPayload) })
       });
       if (!res.ok) {
-        console.error(`Firestore REST audit log failed (${res.status})`, await res.text());
+        console.warn(`Firestore REST audit log failed (${res.status}):`, await res.text());
       }
-      return;
+    } catch (restErr) {
+      console.warn(`[Server REST Integration] Audit log REST error:`, restErr);
     }
-    throw err;
+    return;
   }
 }
 
@@ -639,130 +721,237 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
 
 // Provision User Account Endpoint (PLATFORM_SUPERUSER and TENANT_ADMIN)
 router.post("/admin/provision-user", async (req, res) => {
+  let currentStage = "PROVISION_START";
   try {
+    const clientIp = (req.headers && req.headers['x-forwarded-for']) || (req.socket && req.socket.remoteAddress) || 'unknown';
+    console.log(`[PROVISION_STAGE: PROVISION_START] Provisioning request received from ${clientIp}`);
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: "Unauthorized: Missing authorization header" });
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Missing or invalid authorization header`);
+      return res.status(401).json({ 
+        success: false, 
+        error: "Unauthorized: Missing authorization header", 
+        stage: currentStage 
+      });
     }
 
-    const callerToken = authHeader.split('Bearer ')[1];
-    let verifiedToken;
+    const callerToken = authHeader.split('Bearer ')[1]?.trim();
+    if (!callerToken) {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Empty bearer token`);
+      return res.status(401).json({ 
+        success: false, 
+        error: "Unauthorized: Empty bearer token", 
+        stage: currentStage 
+      });
+    }
+
+    // Stage: CALLER_TOKEN_VERIFICATION
+    currentStage = "CALLER_TOKEN_VERIFICATION";
+    console.log(`[PROVISION_STAGE: CALLER_TOKEN_VERIFICATION] Verifying caller authentication token`);
+    let verifiedToken: { uid: string; email?: string };
     try {
       verifiedToken = await safeVerifyCallerToken(callerToken);
     } catch (error: any) {
-      return res.status(401).json({ success: false, error: `Unauthorized: Invalid token (${error.message})` });
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Token verification failed: ${error?.message || error}`);
+      return res.status(401).json({ 
+        success: false, 
+        error: `Unauthorized: Invalid token (${error?.message || 'verification failed'})`, 
+        stage: currentStage 
+      });
     }
 
     const verifiedUid = verifiedToken.uid;
+
+    // Stage: CALLER_PROFILE_LOOKUP
+    currentStage = "CALLER_PROFILE_LOOKUP";
+    console.log(`[PROVISION_STAGE: CALLER_PROFILE_LOOKUP] Fetching profile for caller UID: ${verifiedUid}`);
     const callerRes = await safeGetUserProfile(verifiedUid, callerToken);
-    if (!callerRes.exists) {
-      return res.status(403).json({ success: false, error: "Forbidden: Caller user profile not found" });
+    if (!callerRes.exists || !callerRes.data) {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Caller profile not found in Firestore for UID: ${verifiedUid}`);
+      return res.status(403).json({ 
+        success: false, 
+        error: "Forbidden: Caller user profile not found", 
+        stage: currentStage 
+      });
     }
 
     const callerProfile = callerRes.data;
-    if (callerProfile?.accountStatus !== 'ACTIVE') {
-      return res.status(403).json({ success: false, error: "Forbidden: Your administrator account is not active" });
+
+    // Stage: CALLER_AUTHORIZATION
+    currentStage = "CALLER_AUTHORIZATION";
+    console.log(`[PROVISION_STAGE: CALLER_AUTHORIZATION] Authorizing caller role: ${callerProfile.role}`);
+
+    const isAccountActive = callerProfile.accountStatus === 'ACTIVE' || 
+                            callerProfile.accountStatus === 'active' || 
+                            !callerProfile.accountStatus;
+    if (!isAccountActive) {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Inactive administrator account: ${callerProfile.accountStatus}`);
+      return res.status(403).json({ 
+        success: false, 
+        error: "Forbidden: Your administrator account is not active", 
+        stage: currentStage 
+      });
     }
 
-    if (callerProfile?.role !== 'PLATFORM_SUPERUSER' && callerProfile?.role !== 'TENANT_ADMIN') {
-      return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers and Tenant Admins can provision accounts" });
+    if (callerProfile.role !== 'PLATFORM_SUPERUSER' && callerProfile.role !== 'TENANT_ADMIN') {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Insufficient privileges: role is ${callerProfile.role}`);
+      return res.status(403).json({ 
+        success: false, 
+        error: "Forbidden: Only Platform Superusers and Tenant Admins can provision accounts", 
+        stage: currentStage 
+      });
     }
 
-    const { email, displayName, jobTitle, role, tenantId, siteIds, temporaryPassword } = req.body;
+    const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) || {};
+    const { email, displayName, jobTitle, role, tenantId, siteIds, temporaryPassword } = body;
 
-    if (!email || !displayName || !role) {
-      return res.status(400).json({ success: false, error: "Email, Display Name, and Role are required" });
+    if (!email || typeof email !== 'string' || !email.trim()) {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Missing or invalid email`);
+      return res.status(400).json({ success: false, error: "A valid email is required", stage: currentStage });
+    }
+    if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Missing or invalid displayName`);
+      return res.status(400).json({ success: false, error: "Display Name is required", stage: currentStage });
+    }
+    if (!role || typeof role !== 'string') {
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Missing role`);
+      return res.status(400).json({ success: false, error: "Role is required", stage: currentStage });
     }
 
     const validRoles = ['PLATFORM_SUPERUSER', 'TENANT_ADMIN', 'PLANNER', 'WAREHOUSE_OPERATOR', 'VIEWER', 'DISPLAY'];
     if (!validRoles.includes(role)) {
-      return res.status(400).json({ success: false, error: `Invalid role specified: ${role}` });
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Invalid role: ${role}`);
+      return res.status(400).json({ success: false, error: `Invalid role specified: ${role}`, stage: currentStage });
     }
 
     if (callerProfile.role === 'TENANT_ADMIN') {
       if (role === 'PLATFORM_SUPERUSER') {
-        return res.status(403).json({ success: false, error: "Tenant Admins cannot create Platform Superusers" });
+        console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Tenant Admin tried to provision PLATFORM_SUPERUSER`);
+        return res.status(403).json({ success: false, error: "Tenant Admins cannot create Platform Superusers", stage: currentStage });
       }
-      if (tenantId !== callerProfile.tenantId) {
-        return res.status(403).json({ success: false, error: "Tenant Admins can only create users within their own tenant" });
+      if (tenantId && tenantId !== callerProfile.tenantId) {
+        console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Tenant Admin tried to provision across tenants`);
+        return res.status(403).json({ success: false, error: "Tenant Admins can only create users within their own tenant", stage: currentStage });
       }
     }
 
-    const targetTenantId = role === 'PLATFORM_SUPERUSER' ? null : (tenantId ? tenantId.trim() : null);
+    const targetTenantId = role === 'PLATFORM_SUPERUSER' 
+      ? null 
+      : (tenantId ? tenantId.trim() : (callerProfile.role === 'TENANT_ADMIN' ? callerProfile.tenantId : null));
+
     if (role !== 'PLATFORM_SUPERUSER' && !targetTenantId) {
-      return res.status(400).json({ success: false, error: "A valid tenant must be selected for non-superuser accounts" });
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Missing tenant for non-superuser account`);
+      return res.status(400).json({ success: false, error: "A valid tenant must be selected for non-superuser accounts", stage: currentStage });
     }
 
     const cleanEmail = email.toLowerCase().trim();
 
+    // Stage: TARGET_USER_FIRESTORE_CHECK
+    currentStage = "TARGET_USER_FIRESTORE_CHECK";
+    console.log(`[PROVISION_STAGE: TARGET_USER_FIRESTORE_CHECK] Checking for existing user profile in Firestore for email: ${cleanEmail}`);
     const existsInFirestore = await safeCheckUserExistsByEmailInFirestore(cleanEmail, callerToken, targetTenantId);
     if (existsInFirestore) {
-      return res.status(409).json({ success: false, error: `A user profile with email '${cleanEmail}' already exists in Firestore.` });
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - User profile already exists in Firestore for: ${cleanEmail}`);
+      return res.status(409).json({ 
+        success: false, 
+        error: `A user profile with email '${cleanEmail}' already exists in Firestore.`, 
+        stage: currentStage 
+      });
     }
 
-    let userRecord;
+    // Stage: FIREBASE_AUTH_CREATE
+    currentStage = "FIREBASE_AUTH_CREATE";
+    console.log(`[PROVISION_STAGE: FIREBASE_AUTH_CREATE] Creating user in Firebase Authentication for: ${cleanEmail}`);
+    let userRecord: { uid: string; email: string };
     try {
       userRecord = await safeCreateAuthUser(cleanEmail, temporaryPassword || 'TempPass123!', displayName.trim());
     } catch (error: any) {
-      if (error.code === 'auth/email-already-exists') {
-        return res.status(409).json({ success: false, error: `An account with email '${cleanEmail}' already exists in Firebase Authentication.` });
+      console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Firebase Auth creation failed: ${error?.message || error}`);
+      if (error?.code === 'auth/email-already-exists') {
+        return res.status(409).json({ 
+          success: false, 
+          error: `An account with email '${cleanEmail}' already exists in Firebase Authentication.`, 
+          stage: currentStage 
+        });
       }
-      return res.status(400).json({ success: false, error: `Failed to create Firebase Authentication account: ${error.message}` });
+      return res.status(400).json({ 
+        success: false, 
+        error: `Failed to create Firebase Authentication account: ${error?.message || 'unknown error'}`, 
+        stage: currentStage 
+      });
     }
+
+    // Stage: USER_PROFILE_CREATE
+    currentStage = "USER_PROFILE_CREATE";
+    console.log(`[PROVISION_STAGE: USER_PROFILE_CREATE] Creating user profile document in Firestore for UID: ${userRecord.uid}`);
+    const timestampNow = FieldValue.serverTimestamp();
+    const profilePayload = {
+      uid: userRecord.uid,
+      email: cleanEmail,
+      displayName: displayName.trim(),
+      jobTitle: jobTitle ? String(jobTitle).trim() : '',
+      role,
+      tenantId: targetTenantId,
+      siteIds: role === 'PLATFORM_SUPERUSER' ? [] : (siteIds || []),
+      accountStatus: 'ACTIVE',
+      requiresPasswordChange: true,
+      failedLoginAttempts: 0,
+      failedAttemptWindowStartedAt: null,
+      lockedAt: null,
+      lastLoginAt: null,
+      passwordChangedAt: null,
+      createdBy: verifiedUid,
+      createdDate: timestampNow,
+      modifiedBy: verifiedUid,
+      modifiedDate: timestampNow,
+    };
 
     try {
-      const timestampNow = FieldValue.serverTimestamp();
-      const profilePayload = {
-        uid: userRecord.uid,
-        email: cleanEmail,
-        displayName: displayName.trim(),
-        jobTitle: jobTitle ? jobTitle.trim() : '',
-        role,
-        tenantId: targetTenantId,
-        siteIds: role === 'PLATFORM_SUPERUSER' ? [] : (siteIds || []),
-        accountStatus: 'ACTIVE',
-        requiresPasswordChange: true,
-        failedLoginAttempts: 0,
-        failedAttemptWindowStartedAt: null,
-        lockedAt: null,
-        lastLoginAt: null,
-        passwordChangedAt: null,
-        createdBy: verifiedUid,
-        createdDate: timestampNow,
-        modifiedBy: verifiedUid,
-        modifiedDate: timestampNow,
-      };
-
       await safeCreateUserProfileDoc(userRecord.uid, profilePayload, callerToken);
-
-      await safeCreateAuditLog({
-        tenantId: targetTenantId,
-        siteId: (siteIds && siteIds.length > 0) ? siteIds[0] : null,
-        eventType: 'USER_CREATION',
-        entityType: 'UserProfile',
-        entityId: userRecord.uid,
-        summary: `Created user account for ${cleanEmail} with role ${role}`,
-        performedBy: verifiedUid,
-        createdDate: timestampNow,
-        timestamp: timestampNow,
-      }, callerToken);
-
-      return res.json({
-        success: true,
-        uid: userRecord.uid,
-        message: `User ${cleanEmail} successfully created with role ${role}.`
+    } catch (docErr: any) {
+      console.error(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Firestore profile doc creation failed: ${docErr?.message || docErr}`);
+      // Roll back created auth user
+      await safeDeleteAuthUser(userRecord.uid);
+      return res.status(500).json({ 
+        success: false, 
+        error: `Failed to create user profile in Firestore: ${docErr?.message || 'unknown error'}`, 
+        stage: currentStage 
       });
-    } catch (error: any) {
-      try {
-        await auth.deleteUser(userRecord.uid);
-      } catch (delErr) {
-        // ignore rollback error if admin lacks permission
-      }
-      return res.status(500).json({ success: false, error: `Failed to create user profile in Firestore: ${error.message}` });
     }
+
+    // Stage: AUDIT_LOG_CREATE
+    currentStage = "AUDIT_LOG_CREATE";
+    console.log(`[PROVISION_STAGE: AUDIT_LOG_CREATE] Creating audit log entry for user creation: ${userRecord.uid}`);
+    await safeCreateAuditLog({
+      tenantId: targetTenantId,
+      siteId: (siteIds && siteIds.length > 0) ? siteIds[0] : null,
+      eventType: 'USER_CREATION',
+      entityType: 'UserProfile',
+      entityId: userRecord.uid,
+      summary: `Created user account for ${cleanEmail} with role ${role}`,
+      performedBy: verifiedUid,
+      createdDate: timestampNow,
+      timestamp: timestampNow,
+    }, callerToken);
+
+    // Stage: PROVISION_SUCCESS
+    currentStage = "PROVISION_SUCCESS";
+    console.log(`[PROVISION_STAGE: PROVISION_SUCCESS] User ${cleanEmail} successfully provisioned with UID: ${userRecord.uid}`);
+    return res.status(200).json({
+      success: true,
+      uid: userRecord.uid,
+      message: `User ${cleanEmail} successfully created with role ${role}.`,
+      stage: "PROVISION_SUCCESS"
+    });
+
   } catch (error: any) {
-    console.error('Provisioning endpoint error:', error);
-    return res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+    console.error(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Unexpected error:`, error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error?.message || 'Internal server error', 
+      stage: currentStage || "PROVISION_FAILURE" 
+    });
   }
 });
 

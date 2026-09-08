@@ -437,7 +437,9 @@ export const AdminOverviewPage: React.FC = () => {
       }
 
       if (!apiRes.ok || !apiData.success) {
-        throw new Error(apiData.error || apiData.message || 'Failed to provision account');
+        const errorMsg = apiData.error || apiData.message || 'Failed to provision account';
+        const fullMsg = apiData.stage ? `[${apiData.stage}] ${errorMsg}` : errorMsg;
+        throw new Error(fullMsg);
       }
 
       setCreatingUserMsg(`Success! ${apiData.message || `User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`}`);

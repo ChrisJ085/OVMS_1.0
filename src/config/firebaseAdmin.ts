@@ -60,6 +60,12 @@ if (getApps().length > 0) {
   }
 }
 
+export const hasAdminCredentials = !!(
+  process.env.FIREBASE_SERVICE_ACCOUNT ||
+  (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) ||
+  process.env.GOOGLE_APPLICATION_CREDENTIALS
+);
+
 export const adminAuth: Auth = getAuth(adminApp);
 export const adminDb: Firestore = getFirestore(adminApp);
 export const adminStorage: Storage = getStorage(adminApp);
@@ -69,4 +75,5 @@ export const resolvedAdminProjectId = projectId;
 console.log(`[Firebase Admin Init] Firebase Admin module initialized.`);
 console.log(`[Firebase Admin Init] Target Project ID: ${projectId}`);
 console.log(`[Firebase Admin Init] Runtime GCLOUD_PROJECT: ${process.env.GCLOUD_PROJECT || 'not set'}`);
+console.log(`[Firebase Admin Init] Has Admin Credentials: ${hasAdminCredentials}`);
 console.log(`[Firebase Admin Init] Initialization Status: SUCCESS`);
