@@ -454,6 +454,15 @@ apiApp.use((req, res, next) => {
   next();
 });
 
+// Normalize request URL if Vercel rewrote path to /api or / but passed the original path in standard headers
+apiApp.use((req, _res, next) => {
+  const forwardedPath = (req.headers['x-matched-path'] || req.headers['x-original-url'] || req.headers['x-forwarded-uri']) as string | undefined;
+  if (forwardedPath && (req.url === '/' || req.url === '/api' || req.url === '/api/')) {
+    req.url = forwardedPath;
+  }
+  next();
+});
+
 // Router for API endpoints
 const router = express.Router();
 

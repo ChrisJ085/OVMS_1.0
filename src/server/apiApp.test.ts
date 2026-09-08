@@ -161,4 +161,140 @@ describe('apiApp Express routing tests', () => {
     expect(statusCode).toBe(404);
     expect(jsonBody.error).toBeDefined();
   });
+
+  it('routes POST /api/admin/provision-user correctly (expecting 401 when unauthenticated)', async () => {
+    let statusCode = 200;
+    let jsonBody: any = null;
+
+    const req: any = {
+      method: 'POST',
+      url: '/api/admin/provision-user',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: {}
+    };
+
+    const res: any = {
+      statusCode: 200,
+      status(code: number) {
+        statusCode = code;
+        this.statusCode = code;
+        return this;
+      },
+      setHeader() {
+        return this;
+      },
+      json(data: any) {
+        jsonBody = data;
+        return this;
+      },
+      end() {
+        return this;
+      }
+    };
+
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        resolve();
+        return res;
+      };
+      (apiApp as any)(req, res);
+    });
+
+    expect(statusCode).toBe(401);
+    expect(jsonBody.error).toContain('Unauthorized');
+  });
+
+  it('routes POST /admin/provision-user correctly (expecting 401 when unauthenticated)', async () => {
+    let statusCode = 200;
+    let jsonBody: any = null;
+
+    const req: any = {
+      method: 'POST',
+      url: '/admin/provision-user',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: {}
+    };
+
+    const res: any = {
+      statusCode: 200,
+      status(code: number) {
+        statusCode = code;
+        this.statusCode = code;
+        return this;
+      },
+      setHeader() {
+        return this;
+      },
+      json(data: any) {
+        jsonBody = data;
+        return this;
+      },
+      end() {
+        return this;
+      }
+    };
+
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        resolve();
+        return res;
+      };
+      (apiApp as any)(req, res);
+    });
+
+    expect(statusCode).toBe(401);
+    expect(jsonBody.error).toContain('Unauthorized');
+  });
+
+  it('routes POST with x-matched-path header when URL is rewritten to /api', async () => {
+    let statusCode = 200;
+    let jsonBody: any = null;
+
+    const req: any = {
+      method: 'POST',
+      url: '/api',
+      headers: {
+        'content-type': 'application/json',
+        'x-matched-path': '/api/admin/provision-user'
+      },
+      body: {}
+    };
+
+    const res: any = {
+      statusCode: 200,
+      status(code: number) {
+        statusCode = code;
+        this.statusCode = code;
+        return this;
+      },
+      setHeader() {
+        return this;
+      },
+      json(data: any) {
+        jsonBody = data;
+        return this;
+      },
+      end() {
+        return this;
+      }
+    };
+
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        resolve();
+        return res;
+      };
+      (apiApp as any)(req, res);
+    });
+
+    expect(statusCode).toBe(401);
+    expect(jsonBody.error).toContain('Unauthorized');
+  });
 });
