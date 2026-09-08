@@ -351,8 +351,10 @@ describe('apiApp Express routing tests', () => {
     expect(jsonBody.error).toContain('Unauthorized');
   });
 
-  it('invokes api/index.ts handler function cleanly', async () => {
-    const apiHandler = (await import('../../api/index')).default;
+  it('invokes api/index.js handler function cleanly and resolves module correctly', async () => {
+    const apiHandler = (await import('../../api/index.js')).default;
+    expect(typeof apiHandler).toBe('function');
+
     let statusCode = 200;
     let jsonBody: any = null;
 
@@ -394,5 +396,53 @@ describe('apiApp Express routing tests', () => {
 
     expect(statusCode).toBe(200);
     expect(jsonBody).toEqual({ status: 'ok' });
+  });
+
+  it('verifies that /api/admin/provision-user is mounted and reachable via the bundled entrypoint', async () => {
+    const apiHandler = (await import('../../api/index.js')).default;
+    let statusCode = 200;
+    let jsonBody: any = null;
+
+    const req: any = {
+      method: 'POST',
+      url: '/admin/provision-user',
+      headers: {},
+      body: {}
+    };
+
+    const res: any = {
+      statusCode: 200,
+      headersSent: false,
+      writableEnded: false,
+      status(code: number) {
+        statusCode = code;
+        this.statusCode = code;
+        return this;
+      },
+      setHeader() {
+        return this;
+      },
+      json(data: any) {
+        jsonBody = data;
+        this.headersSent = true;
+        this.writableEnded = true;
+        return this;
+      },
+      end() {
+        this.headersSent = true;
+        this.writableEnded = true;
+        return this;
+      },
+      on(_event: string, _cb: Function) {
+        return this;
+      }
+    };
+
+    await apiHandler(req, res);
+
+    // Should reach the provision-user route handler (which returns 401 Unauthorized without auth header)
+    expect(statusCode).toBe(401);
+    expect(jsonBody.stage).toBe('PROVISION_START');
+    expect(jsonBody.error).toContain('Unauthorized');
   });
 });

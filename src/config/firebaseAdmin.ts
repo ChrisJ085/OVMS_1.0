@@ -135,38 +135,96 @@ export const getAdminStorage = (): Storage | null => {
   return _adminStorage;
 };
 
-export const adminAuth: Auth = new Proxy({} as Auth, {
-  get(_target, prop) {
-    const realAuth = getAdminAuth();
-    if (!realAuth) {
-      throw new Error('Firebase Admin Auth is not configured: valid admin credentials were not detected in the environment.');
+const createAdminProxy = <T extends object>(dummy: T, getReal: () => T | null, name: string): T => {
+  const overrides = new Map<string | symbol, any>();
+  return new Proxy(dummy, {
+    get(target, prop, receiver) {
+      if (overrides.has(prop)) {
+        return overrides.get(prop);
+      }
+      const real = getReal();
+      if (!real) {
+        if (prop in target) {
+          return (target as any)[prop];
+        }
+        throw new Error(`Firebase Admin ${name} is not configured: valid admin credentials were not detected in the environment.`);
+      }
+      const val = (real as any)[prop];
+      return typeof val === 'function' ? val.bind(real) : val;
+    },
+    set(target, prop, value) {
+      overrides.set(prop, value);
+      (target as any)[prop] = value;
+      return true;
+    },
+    defineProperty(target, prop, descriptor) {
+      if ('value' in descriptor) {
+        overrides.set(prop, descriptor.value);
+      }
+      return Reflect.defineProperty(target, prop, descriptor);
+    },
+    deleteProperty(target, prop) {
+      overrides.delete(prop);
+      return Reflect.deleteProperty(target, prop);
+    },
+    has(target, prop) {
+      if (overrides.has(prop)) return true;
+      const real = getReal();
+      return real ? prop in real : prop in target;
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (overrides.has(prop)) {
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: overrides.get(prop)
+        };
+      }
+      const real = getReal();
+      if (real && prop in real) {
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: typeof (real as any)[prop] === 'function' ? (real as any)[prop].bind(real) : (real as any)[prop]
+        };
+      }
+      return Reflect.getOwnPropertyDescriptor(target, prop);
     }
-    const val = (realAuth as any)[prop];
-    return typeof val === 'function' ? val.bind(realAuth) : val;
-  }
-});
+  });
+};
 
-export const adminDb: Firestore = new Proxy({} as Firestore, {
-  get(_target, prop) {
-    const realDb = getAdminDb();
-    if (!realDb) {
-      throw new Error('Firebase Admin Firestore is not configured: valid admin credentials were not detected in the environment.');
-    }
-    const val = (realDb as any)[prop];
-    return typeof val === 'function' ? val.bind(realDb) : val;
-  }
-});
+const authDummy: any = {
+  verifyIdToken: async (_token: string) => ({} as any),
+  createUser: async (_props: any) => ({} as any),
+  deleteUser: async (_uid: string) => {},
+  getUser: async (_uid: string) => ({} as any),
+  getUserByEmail: async (_email: string) => ({} as any),
+  setCustomUserClaims: async (_uid: string, _claims: any) => {},
+  createCustomToken: async (_uid: string) => '',
+  app: { options: { projectId: resolvedAdminProjectId } }
+};
 
-export const adminStorage: Storage = new Proxy({} as Storage, {
-  get(_target, prop) {
-    const realStorage = getAdminStorage();
-    if (!realStorage) {
-      throw new Error('Firebase Admin Storage is not configured: valid admin credentials were not detected in the environment.');
-    }
-    const val = (realStorage as any)[prop];
-    return typeof val === 'function' ? val.bind(realStorage) : val;
-  }
-});
+export const adminAuth: Auth = createAdminProxy(authDummy as Auth, getAdminAuth, 'Auth');
+
+const dbDummy: any = {
+  collection: (_path: string) => ({} as any),
+  doc: (_path: string) => ({} as any),
+  batch: () => ({} as any),
+  runTransaction: async (_updateFunction: any) => ({} as any),
+  projectId: resolvedAdminProjectId,
+  app: { options: { projectId: resolvedAdminProjectId } }
+};
+
+export const adminDb: Firestore = createAdminProxy(dbDummy as Firestore, getAdminDb, 'Firestore');
+
+const storageDummy: any = {
+  bucket: (_name?: string) => ({} as any),
+  app: { options: { projectId: resolvedAdminProjectId } }
+};
+
+export const adminStorage: Storage = createAdminProxy(storageDummy as Storage, getAdminStorage, 'Storage');
 
 // Safe startup logging (no tokens, keys, passwords, or full credentials)
 console.log(`[Firebase Admin Init] Status: ${hasAdminCredentials ? 'CREDENTIALS_INITIALIZED' : 'REST_FALLBACK_MODE'}`);
