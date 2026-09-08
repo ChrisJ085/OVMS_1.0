@@ -1,5 +1,4 @@
-import { BaseDocument } from './common';
-import { Timestamp } from 'firebase/firestore';
+import { BaseDocument, Timestamp } from './common';
 
 export type ExceptionType = 
   | 'BELOW_RETENTION'

@@ -1,5 +1,4 @@
-import { BaseDocument } from './common';
-import { Timestamp } from 'firebase/firestore';
+import { BaseDocument, Timestamp } from './common';
 
 export type PromotionImportance = 'STANDARD' | 'HIGH' | 'NATIONAL' | 'CRITICAL';
 export type PromotionStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';

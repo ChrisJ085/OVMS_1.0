@@ -1,8 +1,9 @@
-import { collection, query, where, getDocs, getDoc, addDoc, doc, updateDoc, orderBy, limit, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, addDoc, doc, updateDoc, Timestamp } from '../../../services/firestoreBase';
 import { db } from '../../../config/firebase';
 import { ProductionLinePlanNote } from '../../../types/production';
 import { toAppError } from '../../../types/error';
 import { logAuditEvent } from '../../../services/auditService';
+import { toEpochMillis } from '../../../utils/timeFormatters';
 
 export const productionNotesRepository = {
   /**
@@ -24,11 +25,14 @@ export const productionNotesRepository = {
         if (note.noteType === 'LINE_NOTE') {
           // Keep line notes if they are not expired
           if (!note.endAt) return true; // no expiry
-          return note.endAt.toMillis() >= Date.now();
+          const endMs = toEpochMillis(note.endAt);
+          return endMs ? endMs >= Date.now() : true;
         }
         if (!note.noteDate) return false;
-        const nMillis = note.noteDate.toMillis();
-        return nMillis >= startTimestamp.toMillis() && nMillis < endTimestamp.toMillis();
+        const nMillis = toEpochMillis(note.noteDate) || 0;
+        const startMs = toEpochMillis(startTimestamp) || 0;
+        const endMs = toEpochMillis(endTimestamp) || 0;
+        return nMillis >= startMs && nMillis < endMs;
       });
     } catch (err) {
       throw toAppError(err, 'FETCH_GRID_NOTES_FAILED');
@@ -52,8 +56,8 @@ export const productionNotesRepository = {
       
       // Sort client-side by noteDate desc to avoid composite index requirement in Firestore
       notes.sort((a, b) => {
-        const timeA = a.noteDate ? (typeof a.noteDate.toMillis === 'function' ? a.noteDate.toMillis() : new Date(a.noteDate as any).getTime()) : 0;
-        const timeB = b.noteDate ? (typeof b.noteDate.toMillis === 'function' ? b.noteDate.toMillis() : new Date(b.noteDate as any).getTime()) : 0;
+        const timeA = toEpochMillis(a.noteDate) || 0;
+        const timeB = toEpochMillis(b.noteDate) || 0;
         return timeB - timeA;
       });
 

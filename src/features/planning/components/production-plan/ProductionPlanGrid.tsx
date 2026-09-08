@@ -12,7 +12,8 @@ import { LineDayHeaderCell } from './LineDayHeaderCell';
 import { useSiteContext } from '../../../../contexts/SiteContext';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { productionNotesRepository } from '../../repositories/productionNotesRepository';
-import { Timestamp } from 'firebase/firestore';
+import { toEpochMillis } from '../../../../utils/timeFormatters';
+import { Timestamp } from '../../../../services/firestoreBase';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -108,7 +109,8 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
     setNewLineNoteText(note.note);
     
     // Parse expiry date
-    const expiryDate = note.endAt?.toDate ? note.endAt.toDate() : (note.endAt ? new Date(note.endAt as any) : null);
+    const expiryMs = toEpochMillis(note.endAt);
+    const expiryDate = expiryMs ? new Date(expiryMs) : null;
     if (expiryDate) {
       const year = expiryDate.getFullYear();
       const month = String(expiryDate.getMonth() + 1).padStart(2, '0');

@@ -1,5 +1,4 @@
-import { BaseDocument } from './common';
-import { Timestamp } from 'firebase/firestore';
+import { BaseDocument, Timestamp } from './common';
 
 export type AnnouncementType = 'GENERAL' | 'SAFETY' | 'ENGINEERING' | 'PRODUCTION' | 'HR' | 'OTHER';
 export type AnnouncementSeverity = 'INFO' | 'WARNING' | 'CRITICAL';

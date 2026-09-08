@@ -2,12 +2,13 @@ import {
   createDocument,
   updateDocument,
   subscribeToCollection,
-  subscribeToDocument
+  subscribeToDocument,
+  collection, query, where, getDocs
 } from '../../../services/firestoreBase';
 import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { Promotion, PromotionProductRule, PromotionPhase, PromotionWithPhase } from '../../../types/promotion';
-import { ServiceResult } from '../../../types/common';
+import { ServiceResult, Timestamp } from '../../../types/common';
+import { toEpochMillis } from '../../../utils/timeFormatters';
 
 const PROMOTIONS_COLLECTION = 'promotions';
 const RULES_COLLECTION = 'promotionProductRules';
@@ -18,11 +19,11 @@ export const calculatePromotionPhase = (
   preBuildStartDate: Timestamp | null,
   runDownEndDate: Timestamp | null
 ): PromotionPhase => {
-  const now = new Date().getTime();
-  const startMs = startDate.toDate().getTime();
-  const endMs = endDate.toDate().getTime();
-  const preBuildMs = preBuildStartDate ? preBuildStartDate.toDate().getTime() : startMs;
-  const runDownMs = runDownEndDate ? runDownEndDate.toDate().getTime() : endMs;
+  const now = Date.now();
+  const startMs = toEpochMillis(startDate) || 0;
+  const endMs = toEpochMillis(endDate) || 0;
+  const preBuildMs = preBuildStartDate ? (toEpochMillis(preBuildStartDate) || startMs) : startMs;
+  const runDownMs = runDownEndDate ? (toEpochMillis(runDownEndDate) || endMs) : endMs;
 
   if (now >= startMs && now <= endMs) {
     return 'ACTIVE';

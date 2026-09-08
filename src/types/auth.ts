@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from './common';
 
 export type UserRole = 'PLATFORM_SUPERUSER' | 'TENANT_ADMIN' | 'PLANNER' | 'WAREHOUSE_OPERATOR' | 'VIEWER' | 'DISPLAY';
 
@@ -16,6 +16,7 @@ export interface Tenant {
 }
 
 export interface UserProfile {
+  id?: string;
   uid: string; // Document ID (auth UID)
   email: string;
   displayName: string;

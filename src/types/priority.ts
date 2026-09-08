@@ -1,5 +1,4 @@
-import { BaseDocument } from './common';
-import { Timestamp } from 'firebase/firestore';
+import { BaseDocument, Timestamp } from './common';
 
 export type PriorityStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'WAITING' | 'BLOCKED' | 'PARTIALLY_COMPLETE' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED' | 'ARCHIVED';
 

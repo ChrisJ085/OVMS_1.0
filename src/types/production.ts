@@ -1,5 +1,4 @@
-import { BaseDocument } from './common';
-import { Timestamp } from 'firebase/firestore';
+import { BaseDocument, Timestamp } from './common';
 
 export type ProductionStatus = 'PLANNED' | 'RUNNING' | 'ENDING' | 'COMPLETE' | 'DELAYED' | 'STOPPED' | 'CANCELLED';
 

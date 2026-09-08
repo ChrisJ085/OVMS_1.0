@@ -1,5 +1,4 @@
-import { BaseDocument } from './common';
-import { Timestamp } from 'firebase/firestore';
+import { BaseDocument, Timestamp } from './common';
 
 export type ControllingThresholdMode = 'HIGHEST_MANDATORY' | 'MINIMUM_ONLY' | 'DDXM_ONLY' | 'CUSTOM';
 

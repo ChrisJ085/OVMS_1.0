@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { auth, db } from '../../../config/firebase';
+import { supabase } from '../../../config/supabase';
 import { UserProfile } from '../../../types/auth';
 import { AppError, toAppError } from '../../../types/error';
 import { loginWithEmail, logoutUser, changeUserPassword } from '../services/authService';
@@ -9,7 +7,7 @@ import { fetchUserProfile, markPasswordChangedInProfile } from '../services/user
 import { hasPermission as checkRolePermission, Permission } from '../../../config/rolePermissions';
 
 export interface AuthContextType {
-  user: FirebaseUser | null;
+  user: any | null;
   userProfile: UserProfile | null;
   currentUser: string;
   loading: boolean;
@@ -25,25 +23,22 @@ export interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<any | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<AppError | null>(null);
   const [requiresPasswordChange, setRequiresPasswordChange] = useState(false);
 
   useEffect(() => {
-    if (!auth) {
-      setLoading(false);
-      return;
-    }
-
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       try {
         setLoading(true);
-        if (firebaseUser) {
+        const sbUser = session?.user || null;
+
+        if (sbUser) {
           setAuthError(null);
-          setUser(firebaseUser);
-          const profile = await fetchUserProfile(firebaseUser.uid);
+          setUser(sbUser);
+          const profile = await fetchUserProfile(sbUser.id);
           
           if (!profile) {
             await logoutUser();
@@ -56,7 +51,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
           }
 
-          if (profile.accountStatus && profile.accountStatus !== 'ACTIVE') {
+          if (profile.accountStatus && (profile.accountStatus as string) !== 'ACTIVE' && (profile.accountStatus as string) !== 'active') {
             await logoutUser();
             setUser(null);
             setUserProfile(null);
@@ -69,9 +64,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
           if (profile.tenantId && profile.role !== 'PLATFORM_SUPERUSER') {
             try {
-              const tenantSnap = await getDoc(doc(db, 'tenants', profile.tenantId));
-              if (tenantSnap.exists()) {
-                const tenantStatus = tenantSnap.data().status;
+              const { data: tenantRow } = await supabase
+                .from('tenants')
+                .select('status')
+                .eq('id', profile.tenantId)
+                .maybeSingle();
+
+              if (tenantRow) {
+                const tenantStatus = tenantRow.status;
                 if (tenantStatus === 'inactive' || tenantStatus === 'DELETION_PENDING') {
                   await logoutUser();
                   setUser(null);
@@ -85,8 +85,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               }
             } catch (err) {
               console.error('Failed to verify tenant status:', err);
-              // Fallback to allowing login if we can't read the tenant doc for some reason?
-              // Or block? The prompt just says "when a tenant is deactivated".
             }
           }
 
@@ -105,26 +103,41 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     if (userProfile?.tenantId && userProfile.role !== 'PLATFORM_SUPERUSER') {
-      const unsub = onSnapshot(doc(db, 'tenants', userProfile.tenantId), async (docSnap) => {
-        if (docSnap.exists()) {
-          const tenantStatus = docSnap.data().status;
-          if (tenantStatus === 'inactive' || tenantStatus === 'DELETION_PENDING') {
-            await logoutUser();
-            setUser(null);
-            setUserProfile(null);
-            setAuthError({
-              userMessage: `Your organization's account is currently ${tenantStatus === 'inactive' ? 'inactive' : 'pending deletion'}. Please contact support.`,
-              code: 'TENANT_DEACTIVATED'
-            });
+      const channel = supabase
+        .channel(`tenant_status_check_${userProfile.tenantId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'tenants',
+            filter: `id=eq.${userProfile.tenantId}`
+          },
+          async (payload) => {
+            const tenantStatus = payload.new?.status;
+            if (tenantStatus === 'inactive' || tenantStatus === 'DELETION_PENDING') {
+              await logoutUser();
+              setUser(null);
+              setUserProfile(null);
+              setAuthError({
+                userMessage: `Your organization's account is currently ${tenantStatus === 'inactive' ? 'inactive' : 'pending deletion'}. Please contact support.`,
+                code: 'TENANT_DEACTIVATED'
+              });
+            }
           }
-        }
-      });
-      return () => unsub();
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [userProfile?.tenantId, userProfile?.role]);
 
@@ -158,7 +171,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setLoading(true);
     try {
       await changeUserPassword(newPass);
-      await markPasswordChangedInProfile(user.uid);
+      await markPasswordChangedInProfile(user.id || user.uid);
       setRequiresPasswordChange(false);
       setUserProfile(prev => (prev ? { ...prev, requiresPasswordChange: false } : null));
     } catch (err) {
@@ -182,7 +195,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       value={{
         user,
         userProfile,
-        currentUser: user?.uid || '',
+        currentUser: user?.id || user?.uid || '',
         loading,
         authError,
         requiresPasswordChange,

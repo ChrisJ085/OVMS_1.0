@@ -1,7 +1,8 @@
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp } from '../../../services/firestoreBase';
 import { db } from '../../../config/firebase';
 import { ProductionPlanEntry } from '../../../types/production';
 import { toAppError } from '../../../types/error';
+import { toEpochMillis } from '../../../utils/timeFormatters';
 
 export interface FetchPlanEntriesParams {
   tenantId: string;
@@ -16,9 +17,8 @@ export const productionPlanRepository = {
   async fetchPlanEntries({ tenantId, siteId, weekStart }: FetchPlanEntriesParams): Promise<ProductionPlanEntry[]> {
     if (!db) return [];
     try {
-      const startTimestamp = Timestamp.fromDate(new Date(weekStart.getTime() - 24 * 60 * 60 * 1000));
-      const endWeek = new Date(weekStart.getTime() + 8 * 24 * 60 * 60 * 1000);
-      const endTimestamp = Timestamp.fromDate(endWeek);
+      const startMs = weekStart.getTime() - 24 * 60 * 60 * 1000;
+      const endMs = weekStart.getTime() + 8 * 24 * 60 * 60 * 1000;
 
       const entriesRef = collection(db, 'productionPlanEntries');
       const q = query(
@@ -31,8 +31,8 @@ export const productionPlanRepository = {
       
       return allFetched.filter(entry => {
         if (!entry.productionDate) return false;
-        const pMillis = entry.productionDate.toMillis();
-        return pMillis >= startTimestamp.toMillis() && pMillis < endTimestamp.toMillis();
+        const pMillis = toEpochMillis(entry.productionDate);
+        return pMillis !== null && pMillis >= startMs && pMillis < endMs;
       });
     } catch (err) {
       throw toAppError(err, 'FETCH_PLAN_ENTRIES_FAILED');

@@ -2,6 +2,7 @@ import { ProductionLine } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { ProductCategory } from '../../../types/configuration';
 import { ProductionPlanEntry, ProductionLinePlanNote } from '../../../types/production';
+import { toEpochMillis } from '../../../utils/timeFormatters';
 
 export const PRODUCTION_EVENT_COLOURS = {
   FORMAT_CHANGE: '#06B6D4', // Cyan / Blue
@@ -193,18 +194,20 @@ export function calculateDayEventSummary(
     for (const note of lineNotes) {
       let matchesDate = false;
       if (note.noteDate) {
-        const nDate = note.noteDate.toDate ? note.noteDate.toDate() : new Date(note.noteDate as any);
-        if (formatDateKey(nDate) === targetDateKey) {
+        const nMs = toEpochMillis(note.noteDate);
+        if (nMs && formatDateKey(new Date(nMs)) === targetDateKey) {
           matchesDate = true;
         }
       }
       if (!matchesDate && note.startAt && note.endAt) {
-        const sDate = note.startAt.toDate ? note.startAt.toDate() : new Date(note.startAt as any);
-        const eDate = note.endAt.toDate ? note.endAt.toDate() : new Date(note.endAt as any);
-        const sKey = formatDateKey(sDate);
-        const eKey = formatDateKey(eDate);
-        if (targetDateKey >= sKey && targetDateKey <= eKey) {
-          matchesDate = true;
+        const sMs = toEpochMillis(note.startAt);
+        const eMs = toEpochMillis(note.endAt);
+        if (sMs && eMs) {
+          const sKey = formatDateKey(new Date(sMs));
+          const eKey = formatDateKey(new Date(eMs));
+          if (targetDateKey >= sKey && targetDateKey <= eKey) {
+            matchesDate = true;
+          }
         }
       }
 

@@ -1,12 +1,15 @@
-import { Timestamp } from 'firebase/firestore';
+export interface TimestampLike {
+  toMillis?: () => number;
+  toDate?: () => Date;
+  seconds?: number;
+}
 
 /**
  * Normalizes any timestamp/date/epoch value to milliseconds since UNIX epoch.
  */
-export function toEpochMillis(val: Date | Timestamp | number | string | null | undefined): number | null {
+export function toEpochMillis(val: Date | TimestampLike | number | string | null | undefined): number | null {
   if (!val) return null;
   if (typeof val === 'number') {
-    // If seconds (e.g. 10 digits), convert to ms
     return val < 1e11 ? val * 1000 : val;
   }
   if (typeof val === 'string') {
@@ -32,7 +35,7 @@ export function toEpochMillis(val: Date | Timestamp | number | string | null | u
  * Returns human-friendly relative time string (e.g. "just now", "5 mins ago", "2 hrs ago", "3 days ago").
  */
 export function formatRelativeTime(
-  dateOrTimestamp: Date | Timestamp | number | string | null | undefined,
+  dateOrTimestamp: Date | TimestampLike | number | string | null | undefined,
   nowMs: number = Date.now()
 ): string {
   const targetMs = toEpochMillis(dateOrTimestamp);
@@ -74,10 +77,9 @@ export function formatRelativeTime(
 
 /**
  * Formats standard recommendation generation status text:
- * E.g. "Rec generated 2 hrs ago by Amelia Hart", "Rec generated 5 mins ago by Amelia Hart", "Rec generated just now by Amelia Hart"
  */
 export function formatRecLastGenerated(
-  completedAt: Date | Timestamp | number | string | null | undefined,
+  completedAt: Date | TimestampLike | number | string | null | undefined,
   completedByName?: string | null,
   nowMs: number = Date.now()
 ): string {

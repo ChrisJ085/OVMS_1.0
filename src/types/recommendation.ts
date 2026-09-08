@@ -1,6 +1,5 @@
-import { BaseDocument } from './common';
+import { BaseDocument, Timestamp } from './common';
 import { DecisionOutput, DecisionInputSnapshot } from './decision';
-import { Timestamp } from 'firebase/firestore';
 
 export type RecommendationStatus = 'AWAITING_REVIEW' | 'APPROVED' | 'AUTO_PUBLISHED' | 'OVERRIDDEN' | 'DISMISSED' | 'SUPERSEDED' | 'EXPIRED';
 

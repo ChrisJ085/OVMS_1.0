@@ -12,7 +12,8 @@ import {
   serverTimestamp,
   orderBy,
   limit
-} from 'firebase/firestore';
+} from '../../../services/firestoreBase';
+import { toEpochMillis } from '../../../utils/timeFormatters';
 import {
   ProductionPlanImport,
   ProductionPlanRow,
@@ -624,13 +625,13 @@ export const evaluatePlanComparison = async (
       return tB - tA;
     });
     const activeDoc = importsList[0];
-    const activeStart = activeDoc.periodStart?.toDate ? activeDoc.periodStart.toDate() : new Date(activeDoc.periodStart as any || Date.now());
-    const activeEnd = activeDoc.periodEnd?.toDate ? activeDoc.periodEnd.toDate() : new Date(activeDoc.periodEnd as any || Date.now());
+    const activeStartMs = toEpochMillis(activeDoc.periodStart) || Date.now();
+    const activeEndMs = toEpochMillis(activeDoc.periodEnd) || Date.now();
+    const activeStart = new Date(activeStartMs);
+    const activeEnd = new Date(activeEndMs);
 
     const newStartMs = newStart.getTime();
     const newEndMs = newEnd.getTime();
-    const activeStartMs = activeStart.getTime();
-    const activeEndMs = activeEnd.getTime();
 
     const safeIsoDate = (d: Date) => (!d || isNaN(d.getTime())) ? '' : d.toISOString().split('T')[0];
 
@@ -1392,7 +1393,7 @@ export const commitProductionPlanImport = async (
       eventType: 'PRODUCTION_PLAN_IMPORT_COMMIT',
       entityType: 'ProductionPlanImport',
       entityId: importId,
-      summary: `Committed SAP MPPS7 Plan Import ${importId} for period ${preview.summary.periodStart.toDate().toLocaleDateString()} to ${preview.summary.periodEnd.toDate().toLocaleDateString()}`,
+      summary: `Committed SAP MPPS7 Plan Import ${importId} for period ${new Date(toEpochMillis(preview.summary.periodStart) || 0).toLocaleDateString()} to ${new Date(toEpochMillis(preview.summary.periodEnd) || 0).toLocaleDateString()}`,
       newValue: {
         importId,
         fileName: preview.summary.fileName,
@@ -1427,12 +1428,15 @@ export const supersedePreviousProductionPlan = async (
       where('siteId', '==', siteId)
     );
 
+    const startMs = toEpochMillis(periodStart) || 0;
+    const endMs = toEpochMillis(periodEnd) || 0;
+
     const snapEntries = await getDocs(qEntries);
     for (const docSnap of snapEntries.docs) {
       const entryData = docSnap.data();
       if (entryData.productionDate) {
-        const pMillis = entryData.productionDate.toMillis();
-        if (pMillis >= periodStart.toMillis() && pMillis <= periodEnd.toMillis()) {
+        const pMillis = toEpochMillis(entryData.productionDate) || 0;
+        if (pMillis >= startMs && pMillis <= endMs) {
           if (entryData.activeImportId !== newImportId && entryData.status === 'PLANNED') {
             await batchMgr.delete(docSnap.ref);
           }
@@ -1451,10 +1455,12 @@ export const supersedePreviousProductionPlan = async (
     const snapImports = await getDocs(qImports);
     for (const docSnap of snapImports.docs) {
       const impData = docSnap.data() as ProductionPlanImport;
+      const impStartMs = toEpochMillis(impData.periodStart) || 0;
+      const impEndMs = toEpochMillis(impData.periodEnd) || 0;
       if (
         impData.id !== newImportId &&
-        impData.periodStart.toMillis() <= periodEnd.toMillis() &&
-        impData.periodEnd.toMillis() >= periodStart.toMillis()
+        impStartMs <= endMs &&
+        impEndMs >= startMs
       ) {
         await batchMgr.update(docSnap.ref, {
           status: 'SUPERSEDED',
