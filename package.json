@@ -6,7 +6,7 @@
   "description": "Operations Visual Management System for warehouse planning, decision support and operational execution",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild src/server/apiApp.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" --sourcemap --outfile=api/index.js",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild src/server/apiApp.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'module'; import { fileURLToPath } from 'url'; import path from 'path'; const require = createRequire(import.meta.url); const __filename = fileURLToPath(import.meta.url); const __dirname = path.dirname(__filename);\" --sourcemap --outfile=api/index.js",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
