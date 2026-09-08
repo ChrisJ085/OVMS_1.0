@@ -1,3 +1,4 @@
+import { createRequire } from 'module'; const require = createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -151459,9 +151460,9 @@ var require_src19 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/build/src/gcp-residency.js
+// node_modules/gcp-metadata/build/src/gcp-residency.js
 var require_gcp_residency3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/build/src/gcp-residency.js"(exports) {
+  "node_modules/gcp-metadata/build/src/gcp-residency.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.GCE_LINUX_BIOS_PATHS = void 0;
@@ -151514,9 +151515,9 @@ var require_gcp_residency3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/colours.js
+// node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/colours.js
 var require_colours2 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/colours.js"(exports) {
+  "node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/colours.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Colours = void 0;
@@ -151574,9 +151575,9 @@ var require_colours2 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/logging-utils.js
+// node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/logging-utils.js
 var require_logging_utils2 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/logging-utils.js"(exports) {
+  "node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/logging-utils.js"(exports) {
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m2, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -151839,9 +151840,9 @@ var require_logging_utils2 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/index.js
+// node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/index.js
 var require_src20 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/index.js"(exports) {
+  "node_modules/gcp-metadata/node_modules/google-logging-utils/build/src/index.js"(exports) {
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m2, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -151864,9 +151865,9 @@ var require_src20 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/build/src/index.js
+// node_modules/gcp-metadata/build/src/index.js
 var require_src21 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/node_modules/gcp-metadata/build/src/index.js"(exports) {
+  "node_modules/gcp-metadata/build/src/index.js"(exports) {
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m2, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -152117,9 +152118,9 @@ var require_src21 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/crypto/browser/crypto.js
+// node_modules/google-auth-library/build/src/crypto/browser/crypto.js
 var require_crypto7 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/crypto/browser/crypto.js"(exports) {
+  "node_modules/google-auth-library/build/src/crypto/browser/crypto.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BrowserCrypto = void 0;
@@ -152213,9 +152214,9 @@ var require_crypto7 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/crypto/node/crypto.js
+// node_modules/google-auth-library/build/src/crypto/node/crypto.js
 var require_crypto8 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/crypto/node/crypto.js"(exports) {
+  "node_modules/google-auth-library/build/src/crypto/node/crypto.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.NodeCrypto = void 0;
@@ -152277,9 +152278,9 @@ var require_crypto8 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/crypto/crypto.js
+// node_modules/google-auth-library/build/src/crypto/crypto.js
 var require_crypto9 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/crypto/crypto.js"(exports) {
+  "node_modules/google-auth-library/build/src/crypto/crypto.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createCrypto = createCrypto;
@@ -152305,9 +152306,9 @@ var require_crypto9 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/options.js
+// node_modules/google-auth-library/build/src/options.js
 var require_options = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/options.js"(exports) {
+  "node_modules/google-auth-library/build/src/options.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validate = validate2;
@@ -152327,9 +152328,9 @@ var require_options = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/package.json
+// node_modules/google-auth-library/package.json
 var require_package10 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/package.json"(exports, module) {
+  "node_modules/google-auth-library/package.json"(exports, module) {
     module.exports = {
       name: "google-auth-library",
       version: "9.15.1",
@@ -152427,9 +152428,9 @@ var require_package10 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/transporters.js
+// node_modules/google-auth-library/build/src/transporters.js
 var require_transporters = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/transporters.js"(exports) {
+  "node_modules/google-auth-library/build/src/transporters.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DefaultTransporter = void 0;
@@ -152512,9 +152513,9 @@ var require_transporters = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/util.js
+// node_modules/google-auth-library/build/src/util.js
 var require_util11 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/util.js"(exports) {
+  "node_modules/google-auth-library/build/src/util.js"(exports) {
     "use strict";
     var __classPrivateFieldGet = exports && exports.__classPrivateFieldGet || function(receiver, state, kind, f4) {
       if (kind === "a" && !f4) throw new TypeError("Private accessor was defined without a getter");
@@ -152590,9 +152591,9 @@ var require_util11 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/authclient.js
+// node_modules/google-auth-library/build/src/auth/authclient.js
 var require_authclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/authclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/authclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.AuthClient = exports.DEFAULT_EAGER_REFRESH_THRESHOLD_MILLIS = exports.DEFAULT_UNIVERSE = void 0;
@@ -152683,9 +152684,9 @@ var require_authclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/loginticket.js
+// node_modules/google-auth-library/build/src/auth/loginticket.js
 var require_loginticket3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/loginticket.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/loginticket.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.LoginTicket = void 0;
@@ -152733,9 +152734,9 @@ var require_loginticket3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/oauth2client.js
+// node_modules/google-auth-library/build/src/auth/oauth2client.js
 var require_oauth2client3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/oauth2client.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/oauth2client.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.OAuth2Client = exports.ClientAuthentication = exports.CertificateFormat = exports.CodeChallengeMethod = void 0;
@@ -153385,9 +153386,9 @@ var require_oauth2client3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/computeclient.js
+// node_modules/google-auth-library/build/src/auth/computeclient.js
 var require_computeclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/computeclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/computeclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Compute = void 0;
@@ -153475,9 +153476,9 @@ var require_computeclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/idtokenclient.js
+// node_modules/google-auth-library/build/src/auth/idtokenclient.js
 var require_idtokenclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/idtokenclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/idtokenclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.IdTokenClient = void 0;
@@ -153519,9 +153520,9 @@ var require_idtokenclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/envDetect.js
+// node_modules/google-auth-library/build/src/auth/envDetect.js
 var require_envDetect3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/envDetect.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/envDetect.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.GCPEnv = void 0;
@@ -153854,9 +153855,9 @@ var require_src22 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/jwtaccess.js
+// node_modules/google-auth-library/build/src/auth/jwtaccess.js
 var require_jwtaccess3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/jwtaccess.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/jwtaccess.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.JWTAccess = void 0;
@@ -154019,9 +154020,9 @@ var require_jwtaccess3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/jwtclient.js
+// node_modules/google-auth-library/build/src/auth/jwtclient.js
 var require_jwtclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/jwtclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/jwtclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.JWT = void 0;
@@ -154271,9 +154272,9 @@ var require_jwtclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/refreshclient.js
+// node_modules/google-auth-library/build/src/auth/refreshclient.js
 var require_refreshclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/refreshclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/refreshclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.UserRefreshClient = exports.USER_REFRESH_ACCOUNT_TYPE = void 0;
@@ -154386,9 +154387,9 @@ var require_refreshclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/impersonated.js
+// node_modules/google-auth-library/build/src/auth/impersonated.js
 var require_impersonated3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/impersonated.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/impersonated.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Impersonated = exports.IMPERSONATED_ACCOUNT_TYPE = void 0;
@@ -154555,9 +154556,9 @@ var require_impersonated3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/oauth2common.js
+// node_modules/google-auth-library/build/src/auth/oauth2common.js
 var require_oauth2common3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/oauth2common.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/oauth2common.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.OAuthClientAuthHandler = void 0;
@@ -154708,9 +154709,9 @@ var require_oauth2common3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/stscredentials.js
+// node_modules/google-auth-library/build/src/auth/stscredentials.js
 var require_stscredentials3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/stscredentials.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/stscredentials.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.StsCredentials = void 0;
@@ -154797,9 +154798,9 @@ var require_stscredentials3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/baseexternalclient.js
+// node_modules/google-auth-library/build/src/auth/baseexternalclient.js
 var require_baseexternalclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/baseexternalclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/baseexternalclient.js"(exports) {
     "use strict";
     var __classPrivateFieldGet = exports && exports.__classPrivateFieldGet || function(receiver, state, kind, f4) {
       if (kind === "a" && !f4) throw new TypeError("Private accessor was defined without a getter");
@@ -155167,9 +155168,9 @@ var require_baseexternalclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/filesubjecttokensupplier.js
+// node_modules/google-auth-library/build/src/auth/filesubjecttokensupplier.js
 var require_filesubjecttokensupplier3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/filesubjecttokensupplier.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/filesubjecttokensupplier.js"(exports) {
     "use strict";
     var _a;
     var _b;
@@ -155232,9 +155233,9 @@ var require_filesubjecttokensupplier3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/urlsubjecttokensupplier.js
+// node_modules/google-auth-library/build/src/auth/urlsubjecttokensupplier.js
 var require_urlsubjecttokensupplier3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/urlsubjecttokensupplier.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/urlsubjecttokensupplier.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.UrlSubjectTokenSupplier = void 0;
@@ -155283,9 +155284,9 @@ var require_urlsubjecttokensupplier3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/identitypoolclient.js
+// node_modules/google-auth-library/build/src/auth/identitypoolclient.js
 var require_identitypoolclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/identitypoolclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/identitypoolclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.IdentityPoolClient = void 0;
@@ -155373,9 +155374,9 @@ var require_identitypoolclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/awsrequestsigner.js
+// node_modules/google-auth-library/build/src/auth/awsrequestsigner.js
 var require_awsrequestsigner3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/awsrequestsigner.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/awsrequestsigner.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.AwsRequestSigner = void 0;
@@ -155518,9 +155519,9 @@ ${credentialScope}
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/defaultawssecuritycredentialssupplier.js
+// node_modules/google-auth-library/build/src/auth/defaultawssecuritycredentialssupplier.js
 var require_defaultawssecuritycredentialssupplier3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/defaultawssecuritycredentialssupplier.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/defaultawssecuritycredentialssupplier.js"(exports) {
     "use strict";
     var __classPrivateFieldGet = exports && exports.__classPrivateFieldGet || function(receiver, state, kind, f4) {
       if (kind === "a" && !f4) throw new TypeError("Private accessor was defined without a getter");
@@ -155671,9 +155672,9 @@ var require_defaultawssecuritycredentialssupplier3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/awsclient.js
+// node_modules/google-auth-library/build/src/auth/awsclient.js
 var require_awsclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/awsclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/awsclient.js"(exports) {
     "use strict";
     var __classPrivateFieldGet = exports && exports.__classPrivateFieldGet || function(receiver, state, kind, f4) {
       if (kind === "a" && !f4) throw new TypeError("Private accessor was defined without a getter");
@@ -155791,9 +155792,9 @@ var require_awsclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/executable-response.js
+// node_modules/google-auth-library/build/src/auth/executable-response.js
 var require_executable_response3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/executable-response.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/executable-response.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.InvalidSubjectTokenError = exports.InvalidMessageFieldError = exports.InvalidCodeFieldError = exports.InvalidTokenTypeFieldError = exports.InvalidExpirationTimeFieldError = exports.InvalidSuccessFieldError = exports.InvalidVersionFieldError = exports.ExecutableResponseError = exports.ExecutableResponse = void 0;
@@ -155891,9 +155892,9 @@ var require_executable_response3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/pluggable-auth-handler.js
+// node_modules/google-auth-library/build/src/auth/pluggable-auth-handler.js
 var require_pluggable_auth_handler3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/pluggable-auth-handler.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/pluggable-auth-handler.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.PluggableAuthHandler = void 0;
@@ -156018,9 +156019,9 @@ var require_pluggable_auth_handler3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/pluggable-auth-client.js
+// node_modules/google-auth-library/build/src/auth/pluggable-auth-client.js
 var require_pluggable_auth_client3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/pluggable-auth-client.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/pluggable-auth-client.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.PluggableAuthClient = exports.ExecutableError = void 0;
@@ -156136,9 +156137,9 @@ var require_pluggable_auth_client3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/externalclient.js
+// node_modules/google-auth-library/build/src/auth/externalclient.js
 var require_externalclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/externalclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/externalclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ExternalAccountClient = void 0;
@@ -156182,9 +156183,9 @@ var require_externalclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/externalAccountAuthorizedUserClient.js
+// node_modules/google-auth-library/build/src/auth/externalAccountAuthorizedUserClient.js
 var require_externalAccountAuthorizedUserClient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/externalAccountAuthorizedUserClient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/externalAccountAuthorizedUserClient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ExternalAccountAuthorizedUserClient = exports.EXTERNAL_ACCOUNT_AUTHORIZED_USER_TYPE = void 0;
@@ -156376,9 +156377,9 @@ var require_externalAccountAuthorizedUserClient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/googleauth.js
+// node_modules/google-auth-library/build/src/auth/googleauth.js
 var require_googleauth3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/googleauth.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/googleauth.js"(exports) {
     "use strict";
     var __classPrivateFieldGet = exports && exports.__classPrivateFieldGet || function(receiver, state, kind, f4) {
       if (kind === "a" && !f4) throw new TypeError("Private accessor was defined without a getter");
@@ -157101,9 +157102,9 @@ var require_googleauth3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/iam.js
+// node_modules/google-auth-library/build/src/auth/iam.js
 var require_iam3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/iam.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/iam.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.IAMAuth = void 0;
@@ -157135,9 +157136,9 @@ var require_iam3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/downscopedclient.js
+// node_modules/google-auth-library/build/src/auth/downscopedclient.js
 var require_downscopedclient3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/downscopedclient.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/downscopedclient.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DownscopedClient = exports.EXPIRATION_TIME_OFFSET = exports.MAX_ACCESS_BOUNDARY_RULES_COUNT = void 0;
@@ -157319,9 +157320,9 @@ var require_downscopedclient3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/passthrough.js
+// node_modules/google-auth-library/build/src/auth/passthrough.js
 var require_passthrough3 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/auth/passthrough.js"(exports) {
+  "node_modules/google-auth-library/build/src/auth/passthrough.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.PassThroughClient = void 0;
@@ -157366,9 +157367,9 @@ var require_passthrough3 = __commonJS({
   }
 });
 
-// node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/index.js
+// node_modules/google-auth-library/build/src/index.js
 var require_src23 = __commonJS({
-  "node_modules/@google-cloud/storage/node_modules/google-auth-library/build/src/index.js"(exports) {
+  "node_modules/google-auth-library/build/src/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.GoogleAuth = exports.auth = exports.DefaultTransporter = exports.PassThroughClient = exports.ExecutableError = exports.PluggableAuthClient = exports.DownscopedClient = exports.BaseExternalAccountClient = exports.ExternalAccountClient = exports.IdentityPoolClient = exports.AwsRequestSigner = exports.AwsClient = exports.UserRefreshClient = exports.LoginTicket = exports.ClientAuthentication = exports.OAuth2Client = exports.CodeChallengeMethod = exports.Impersonated = exports.JWT = exports.JWTAccess = exports.IdTokenClient = exports.IAMAuth = exports.GCPEnv = exports.Compute = exports.DEFAULT_UNIVERSE = exports.AuthClient = exports.gaxios = exports.gcpMetadata = void 0;

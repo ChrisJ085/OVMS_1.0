@@ -392,11 +392,26 @@ describe('apiApp Express routing tests', () => {
       }
     };
 
-    await apiHandler(req, res);
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        res.headersSent = true;
+        res.writableEnded = true;
+        resolve();
+        return res;
+      };
+      res.end = () => {
+        res.headersSent = true;
+        res.writableEnded = true;
+        resolve();
+        return res;
+      };
+      apiHandler(req, res);
+    });
 
     expect(statusCode).toBe(200);
     expect(jsonBody).toEqual({ status: 'ok' });
-  });
+  }, 15000);
 
   it('verifies that /api/admin/provision-user is mounted and reachable via the bundled entrypoint', async () => {
     const apiHandler = (await import('../../api/index.js')).default;
@@ -438,11 +453,26 @@ describe('apiApp Express routing tests', () => {
       }
     };
 
-    await apiHandler(req, res);
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        res.headersSent = true;
+        res.writableEnded = true;
+        resolve();
+        return res;
+      };
+      res.end = () => {
+        res.headersSent = true;
+        res.writableEnded = true;
+        resolve();
+        return res;
+      };
+      apiHandler(req, res);
+    });
 
     // Should reach the provision-user route handler (which returns 401 Unauthorized without auth header)
     expect(statusCode).toBe(401);
     expect(jsonBody.stage).toBe('PROVISION_START');
     expect(jsonBody.error).toContain('Unauthorized');
-  });
+  }, 15000);
 });
