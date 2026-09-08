@@ -364,6 +364,8 @@ describe('apiApp Express routing tests', () => {
 
     const res: any = {
       statusCode: 200,
+      headersSent: false,
+      writableEnded: false,
       status(code: number) {
         statusCode = code;
         this.statusCode = code;
@@ -374,21 +376,21 @@ describe('apiApp Express routing tests', () => {
       },
       json(data: any) {
         jsonBody = data;
+        this.headersSent = true;
+        this.writableEnded = true;
         return this;
       },
       end() {
+        this.headersSent = true;
+        this.writableEnded = true;
+        return this;
+      },
+      on(_event: string, _cb: Function) {
         return this;
       }
     };
 
-    await new Promise<void>((resolve) => {
-      res.json = (data: any) => {
-        jsonBody = data;
-        resolve();
-        return res;
-      };
-      apiHandler(req, res);
-    });
+    await apiHandler(req, res);
 
     expect(statusCode).toBe(200);
     expect(jsonBody).toEqual({ status: 'ok' });

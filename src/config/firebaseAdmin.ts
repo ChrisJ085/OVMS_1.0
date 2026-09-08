@@ -101,9 +101,76 @@ export const hasAdminCredentials = !!(
   process.env.GOOGLE_APPLICATION_CREDENTIALS
 );
 
-export const adminAuth: Auth = getAuth(adminApp);
-export const adminDb: Firestore = getFirestore(adminApp);
-export const adminStorage: Storage = getStorage(adminApp);
+let _adminAuth: Auth | null = null;
+let _adminDb: Firestore | null = null;
+let _adminStorage: Storage | null = null;
+
+export const getAdminAuth = (): Auth | null => {
+  if (!_adminAuth && adminApp) {
+    try {
+      _adminAuth = getAuth(adminApp);
+    } catch (err: any) {
+      console.warn('[Firebase Admin] getAuth initialization error:', err?.message || err);
+    }
+  }
+  return _adminAuth;
+};
+
+export const getAdminDb = (): Firestore | null => {
+  if (!_adminDb && adminApp) {
+    try {
+      _adminDb = getFirestore(adminApp);
+    } catch (err: any) {
+      console.warn('[Firebase Admin] getFirestore initialization error:', err?.message || err);
+    }
+  }
+  return _adminDb;
+};
+
+export const getAdminStorage = (): Storage | null => {
+  if (!_adminStorage && adminApp) {
+    try {
+      _adminStorage = getStorage(adminApp);
+    } catch (err: any) {
+      console.warn('[Firebase Admin] getStorage initialization error:', err?.message || err);
+    }
+  }
+  return _adminStorage;
+};
+
+export const adminAuth: Auth = new Proxy({} as Auth, {
+  get(_target, prop) {
+    const realAuth = getAdminAuth();
+    if (!realAuth) {
+      throw new Error('Firebase Admin Auth is not initialized or credentials are not available.');
+    }
+    const val = (realAuth as any)[prop];
+    return typeof val === 'function' ? val.bind(realAuth) : val;
+  }
+});
+
+export const adminDb: Firestore = new Proxy({} as Firestore, {
+  get(_target, prop) {
+    const realDb = getAdminDb();
+    if (!realDb) {
+      throw new Error('Firebase Admin Firestore is not initialized or credentials are not available.');
+    }
+    const val = (realDb as any)[prop];
+    return typeof val === 'function' ? val.bind(realDb) : val;
+  }
+});
+
+export const adminStorage: Storage = new Proxy({} as Storage, {
+  get(_target, prop) {
+    const realStorage = getAdminStorage();
+    if (!realStorage) {
+      throw new Error('Firebase Admin Storage is not initialized or credentials are not available.');
+    }
+    const val = (realStorage as any)[prop];
+    return typeof val === 'function' ? val.bind(realStorage) : val;
+  }
+});
+
 export const resolvedAdminProjectId = projectId;
 
 // Safe startup logging (no tokens, keys, passwords, or full credentials)
