@@ -350,4 +350,47 @@ describe('apiApp Express routing tests', () => {
     expect(statusCode).toBe(401);
     expect(jsonBody.error).toContain('Unauthorized');
   });
+
+  it('invokes api/index.ts handler function cleanly', async () => {
+    const apiHandler = (await import('../../api/index')).default;
+    let statusCode = 200;
+    let jsonBody: any = null;
+
+    const req: any = {
+      method: 'GET',
+      url: '/health',
+      headers: {}
+    };
+
+    const res: any = {
+      statusCode: 200,
+      status(code: number) {
+        statusCode = code;
+        this.statusCode = code;
+        return this;
+      },
+      setHeader() {
+        return this;
+      },
+      json(data: any) {
+        jsonBody = data;
+        return this;
+      },
+      end() {
+        return this;
+      }
+    };
+
+    await new Promise<void>((resolve) => {
+      res.json = (data: any) => {
+        jsonBody = data;
+        resolve();
+        return res;
+      };
+      apiHandler(req, res);
+    });
+
+    expect(statusCode).toBe(200);
+    expect(jsonBody).toEqual({ status: 'ok' });
+  });
 });

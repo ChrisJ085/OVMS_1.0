@@ -430,10 +430,11 @@ export const AdminOverviewPage: React.FC = () => {
       try {
         apiData = JSON.parse(resText);
       } catch {
+        const cleanSnippet = resText ? resText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().slice(0, 150) : '';
         if (!apiRes.ok) {
-          throw new Error(`Server returned HTTP ${apiRes.status}. If deployed to Vercel, ensure the latest build is deployed.`);
+          throw new Error(`Server returned HTTP ${apiRes.status}${cleanSnippet ? `: ${cleanSnippet}` : ''}. If deployed to Vercel, ensure the latest build is deployed.`);
         }
-        throw new Error(`Unexpected server response: ${resText.slice(0, 150)}`);
+        throw new Error(`Unexpected server response: ${cleanSnippet || resText.slice(0, 150)}`);
       }
 
       if (!apiRes.ok || !apiData.success) {

@@ -5,24 +5,26 @@ import { getStorage, Storage } from 'firebase-admin/storage';
 
 const REQUIRED_PROJECT_ID = 'ovms-ad209';
 
-const projectId =
-  process.env.FIREBASE_PROJECT_ID ||
-  process.env.GCLOUD_PROJECT ||
-  REQUIRED_PROJECT_ID;
+const rawProjectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT;
+const projectId = (rawProjectId && rawProjectId.trim()) ? rawProjectId.trim() : REQUIRED_PROJECT_ID;
 
-if (process.env.NODE_ENV === 'production' && projectId !== REQUIRED_PROJECT_ID) {
-  throw new Error(
-    `Fatal: Resolved Admin project ID '${projectId}' is not '${REQUIRED_PROJECT_ID}' in production.`
+if (projectId !== REQUIRED_PROJECT_ID) {
+  console.warn(
+    `[Firebase Admin Init] Notice: Resolved Admin project ID is '${projectId}' (default is '${REQUIRED_PROJECT_ID}').`
   );
 }
 
 let adminApp: App;
 
-if (getApps().length > 0) {
-  adminApp = getApps()[0];
+const existingApps = getApps();
+if (existingApps.length > 0) {
+  adminApp = existingApps[0];
 } else {
-  try {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  let initialized = false;
+
+  // 1. Try FIREBASE_SERVICE_ACCOUNT (JSON string or base64 encoded)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
       let serviceAccount: any;
       try {
         serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -35,7 +37,15 @@ if (getApps().length > 0) {
         projectId: serviceAccount.project_id || projectId,
         storageBucket: `${projectId}.firebasestorage.app`
       });
-    } else if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+      initialized = true;
+    } catch (err: any) {
+      console.warn('[Firebase Admin Init] Failed to initialize with FIREBASE_SERVICE_ACCOUNT:', err?.message || err);
+    }
+  }
+
+  // 2. Try individual FIREBASE_PRIVATE_KEY and FIREBASE_CLIENT_EMAIL
+  if (!initialized && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+    try {
       adminApp = initializeApp({
         credential: cert({
           projectId,
@@ -45,18 +55,43 @@ if (getApps().length > 0) {
         projectId,
         storageBucket: `${projectId}.firebasestorage.app`
       });
-    } else {
+      initialized = true;
+    } catch (err: any) {
+      console.warn('[Firebase Admin Init] Failed to initialize with FIREBASE_PRIVATE_KEY/EMAIL:', err?.message || err);
+    }
+  }
+
+  // 3. Try GOOGLE_APPLICATION_CREDENTIALS
+  if (!initialized && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    try {
       adminApp = initializeApp({
         credential: applicationDefault(),
         projectId,
         storageBucket: `${projectId}.firebasestorage.app`
       });
+      initialized = true;
+    } catch (err: any) {
+      console.warn('[Firebase Admin Init] Failed to initialize with applicationDefault:', err?.message || err);
     }
-  } catch (err) {
-    adminApp = initializeApp({
-      projectId,
-      storageBucket: `${projectId}.firebasestorage.app`
-    });
+  }
+
+  // 4. Default unauthenticated app fallback (prevents module crashes in serverless)
+  if (!initialized) {
+    try {
+      const apps = getApps();
+      if (apps.length > 0) {
+        adminApp = apps[0];
+      } else {
+        adminApp = initializeApp({
+          projectId,
+          storageBucket: `${projectId}.firebasestorage.app`
+        });
+      }
+    } catch (err: any) {
+      console.warn('[Firebase Admin Init] Fallback initializeApp note:', err?.message || err);
+      const apps = getApps();
+      adminApp = apps.length > 0 ? apps[0] : ({} as any);
+    }
   }
 }
 

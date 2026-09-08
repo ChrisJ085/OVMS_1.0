@@ -519,6 +519,14 @@ async function processDeletion(jobId: string) {
 // Create Express API App
 const apiApp = express();
 
+// If body was already parsed by Vercel serverless layer, mark _body = true so express.json() doesn't hang or re-parse
+apiApp.use((req, _res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    (req as any)._body = true;
+  }
+  next();
+});
+
 apiApp.use(express.json());
 
 // CORS & Preflight headers for cross-origin or serverless invocations
@@ -963,6 +971,23 @@ apiApp.use('/', router);
 // Unmatched API requests return 404 JSON, never index.html
 apiApp.use((req, res) => {
   res.status(404).json({ error: `Not Found: ${req.method} ${req.originalUrl || req.url}` });
+});
+
+// Global Express error handler (ensures all errors return structured JSON, never HTML or plain text)
+apiApp.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[API Express Error Handler]', err);
+  const statusCode = (typeof err?.status === 'number' && err.status >= 400 && err.status < 600) 
+    ? err.status 
+    : (typeof err?.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 600)
+    ? err.statusCode
+    : 500;
+  if (!res.headersSent) {
+    res.status(statusCode).json({
+      success: false,
+      error: err?.message || 'Internal server error',
+      stage: 'EXPRESS_UNHANDLED_ERROR'
+    });
+  }
 });
 
 export default apiApp;
