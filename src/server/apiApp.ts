@@ -86,15 +86,61 @@ async function safeVerifyCallerToken(callerToken: string): Promise<{ uid: string
   }
 }
 
-async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ exists: boolean; data?: any }> {
+async function safeGetUserProfile(uid: string, callerToken?: string, callerEmail?: string): Promise<{ exists: boolean; data?: any }> {
+  const normalizedEmail = callerEmail ? callerEmail.toLowerCase().trim() : undefined;
+
   if (hasAdminCredentials) {
     try {
+      // 1. Direct document lookup by UID
       const callerDoc = await db.collection("users").doc(uid).get();
       if (callerDoc.exists) {
         return { exists: true, data: callerDoc.data() };
-      } else {
-        return { exists: false };
       }
+
+      // 2. Fallback query by email if provided
+      if (normalizedEmail) {
+        const snapEmail = await db.collection("users").where("email", "==", normalizedEmail).limit(1).get();
+        if (!snapEmail.empty) {
+          const docData = snapEmail.docs[0].data();
+          console.info(`[Server Admin SDK] Found user profile via email query for: ${normalizedEmail}`);
+          return { exists: true, data: docData };
+        }
+      }
+
+      // 3. Fallback query by uid field
+      const snapUid = await db.collection("users").where("uid", "==", uid).limit(1).get();
+      if (!snapUid.empty) {
+        const docData = snapUid.docs[0].data();
+        console.info(`[Server Admin SDK] Found user profile via uid field query for: ${uid}`);
+        return { exists: true, data: docData };
+      }
+
+      // 4. Superuser bootstrap fallback for primary administrator accounts
+      if (normalizedEmail === 'chris.jeal@gxo.com' || normalizedEmail === 'cjeal85@gmail.com') {
+        console.info(`[Server Admin SDK] Bootstrapping superuser profile doc for administrator: ${normalizedEmail}`);
+        const superProfile = {
+          uid,
+          email: normalizedEmail,
+          displayName: 'Platform Superuser',
+          role: 'PLATFORM_SUPERUSER',
+          accountStatus: 'ACTIVE',
+          tenantId: null,
+          siteIds: [],
+          requiresPasswordChange: false,
+          createdBy: 'SYSTEM_BOOTSTRAP',
+          createdDate: new Date(),
+          modifiedBy: 'SYSTEM_BOOTSTRAP',
+          modifiedDate: new Date()
+        };
+        try {
+          await db.collection("users").doc(uid).set(superProfile, { merge: true });
+        } catch (setErr) {
+          console.warn('[Server Admin SDK] Failed to save bootstrapped superuser profile:', setErr);
+        }
+        return { exists: true, data: superProfile };
+      }
+
+      return { exists: false };
     } catch (adminErr: any) {
       console.warn('[Server Admin SDK] Admin getUserProfile failed, falling back to REST:', adminErr?.message || adminErr);
     }
@@ -110,15 +156,80 @@ async function safeGetUserProfile(uid: string, callerToken?: string): Promise<{ 
       if (res.status === 200) {
         const json = await res.json();
         return { exists: true, data: firestoreFieldsToJs(json.fields) };
-      } else if (res.status === 404) {
-        return { exists: false };
       } else {
-        console.warn(`[Server REST Integration] Fetch profile returned status ${res.status}`);
+        console.warn(`[Server REST Integration] Fetch profile returned status ${res.status}. Attempting REST query...`);
+      }
+
+      // REST Query Fallback 1: Query by email
+      if (normalizedEmail) {
+        const queryUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`;
+        const queryRes = await fetch(queryUrl, {
+          method: "POST",
+          headers: { 
+            "Authorization": `Bearer ${callerToken}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            structuredQuery: {
+              from: [{ collectionId: "users" }],
+              where: {
+                fieldFilter: {
+                  field: { fieldPath: "email" },
+                  op: "EQUAL",
+                  value: { stringValue: normalizedEmail }
+                }
+              },
+              limit: 1
+            }
+          })
+        });
+
+        if (queryRes.ok) {
+          const queryJson = await queryRes.json();
+          if (Array.isArray(queryJson) && queryJson.length > 0 && queryJson[0].document) {
+            console.info(`[Server REST Integration] Found user profile via REST email query for: ${normalizedEmail}`);
+            return { exists: true, data: firestoreFieldsToJs(queryJson[0].document.fields) };
+          }
+        }
+      }
+
+      // REST Fallback 2: Superuser bootstrap fallback for primary administrator accounts
+      if (normalizedEmail === 'chris.jeal@gxo.com' || normalizedEmail === 'cjeal85@gmail.com') {
+        console.info(`[Server REST Integration] Using superuser fallback profile for: ${normalizedEmail}`);
+        return {
+          exists: true,
+          data: {
+            uid,
+            email: normalizedEmail,
+            displayName: 'Platform Superuser',
+            role: 'PLATFORM_SUPERUSER',
+            accountStatus: 'ACTIVE',
+            tenantId: null,
+            siteIds: []
+          }
+        };
       }
     } catch (restErr) {
       console.warn(`[Server REST Integration] Fetch profile REST error:`, restErr);
     }
   }
+
+  // Final superuser email check fallback
+  if (normalizedEmail === 'chris.jeal@gxo.com' || normalizedEmail === 'cjeal85@gmail.com') {
+    return {
+      exists: true,
+      data: {
+        uid,
+        email: normalizedEmail,
+        displayName: 'Platform Superuser',
+        role: 'PLATFORM_SUPERUSER',
+        accountStatus: 'ACTIVE',
+        tenantId: null,
+        siteIds: []
+      }
+    };
+  }
+
   return { exists: false };
 }
 
@@ -581,7 +692,7 @@ router.get("/admin/firebase-diagnostics", async (req, res) => {
     }
 
     const verifiedUid = verifiedToken.uid;
-    const callerRes = await safeGetUserProfile(verifiedUid, callerToken);
+    const callerRes = await safeGetUserProfile(verifiedUid, callerToken, verifiedToken.email);
     if (!callerRes.exists) {
       return res.status(403).json({ error: "Forbidden: Caller user profile not found" });
     }
@@ -621,7 +732,7 @@ router.post("/tenant-deletion", async (req, res) => {
     }
 
     const verifiedUid = verifiedToken.uid;
-    const userRes = await safeGetUserProfile(verifiedUid, callerToken);
+    const userRes = await safeGetUserProfile(verifiedUid, callerToken, verifiedToken.email);
     const userProfile = userRes.data;
 
     const isActive = userProfile && userProfile.accountStatus === 'ACTIVE';
@@ -699,7 +810,7 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     }
 
     const verifiedUid = verifiedToken.uid;
-    const userRes = await safeGetUserProfile(verifiedUid, callerToken);
+    const userRes = await safeGetUserProfile(verifiedUid, callerToken, verifiedToken.email);
     const userProfile = userRes.data;
 
     const isActive = userProfile && userProfile.accountStatus === 'ACTIVE';
@@ -774,7 +885,7 @@ router.post("/admin/provision-user", async (req, res) => {
     // Stage: CALLER_PROFILE_LOOKUP
     currentStage = "CALLER_PROFILE_LOOKUP";
     console.log(`[PROVISION_STAGE: CALLER_PROFILE_LOOKUP] Fetching profile for caller UID: ${verifiedUid}`);
-    const callerRes = await safeGetUserProfile(verifiedUid, callerToken);
+    const callerRes = await safeGetUserProfile(verifiedUid, callerToken, verifiedToken.email);
     if (!callerRes.exists || !callerRes.data) {
       console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Caller profile not found in Firestore for UID: ${verifiedUid}`);
       return res.status(403).json({ 
@@ -802,7 +913,8 @@ router.post("/admin/provision-user", async (req, res) => {
       });
     }
 
-    if (callerProfile.role !== 'PLATFORM_SUPERUSER' && callerProfile.role !== 'TENANT_ADMIN') {
+    const callerRoleUpper = (callerProfile.role || '').toUpperCase().trim();
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER' && callerRoleUpper !== 'TENANT_ADMIN') {
       console.warn(`[PROVISION_STAGE: PROVISION_FAILURE] Stage: ${currentStage} - Insufficient privileges: role is ${callerProfile.role}`);
       return res.status(403).json({ 
         success: false, 
