@@ -8,13 +8,12 @@ import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search, Calendar, CheckCircle2, XCircle, Play, Pause, Square, AlertCircle, Clock } from 'lucide-react';
 import { subscribeToProductionEvents, updateProductionEvent } from '../services/productionService';
 import { ProductionEvent } from '../../../types/production';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductionLine, UnitOfMeasure } from '../../../types/configuration';
-import { where, Timestamp } from 'firebase/firestore';
 import { ProductionEventModal } from './components/ProductionEventModal';
 import { ProductionActionModal } from './components/ProductionActionModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { Timestamp, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const ProductionPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

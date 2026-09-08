@@ -2,13 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { X, History, Archive, AlertTriangle } from 'lucide-react';
 import { InventoryBalance, InventoryMovement } from '../../../../types/inventory';
 import { subscribeToBalances, subscribeToMovements } from '../../services/inventoryService';
-import { subscribeToCollection } from '../../../../services/firestoreBase';
 import { collections } from '../../../configuration/services/configurationService';
 import { StorageArea, UnitOfMeasure } from '../../../../types/configuration';
-import { where } from 'firebase/firestore';
 import { Location } from '../../../../types/inventory';
 import { DataTable } from '../../../../components/ui/DataTable';
 import { useSiteContext } from '../../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../../services/firestoreBase';
 
 interface InventoryDetailModalProps {
   isOpen: boolean;

@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Search, Filter, Calendar, Download } from 'lucide-react';
 import { Priority } from '../../../types/priority';
@@ -8,6 +6,7 @@ import { Recommendation } from '../../../types/recommendation';
 import { OperationalException } from '../../../types/exception';
 import { Announcement } from '../../../types/announcement';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { Timestamp, collection, db, getDocs, orderBy, query, where } from '../../../services/firestoreBase';
 
 // Normalised history item
 interface HistoryEvent {

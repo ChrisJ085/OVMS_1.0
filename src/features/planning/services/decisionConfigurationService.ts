@@ -1,6 +1,5 @@
-import { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { DecisionConfiguration } from '../../../types/decision';
+import { addDoc, collection, db, doc, getDoc, getDocs, query, serverTimestamp, setDoc, where } from '../../../services/firestoreBase';
 
 export const saveDecisionConfiguration = async (
   tenantId: string,

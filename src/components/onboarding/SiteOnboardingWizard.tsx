@@ -1,8 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, addDoc, deleteDoc, serverTimestamp 
-} from 'firebase/firestore';
-import { db } from '../../config/firebase';
 import { useAuth } from '../../features/auth/context/AuthContext';
 import { useSiteContext } from '../../contexts/SiteContext';
 import { useSiteOnboarding } from '../../hooks/useSiteOnboarding';
@@ -19,8 +15,9 @@ import {
   getDecisionConfiguration 
 } from '../../features/planning/services/decisionConfigurationService';
 import { getSiteSettings, updateSiteSettings } from '../../features/administration/services/settingsService';
+import { addDoc, collection, db, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../services/firestoreBase';
 import { 
-  CheckCircle, 
+  CheckCircle,
   Circle, 
   Lock, 
   AlertCircle, 

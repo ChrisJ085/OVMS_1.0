@@ -12,6 +12,9 @@ import {
 import { BaseDocument, Timestamp as CommonTimestamp } from '../types/common';
 
 export type Timestamp = CommonTimestamp;
+export type QueryConstraint = any;
+
+export const db = 'supabase_db';
 
 export const where = (field: string, op: string, value: any): QueryFilter => {
   return { field, op: op as any, value };
@@ -21,7 +24,10 @@ export const orderBy = (field: string, dir: string = 'asc') => ({ type: 'orderBy
 export const limit = (n: number) => ({ type: 'limit', n });
 
 export const collection = (dbOrName: any, collectionName?: string) => {
-  return typeof dbOrName === 'string' ? dbOrName : (collectionName || dbOrName);
+  if (typeof dbOrName === 'string') {
+    return collectionName ? collectionName : dbOrName;
+  }
+  return collectionName || 'default_collection';
 };
 
 export const doc = (dbOrColl: any, collOrId?: string, id?: string) => {
@@ -29,9 +35,12 @@ export const doc = (dbOrColl: any, collOrId?: string, id?: string) => {
     return { collection: collOrId, id };
   }
   if (collOrId && typeof dbOrColl === 'string') {
+    if (dbOrColl === db) {
+      return { collection: collOrId, id: '' };
+    }
     return { collection: dbOrColl, id: collOrId };
   }
-  return { collection: dbOrColl, id: collOrId };
+  return { collection: typeof dbOrColl === 'string' ? dbOrColl : 'default', id: collOrId || '' };
 };
 
 export const query = (coll: any, ...constraints: any[]) => {
@@ -139,12 +148,53 @@ export const subscribeToCollection = <T = any>(
   return sbSubscribeToCollection<T>(collectionName, filters, onUpdate, onError);
 };
 
+export const onSnapshot = (
+  queryOrRef: any,
+  onNext: (snapshot: any) => void,
+  onError?: (err: any) => void
+) => {
+  if (typeof queryOrRef === 'string' || queryOrRef?.collectionName) {
+    const collectionName = typeof queryOrRef === 'string' ? queryOrRef : queryOrRef.collectionName;
+    const filters = queryOrRef?.filters || [];
+    return sbSubscribeToCollection(collectionName, filters, (items) => {
+      const docs = items.map((item: any) => ({
+        id: item.id,
+        data: () => item,
+        exists: () => true,
+        ref: { collection: collectionName, id: item.id }
+      }));
+      onNext({
+        empty: docs.length === 0,
+        size: docs.length,
+        docs,
+        forEach: (cb: any) => docs.forEach(cb)
+      });
+    }, onError);
+  } else if (queryOrRef?.collection && queryOrRef?.id) {
+    return sbSubscribeToDocument(queryOrRef.collection, queryOrRef.id, (data) => {
+      onNext({
+        exists: () => data !== null,
+        data: () => data,
+        id: queryOrRef.id,
+      });
+    }, onError);
+  }
+  return () => {};
+};
+
 export const createDocument = sbCreateDocument;
 export const updateDocument = sbUpdateDocument;
 export const deleteDocument = sbDeleteDocument;
 export const deactivateDocument = sbDeactivateDocument;
 
-export const writeBatch = (db?: any) => {
+export const getCountFromServer = async (queryOrColl: any) => {
+  const docsResult = await getDocs(queryOrColl);
+  return {
+    data: () => ({ count: docsResult.size })
+  };
+};
+
+export const writeBatch = (_db?: any) => {
   const operations: (() => Promise<void>)[] = [];
   return {
     set: (docRef: any, data: any) => {
@@ -167,7 +217,7 @@ export const writeBatch = (db?: any) => {
 export const getBatch = writeBatch;
 
 export const runTransaction = async <T>(
-  db: any,
+  _db: any,
   updateFunction: (transaction: any) => Promise<T>
 ): Promise<T> => {
   const dummyTx = {

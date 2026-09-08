@@ -8,13 +8,12 @@ import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search } from 'lucide-react';
 import { subscribeToProducts, setProductStatus } from '../services/productService';
 import { Product } from '../../../types/product';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductCategory, UnitOfMeasure, Destination } from '../../../types/configuration';
-import { where } from 'firebase/firestore';
 import { ProductModal } from './components/ProductModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const ProductsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

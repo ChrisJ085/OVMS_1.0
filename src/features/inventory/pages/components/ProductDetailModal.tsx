@@ -2,9 +2,9 @@ import React from 'react';
 import { X, Package, Ruler, Archive, CheckCircle, Info } from 'lucide-react';
 import { Product } from '../../../../types/product';
 import { StatusBadge } from '../../../../components/ui/StatusBadge';
-import { Timestamp } from 'firebase/firestore';
 import { ProductProductionContextPanel } from '../../../planning/components/ProductProductionContextPanel';
 import { ProductPromotionsPanel } from '../../../planning/components/ProductPromotionsPanel';
+import { Timestamp } from '../../../../services/firestoreBase';
 
 interface ProductDetailModalProps {
   isOpen: boolean;

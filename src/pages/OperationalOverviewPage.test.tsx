@@ -42,7 +42,8 @@ let mockImportDocs: any[] = [];
 let mockEntriesDocs: any[] = [];
 let mockQueryError: Error | null = null;
 
-vi.mock('firebase/firestore', () => ({
+vi.mock('../services/firestoreBase', () => ({
+  db: {},
   doc: vi.fn(),
   getFirestore: vi.fn(),
   getDoc: vi.fn(() => Promise.resolve({ exists: () => false })),
@@ -74,10 +75,6 @@ vi.mock('firebase/firestore', () => ({
   Timestamp: {
     now: () => ({ toMillis: () => Date.now(), toDate: () => new Date() }),
   },
-}));
-
-vi.mock('../config/firebase', () => ({
-  db: {},
 }));
 
 describe('OperationalOverviewPage Test Suite', () => {

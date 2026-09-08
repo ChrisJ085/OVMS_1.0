@@ -1,13 +1,6 @@
-import {
-  createDocument,
-  updateDocument,
-  deactivateDocument,
-  subscribeToCollection
-} from '../../../services/firestoreBase';
-import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
+import { Timestamp, collection, createDocument, db, deactivateDocument, getDocs, query, serverTimestamp, subscribeToCollection, updateDocument, where } from '../../../services/firestoreBase';
 
 const COLLECTION_NAME = 'planningRules';
 

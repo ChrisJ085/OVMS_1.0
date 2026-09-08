@@ -1,7 +1,6 @@
-import { collection, doc, getDocs, query, where, addDoc, updateDoc, Timestamp, writeBatch, getDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Announcement } from '../../../types/announcement';
 import { ServiceResult } from '../../../types/common';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from '../../../services/firestoreBase';
 
 const COLLECTION = 'announcements';
 

@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Activity, Clock, CheckCircle, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { Timestamp, collection, db, getDocs, query, where } from '../../../services/firestoreBase';
 
 export const KpiDashboardPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Lock, Mail, AlertTriangle, Database, Info } from 'lucide-react';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { isFirebaseConfigured } from '../../../config/firebase';
+import { Eye, EyeOff, Lock, Mail, AlertTriangle, Info } from 'lucide-react';
+import { isSupabaseConfigured } from '../../../config/supabase';
 import { usePageTitle } from '../../../hooks/usePageTitle';
 
 interface LoginPageProps {
@@ -37,6 +36,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
+  const configured = isSupabaseConfigured();
+
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-100 select-none">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl shadow-2xl overflow-hidden p-8 space-y-6">
@@ -54,13 +55,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </p>
         </div>
 
-        {!isFirebaseConfigured && (
+        {!configured && (
           <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-lg text-xs space-y-2 flex flex-col">
             <div className="flex items-center gap-1.5 font-semibold">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              <span>Firebase is not yet fully configured</span>
+              <span>Supabase is not yet configured</span>
             </div>
-            <span>Please configure the environment variables or use the developer bootstrap below to initialize the system.</span>
+            <span>Please configure the environment variables VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.</span>
           </div>
         )}
 

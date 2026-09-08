@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Recommendation } from '../../../types/recommendation';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
@@ -11,12 +9,11 @@ import { PlannerDecision, OverrideFlags } from '../../../types/recommendation';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { subscribeToLocations } from '../../inventory/services/locationService';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
-import { where } from 'firebase/firestore';
 import { Location } from '../../../types/inventory';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
+import { db, doc, getDoc, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const RecommendationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();

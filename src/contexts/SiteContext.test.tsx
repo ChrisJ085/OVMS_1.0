@@ -204,6 +204,28 @@ describe('SiteContext Test Suite', () => {
     expect(screen.getByTestId('tenant-id').textContent).toBe('');
   });
 
+  it('Platform Superuser: has full access even without an assigned site or when no sites exist', async () => {
+    mockAuth = {
+      loading: false,
+      userProfile: { role: 'PLATFORM_SUPERUSER', tenantId: '', siteIds: [] },
+    };
+
+    vi.mocked(fetchUserPermittedSites).mockResolvedValue([]);
+
+    render(
+      <SiteProvider>
+        <TestConsumer />
+      </SiteProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('site-ready').textContent).toBe('READY');
+    });
+
+    expect(screen.getByTestId('site-error').textContent).toBe('NO_ERROR');
+    expect(screen.getByTestId('site-id').textContent).toBe('GLOBAL');
+  });
+
   it('Tenant Admin: automatically has access to all sites in their tenant', async () => {
     mockAuth = {
       loading: false,

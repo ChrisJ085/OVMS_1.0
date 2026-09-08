@@ -14,14 +14,12 @@ import {
   createConfigItem,
   updateConfigItem
 } from '../features/configuration/services/configurationService';
-import { subscribeToCollection } from '../services/firestoreBase';
-import { where, collection, getDocs, QueryConstraint } from 'firebase/firestore';
 import { ConfigItemModal } from '../features/configuration/components/ConfigItemModal';
 import { useSiteContext } from '../contexts/SiteContext';
 import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { reopenSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { useAuth } from '../features/auth/context/AuthContext';
-import { db } from '../config/firebase';
+import { QueryConstraint, collection, db, getDocs, subscribeToCollection, where } from '../services/firestoreBase';
 
 const TABS = [
   { id: 'sites', label: 'Sites', collection: collections.SITES, codeField: 'siteCode' },

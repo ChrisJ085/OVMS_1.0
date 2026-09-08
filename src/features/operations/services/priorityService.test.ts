@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { db } from '../../../config/firebase';
-import {
+import { Timestamp, collection, db, doc, getDoc, getDocs, writeBatch } from '../../../services/firestoreBase';
+import { 
   createPriority,
   checkDuplicatePriority,
   updatePriorityStatus,
   logPriorityEvent
 } from './priorityService';
-import { collection, doc, writeBatch, getDocs, getDoc, Timestamp } from 'firebase/firestore';
 
 // Mock Firestore functions to spy on collection names and query constraints
 const mockCollectionSpy = vi.fn((_database: any, path: string) => ({ path }));
@@ -36,8 +35,8 @@ const mockBatchUpdate = vi.fn();
 const mockBatchDelete = vi.fn();
 const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('firebase/firestore', async () => {
-  const actual = await vi.importActual<any>('firebase/firestore');
+vi.mock('../../../services/firestoreBase', async () => {
+  const actual = await vi.importActual<any>('../../../services/firestoreBase');
   return {
     ...actual,
     collection: (db: any, path: string) => mockCollectionSpy(db, path),
@@ -58,10 +57,6 @@ vi.mock('firebase/firestore', async () => {
     }
   };
 });
-
-vi.mock('../../../config/firebase', () => ({
-  db: { type: 'mocked-firestore' }
-}));
 
 describe('Operational Priorities Collection Audit Test Suite', () => {
   beforeEach(() => {

@@ -4,11 +4,10 @@ import { ProductProductionContext, ProductionRiskStatus } from '../../../types/p
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { Factory, AlertCircle, Clock } from 'lucide-react';
 import { LoadingState } from '../../../components/ui/States';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductionLine } from '../../../types/configuration';
-import { where } from 'firebase/firestore';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 interface ProductProductionContextPanelProps {
   productId: string;

@@ -1,18 +1,5 @@
 import * as XLSX from 'xlsx';
-import { db } from '../../../config/firebase';
 import { logAuditEvent } from '../../../services/auditService';
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  writeBatch,
-  doc,
-  Timestamp,
-  serverTimestamp,
-  orderBy,
-  limit
-} from '../../../services/firestoreBase';
 import { toEpochMillis } from '../../../utils/timeFormatters';
 import {
   ProductionPlanImport,
@@ -27,6 +14,7 @@ import {
 } from '../../../types/production';
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
+import { Timestamp, collection, db, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from '../../../services/firestoreBase';
 
 // 1. Calculate File Hash
 export const calculateFileHash = async (file: File): Promise<string> => {

@@ -1,12 +1,6 @@
-import {
-  createDocument,
-  updateDocument,
-  subscribeToCollection
-} from '../../../services/firestoreBase';
-import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, Timestamp, orderBy, limit, doc, getDoc } from 'firebase/firestore';
 import { ProductionEvent, ProductProductionContext, ProductionRiskStatus, ProductionPlanEntry, ProductionLinePlanNote } from '../../../types/production';
 import { ServiceResult } from '../../../types/common';
+import { Timestamp, collection, createDocument, db, doc, getDoc, getDocs, limit, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/firestoreBase';
 
 const COLLECTION_NAME = 'productionEvents';
 

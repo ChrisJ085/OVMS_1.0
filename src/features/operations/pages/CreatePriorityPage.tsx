@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
-import { doc, getDoc, Timestamp, where } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Recommendation } from '../../../types/recommendation';
 import { Priority } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
@@ -11,11 +9,11 @@ import { createPriority, updatePriority, checkDuplicatePriority } from '../servi
 import { getProduct } from '../../inventory/services/productService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductLookup } from '../../inventory/components/ProductLookup';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
+import { Timestamp, db, doc, getDoc, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const CreatePriorityPage: React.FC = () => {
   const { currentUser } = useAuth();

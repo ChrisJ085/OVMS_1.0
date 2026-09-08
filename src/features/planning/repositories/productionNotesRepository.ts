@@ -1,9 +1,8 @@
-import { collection, query, where, getDocs, getDoc, addDoc, doc, updateDoc, Timestamp } from '../../../services/firestoreBase';
-import { db } from '../../../config/firebase';
 import { ProductionLinePlanNote } from '../../../types/production';
 import { toAppError } from '../../../types/error';
 import { logAuditEvent } from '../../../services/auditService';
 import { toEpochMillis } from '../../../utils/timeFormatters';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where } from '../../../services/firestoreBase';
 
 export const productionNotesRepository = {
   /**

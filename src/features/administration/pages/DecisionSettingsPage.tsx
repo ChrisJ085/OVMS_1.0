@@ -13,9 +13,8 @@ import {
   incrementVersion
 } from '../../planning/services/decisionConfigurationService';
 import { DecisionConfiguration } from '../../../types/decision';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { logAuditEvent } from '../../../services/auditService';
+import { collection, db, getDocs, query, where } from '../../../services/firestoreBase';
 
 export const DecisionSettingsPage: React.FC = () => {
   const { currentUser, userProfile } = useAuth();

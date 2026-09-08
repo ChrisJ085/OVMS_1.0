@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Recommendation } from '../../../types/recommendation';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
@@ -12,7 +10,6 @@ import { seedTestDataForTesting } from '../services/testDataSeeder';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { subscribeToProducts } from '../../inventory/services/productService';
@@ -22,6 +19,7 @@ import { detectPriorityConflicts } from '../../operations/services/priorityServi
 import { PriorityConflictModal } from '../../operations/components/PriorityConflictModal';
 import { useRecommendationGeneration } from '../context/RecommendationGenerationContext';
 import { DataFreshnessHoverCard } from '../../../components/layout/DataFreshnessHoverCard';
+import { collection, db, getDocs, orderBy, query, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 const SUMMARY_TILES = [
   { id: 'requires-review', label: 'Requires Review', color: 'bg-blue-900 text-blue-100 border-blue-700' },

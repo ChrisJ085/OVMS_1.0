@@ -1,9 +1,8 @@
-import { collection, query, where, getDocs, addDoc, updateDoc, doc, Timestamp, writeBatch, getDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { NorthfleetStoRequirement, NorthfleetStoImport, NorthfleetStoStatus } from '../../../types/production';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
 import { generateRecommendationForProduct } from './recommendationService';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from '../../../services/firestoreBase';
 
 const STO_REQUIREMENTS_COLLECTION = 'northfleetStoRequirements';
 const STO_IMPORTS_COLLECTION = 'northfleetStoImports';

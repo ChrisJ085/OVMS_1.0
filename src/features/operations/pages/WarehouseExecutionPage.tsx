@@ -1,19 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Priority, PriorityStatus } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { CheckCircle, Clock, AlertTriangle, Activity, Package, ArrowRight, Play, Check, Pause, Ban, Edit2 } from 'lucide-react';
 import { executePriorityUpdate } from '../services/priorityService';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
+import { collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 

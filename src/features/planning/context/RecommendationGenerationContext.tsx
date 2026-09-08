@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useMemo } from 'react';
-import { onSnapshot, Timestamp } from 'firebase/firestore';
 import { 
   refreshSiteRecommendations, 
   getSiteRecommendationRunRef 
@@ -9,6 +8,7 @@ import { SiteRecommendationRun } from '../../../types/recommendation';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { formatRecLastGenerated, formatRelativeTime } from '../../../utils/timeFormatters';
+import { Timestamp, onSnapshot } from '../../../services/firestoreBase';
 
 export interface GenerationProgress {
   total: number;

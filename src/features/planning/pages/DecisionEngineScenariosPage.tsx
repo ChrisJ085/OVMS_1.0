@@ -6,15 +6,13 @@ import { evaluateDecision } from '../services/decisionEngine';
 import { ProductPlanningRule, ControllingThresholdMode } from '../../../types/planning';
 import { ProductProductionContext } from '../../../types/production';
 import { PromotionProductRule, PromotionWithPhase } from '../../../types/promotion';
-import { Timestamp } from 'firebase/firestore';
 import { AlertCircle, Target, CheckCircle2, Factory, TrendingUp, HelpCircle } from 'lucide-react';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
-import { where } from 'firebase/firestore';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
+import { Timestamp, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const DecisionEngineScenariosPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

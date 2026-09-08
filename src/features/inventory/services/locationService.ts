@@ -5,9 +5,9 @@ import {
   subscribeToCollection
 } from '../../../services/firestoreBase';
 import { isUniqueCode, trimCode } from '../../../validation';
-import { where, QueryConstraint } from 'firebase/firestore';
 import { Location } from '../../../types/inventory';
 import { ServiceResult } from '../../../types/common';
+import { QueryConstraint, where } from '../../../services/firestoreBase';
 
 const COLLECTION_NAME = 'locations';
 

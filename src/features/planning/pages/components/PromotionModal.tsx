@@ -3,8 +3,8 @@ import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
 import { Promotion, PromotionImportance, PromotionStatus } from '../../../../types/promotion';
 import { createPromotion, updatePromotion } from '../../services/promotionService';
-import { Timestamp } from 'firebase/firestore';
 import { useSiteContext } from '../../../../contexts/SiteContext';
+import { Timestamp } from '../../../../services/firestoreBase';
 
 interface PromotionModalProps {
   isOpen: boolean;

@@ -1,7 +1,6 @@
-import { collection, doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { SiteSettings } from '../../../types/settings';
 import { AuditEvent } from '../../../types/audit';
+import { collection, db, doc, getDoc, serverTimestamp, setDoc, updateDoc } from '../../../services/firestoreBase';
 
 const COLLECTION = 'siteSettings';
 const AUDIT_COLLECTION = 'auditLogs';

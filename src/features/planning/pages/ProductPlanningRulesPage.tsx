@@ -8,18 +8,17 @@ import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search, Upload } from 'lucide-react';
 import { subscribeToPlanningRules, setPlanningRuleStatus, calculatePlanningMetrics } from '../services/planningRuleService';
 import { ProductPlanningRule } from '../../../types/planning';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination } from '../../../types/configuration';
 import { subscribeToBalances } from '../../inventory/services/inventoryService';
 import { subscribeToProducts } from '../../inventory/services/productService';
 import { Product } from '../../../types/product';
 import { InventoryBalance } from '../../../types/inventory';
-import { where } from 'firebase/firestore';
 import { PlanningRuleModal } from './components/PlanningRuleModal';
 import { PlanningRuleDetailModal } from './components/PlanningRuleDetailModal';
 import { PlanningRuleImportModal } from './components/PlanningRuleImportModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const ProductPlanningRulesPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

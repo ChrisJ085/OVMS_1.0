@@ -5,14 +5,13 @@ import { Location } from '../../../../types/inventory';
 import { UnitOfMeasure, ProductCategory, Destination } from '../../../../types/configuration';
 import { subscribeToLocations } from '../../services/locationService';
 import { subscribeToProducts, createProduct } from '../../services/productService';
-import { subscribeToCollection } from '../../../../services/firestoreBase';
 import { collections } from '../../../configuration/services/configurationService';
-import { where } from 'firebase/firestore';
 import { useSiteContext } from '../../../../contexts/SiteContext';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { parsePastedInventoryText, ParseResult } from '../../utils/pasteInventoryParser';
 import { batchUpdateInventoryFromPastedData } from '../../services/inventoryService';
 import { refreshSiteRecommendations } from '../../../planning/services/recommendationService';
+import { subscribeToCollection, where } from '../../../../services/firestoreBase';
 
 interface PasteInventoryModalProps {
   isOpen: boolean;

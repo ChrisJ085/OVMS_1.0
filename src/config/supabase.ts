@@ -10,15 +10,24 @@ const getEnvVar = (viteKey: string, processKey: string): string => {
   return '';
 };
 
-export const supabaseUrl = getEnvVar('VITE_SUPABASE_URL', 'SUPABASE_URL') || 'https://placeholder.supabase.co';
-export const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY') || 'placeholder-anon-key';
+const normalizeSupabaseUrl = (url: string): string => {
+  if (!url) return '';
+  let cleaned = url.trim();
+  cleaned = cleaned.replace(/\/rest\/v1\/?$/, '');
+  cleaned = cleaned.replace(/\/$/, '');
+  return cleaned;
+};
+
+const rawUrl = getEnvVar('VITE_SUPABASE_URL', 'SUPABASE_URL') || 'https://izcavwwhjgnjrzfhwfwf.supabase.co';
+export const supabaseUrl = normalizeSupabaseUrl(rawUrl);
+export const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY') || 'sb_publishable_ZdGk0rOzqovmSURMaHwlZg_UQ5EpC4d';
 
 export const isSupabaseConfigured = (): boolean => {
   return (
-    supabaseUrl !== 'https://placeholder.supabase.co' &&
-    supabaseAnonKey !== 'placeholder-anon-key' &&
     Boolean(supabaseUrl) &&
-    Boolean(supabaseAnonKey)
+    Boolean(supabaseAnonKey) &&
+    !supabaseUrl.includes('placeholder') &&
+    !supabaseAnonKey.includes('placeholder')
   );
 };
 
@@ -29,3 +38,4 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
     detectSessionInUrl: true,
   },
 });
+

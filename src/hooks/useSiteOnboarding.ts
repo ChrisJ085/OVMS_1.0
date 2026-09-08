@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../config/firebase';
 import { useAuth } from '../features/auth/context/AuthContext';
 import { useSiteContext } from '../contexts/SiteContext';
 import { SiteOnboarding, getSiteOnboarding, initializeSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
+import { db, doc, onSnapshot } from '../services/firestoreBase';
 
 export function useSiteOnboarding() {
   const { userProfile } = useAuth();

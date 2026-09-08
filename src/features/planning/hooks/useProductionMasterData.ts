@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { ProductionLine, ProductCategory } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { toAppError } from '../../../types/error';
+import { collection, db, getDocs, query, where } from '../../../services/firestoreBase';
 
 export function useProductionMasterData(tenantId: string, siteId: string) {
   const [productionLines, setProductionLines] = useState<ProductionLine[]>([]);

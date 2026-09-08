@@ -7,8 +7,7 @@ import { ValidationResult } from '../../../types/importExport';
 import { validateImportData, commitImportData } from '../services/importExportService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
+import { collection, db, getDocs, query, where } from '../../../services/firestoreBase';
 
 type ImportType = 'PRODUCTS' | 'LOCATIONS' | 'INVENTORY' | 'PLANNING_RULES' | 'PRODUCTION_EVENTS' | 'PROMOTIONS';
 

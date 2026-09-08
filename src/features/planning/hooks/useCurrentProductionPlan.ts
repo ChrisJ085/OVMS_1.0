@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Timestamp } from 'firebase/firestore';
 import { ProductionPlanEntry, ProductionLinePlanNote } from '../../../types/production';
 import { productionPlanRepository } from '../repositories/productionPlanRepository';
 import { productionNotesRepository } from '../repositories/productionNotesRepository';
+import { Timestamp } from '../../../services/firestoreBase';
 
 export function useCurrentProductionPlan(tenantId: string, siteId: string, enabled = true) {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {

@@ -2,10 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Product, ProductConfiguration } from '../../../types/product';
 import { checkDuplicateProductCode, createProductFromImport, CreateProductMasterInput } from '../services/productMappingService';
 import { AlertCircle, CheckCircle2, X, Plus, Trash2 } from 'lucide-react';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductCategory, UnitOfMeasure } from '../../../types/configuration';
-import { where } from 'firebase/firestore';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 interface MissingProductResolutionProps {
   productCode: string;

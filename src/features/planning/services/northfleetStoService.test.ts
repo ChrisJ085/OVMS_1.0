@@ -20,8 +20,8 @@ const mockBatchSet = vi.fn();
 const mockBatchUpdate = vi.fn();
 const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('firebase/firestore', async () => {
-  const actual = await vi.importActual<any>('firebase/firestore');
+vi.mock('../../../services/firestoreBase', async () => {
+  const actual = await vi.importActual<any>('../../../services/firestoreBase');
   return {
     ...actual,
     collection: (db: any, path: string) => mockCollectionSpy(db, path),
@@ -42,10 +42,6 @@ vi.mock('firebase/firestore', async () => {
     }
   };
 });
-
-vi.mock('../../../config/firebase', () => ({
-  db: { type: 'mocked-firestore' }
-}));
 
 describe('Northfleet STO Service & Decision Logic Suite', () => {
   const basePlanningRule: ProductPlanningRule = {
@@ -224,7 +220,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
   describe('3. Existing STO Product-Change & Recalculation Behavior', () => {
     it('Scenario 10: Existing STO changes product from PRODUCT_A to PRODUCT_B (updating STO record and triggering both products)', async () => {
       const { validateNorthfleetStoRows, commitNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs, writeBatch } = await import('firebase/firestore');
+      const { getDocs, writeBatch } = await import('../../../services/firestoreBase');
 
       // Mock DB lookups for Products and existing STO requirement
       const mockProdA = { id: 'prod-A', code: 'PRODUCT_A', description: 'Product A Desc', preferredDestinationId: 'DEST_CHORLEY' };
@@ -334,7 +330,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
   describe('4. STO Read Failure Fail-Safe Behavior (Fail Closed)', () => {
     it('Scenario 11: getOutstandingStoCasesForProduct throws on Firestore read failure and does not return 0', async () => {
       const { getOutstandingStoCasesForProduct } = await import('./northfleetStoService');
-      const { getDocs } = await import('firebase/firestore');
+      const { getDocs } = await import('../../../services/firestoreBase');
 
       // Simulate a network / Firestore read failure
       vi.mocked(getDocs).mockRejectedValueOnce(new Error('Firestore network timeout or permission denied'));
@@ -346,7 +342,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
     it('Scenario 12: Recommendation generation fails safely on STO read error without creating unsafe recommendation', async () => {
       const { generateRecommendationForProduct } = await import('./recommendationService');
-      const { getDocs, getDoc } = await import('firebase/firestore');
+      const { getDocs, getDoc } = await import('../../../services/firestoreBase');
 
       // Mock getProduct to return valid product
       vi.mocked(getDoc).mockResolvedValueOnce({
@@ -370,7 +366,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
     it('Scenario 13: getNorthfleetStoRequirements returns STO requirements normally on successful retrieval', async () => {
       const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs, Timestamp } = await import('firebase/firestore');
+      const { getDocs, Timestamp } = await import('../../../services/firestoreBase');
 
       const futureDate = new Date();
       futureDate.setDate(futureDate.getDate() + 2);
@@ -422,7 +418,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
     it('Scenario 14: getNorthfleetStoRequirements throws on Firestore read failure and does not return []', async () => {
       const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs } = await import('firebase/firestore');
+      const { getDocs } = await import('../../../services/firestoreBase');
 
       // Simulate network / Firestore read failure
       vi.mocked(getDocs).mockRejectedValueOnce(new Error('Firestore read network failure or timeout'));
@@ -446,7 +442,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
     it('Scenario 15: Firestore read failure is surfaced to caller/UI handler without masking as empty STOs', async () => {
       const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs } = await import('firebase/firestore');
+      const { getDocs } = await import('../../../services/firestoreBase');
 
       vi.mocked(getDocs).mockRejectedValueOnce(new Error('Unavailable / Deadline Exceeded'));
 

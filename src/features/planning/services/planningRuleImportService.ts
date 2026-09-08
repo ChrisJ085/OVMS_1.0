@@ -1,11 +1,9 @@
 import * as XLSX from 'xlsx';
-import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, writeBatch, doc, Timestamp } from 'firebase/firestore';
 import { ProductPlanningRule } from '../../../types/planning';
 import { Destination } from '../../../types/configuration';
 import { Product } from '../../../types/product';
-import { createDocument } from '../../../services/firestoreBase';
 import { refreshSiteRecommendations } from './recommendationService';
+import { Timestamp, collection, createDocument, db, doc, getDocs, query, where, writeBatch } from '../../../services/firestoreBase';
 
 export interface PlanningRuleImportRow {
   rowIndex: number;

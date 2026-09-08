@@ -1,11 +1,9 @@
-import { doc, collection, setDoc, updateDoc, Timestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { UserProfile, UserSession } from '../../../types/auth';
+import { Timestamp, collection, doc, setDoc, updateDoc } from '../../../services/firestoreBase';
 
 export async function createSessionRecord(profile: UserProfile, activeSiteId: string): Promise<string | null> {
-  if (!db) return null;
   try {
-    const sessRef = doc(collection(db, 'sessions'));
+    const sessRef = doc(collection('sessions'));
     const sessionPayload: UserSession = {
       id: sessRef.id,
       userId: profile.uid,
@@ -28,9 +26,9 @@ export async function createSessionRecord(profile: UserProfile, activeSiteId: st
 }
 
 export async function updateSessionActivityRecord(sessionId: string): Promise<void> {
-  if (!db || !sessionId) return;
+  if (!sessionId) return;
   try {
-    await updateDoc(doc(db, 'sessions', sessionId), {
+    await updateDoc(doc('sessions', sessionId), {
       lastActivityAt: Timestamp.now(),
       modifiedDate: Timestamp.now()
     });
@@ -40,9 +38,9 @@ export async function updateSessionActivityRecord(sessionId: string): Promise<vo
 }
 
 export async function updateSessionSiteContext(sessionId: string, newSiteId: string): Promise<void> {
-  if (!db || !sessionId) return;
+  if (!sessionId) return;
   try {
-    await updateDoc(doc(db, 'sessions', sessionId), {
+    await updateDoc(doc('sessions', sessionId), {
       siteId: newSiteId,
       modifiedDate: Timestamp.now()
     });
@@ -52,9 +50,9 @@ export async function updateSessionSiteContext(sessionId: string, newSiteId: str
 }
 
 export async function closeSessionRecord(sessionId: string): Promise<void> {
-  if (!db || !sessionId) return;
+  if (!sessionId) return;
   try {
-    await updateDoc(doc(db, 'sessions', sessionId), {
+    await updateDoc(doc('sessions', sessionId), {
       logoutAt: Timestamp.now(),
       status: 'LOGGED_OUT',
       modifiedDate: Timestamp.now()

@@ -11,11 +11,10 @@ import { Product } from '../../../types/product';
 import { AdjustmentModal, AdjustmentType } from './components/AdjustmentModal';
 import { InventoryDetailModal } from './components/InventoryDetailModal';
 import { PasteInventoryModal } from './components/PasteInventoryModal';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { UnitOfMeasure } from '../../../types/configuration';
-import { where } from 'firebase/firestore';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const InventoryBalancesPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

@@ -1,6 +1,5 @@
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, limit, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { createAuditLog } from '../../administration/services/settingsService';
+import { collection, db, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, updateDoc, where } from '../../../services/firestoreBase';
 
 export interface SiteOnboarding {
   tenantId: string;

@@ -1,9 +1,8 @@
-import { collection, doc, getDocs, query, where, writeBatch, Timestamp, addDoc, getDoc, runTransaction } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Priority, PriorityEvent, PriorityStatus, PriorityEventType, PriorityConflict, ConflictResolutionChoice } from '../../../types/priority';
 import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, runTransaction, where, writeBatch } from '../../../services/firestoreBase';
 
 const PRIORITIES_COLLECTION = 'priorities';
 const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';

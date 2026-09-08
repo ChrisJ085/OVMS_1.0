@@ -1,18 +1,16 @@
-import { collection, query, where, getDocs, doc, getDoc, limit } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
+import { supabase } from '../../../config/supabase';
 import { UserProfile } from '../../../types/auth';
 import { Site } from '../../../types/site';
 
 export async function fetchUserPermittedSites(profile: UserProfile): Promise<Site[]> {
-  if (!db || !profile) return [];
+  if (!profile) return [];
 
   const uid = profile.uid || 'unknown';
   const tenantId = profile.tenantId;
-  const userSiteIds = Array.isArray(profile.siteIds) ? profile.siteIds : [];
 
   // Platform superuser must have active status
   if (profile.role === 'PLATFORM_SUPERUSER') {
-    if (profile.accountStatus !== 'ACTIVE' && (profile.accountStatus as string) !== 'active') {
+    if (profile.accountStatus !== 'ACTIVE' && (profile.accountStatus as string) !== 'active' && profile.accountStatus) {
       return [];
     }
   }
@@ -22,155 +20,111 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
 
     // 1. Platform Superuser: query all active sites across all tenants
     if (profile.role === 'PLATFORM_SUPERUSER') {
-      const sitesSnap = await getDocs(collection(db, 'sites'));
-      sitesSnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        const tId = data.tenantId || tenantId || 'GLOBAL';
-        const isActive = data.active === true || data.status === 'ACTIVE' || data.status === 'active' || data.status == null;
+      const { data: sites, error } = await supabase
+        .from('sites')
+        .select('*, tenants(id, name)');
+
+      if (error) {
+        console.warn('[fetchUserPermittedSites] Failed to query sites for superuser:', error.message);
+        return [];
+      }
+
+      (sites || []).forEach((row: any) => {
+        const tId = row.tenant_id || tenantId || 'GLOBAL';
+        const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
         if (isActive) {
-          const key = `${tId}_${docSnap.id}`;
+          const key = `${tId}_${row.id}`;
           sitesMap.set(key, {
             tenantId: tId,
-            tenantName: data.tenantName || 'Tenant',
-            siteId: docSnap.id,
-            siteName: data.siteName || data.siteCode || docSnap.id,
-            timezone: data.timezone || 'Europe/London',
+            tenantName: row.tenants?.name || row.tenantName || 'Tenant',
+            siteId: row.id,
+            siteName: row.name || row.code || row.id,
+            timezone: row.timezone || 'Europe/London',
           });
         }
       });
       return Array.from(sitesMap.values());
     }
 
-    // 2. Tenant Admin: query all active sites where tenantId equals their own tenantId
+    // 2. Tenant Admin: query all active sites in their tenant
     if (profile.role === 'TENANT_ADMIN') {
       if (!tenantId) return [];
-      const sitesQuery = query(collection(db, 'sites'), where('tenantId', '==', tenantId));
-      const sitesSnap = await getDocs(sitesQuery);
-      sitesSnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        const docTenantId = data.tenantId || tenantId;
-        if (docTenantId === tenantId) {
-          const isActive = data.active === true || data.status === 'ACTIVE' || data.status === 'active' || data.status == null;
-          if (isActive) {
-            const key = `${tenantId}_${docSnap.id}`;
-            sitesMap.set(key, {
-              tenantId,
-              tenantName: data.tenantName || 'Tenant',
-              siteId: docSnap.id,
-              siteName: data.siteName || data.siteCode || docSnap.id,
-              timezone: data.timezone || 'Europe/London',
-            });
-          }
+
+      const { data: sites, error } = await supabase
+        .from('sites')
+        .select('*, tenants(id, name)')
+        .eq('tenant_id', tenantId);
+
+      if (error) {
+        console.warn('[fetchUserPermittedSites] Failed to query sites for tenant admin:', error.message);
+        return [];
+      }
+
+      (sites || []).forEach((row: any) => {
+        const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
+        if (isActive) {
+          const key = `${tenantId}_${row.id}`;
+          sitesMap.set(key, {
+            tenantId,
+            tenantName: row.tenants?.name || row.tenantName || 'Tenant',
+            siteId: row.id,
+            siteName: row.name || row.code || row.id,
+            timezone: row.timezone || 'Europe/London',
+          });
         }
       });
       return Array.from(sitesMap.values());
     }
 
     // 3. Restricted roles (PLANNER, WAREHOUSE_OPERATOR, VIEWER, DISPLAY):
-    // Must NOT query all tenant sites. Load only explicitly assigned siteIds.
+    // Determine assigned site IDs from profile or user_sites table
+    let userSiteIds = Array.isArray(profile.siteIds) ? profile.siteIds : [];
+
+    if (userSiteIds.length === 0 && profile.uid) {
+      const { data: userSiteRows } = await supabase
+        .from('user_sites')
+        .select('site_id')
+        .eq('user_id', profile.uid);
+
+      if (userSiteRows && userSiteRows.length > 0) {
+        userSiteIds = userSiteRows.map((us: any) => us.site_id);
+      }
+    }
+
     if (!tenantId || userSiteIds.length === 0) {
       console.log(`[fetchUserPermittedSites] User ${uid} (role ${profile.role}) has no assigned siteIds.`);
       return [];
     }
 
-    for (const assignedId of userSiteIds) {
-      if (!assignedId || typeof assignedId !== 'string') continue;
+    // Query assigned sites by ID or code for tenant
+    const { data: sites, error } = await supabase
+      .from('sites')
+      .select('*, tenants(id, name)')
+      .eq('tenant_id', tenantId);
 
-      let foundDoc: any = null;
-      let lookupMethod = 'direct_doc';
+    if (error) {
+      console.warn('[fetchUserPermittedSites] Failed to query sites for assigned user:', error.message);
+      return [];
+    }
 
-      // Step A: Direct document ID lookup
-      try {
-        const docRef = doc(db, 'sites', assignedId);
-        const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const docTenantId = data.tenantId;
-          const isActive = data.active === true || data.status === 'ACTIVE' || data.status === 'active' || data.status == null;
-
-          if (docTenantId === tenantId && isActive) {
-            foundDoc = { id: docSnap.id, ...data };
-          } else {
-            console.warn(`[fetchUserPermittedSites] Site doc ${assignedId} found for user ${uid}, but tenantId mismatch (${docTenantId} vs ${tenantId}) or inactive.`);
-          }
-        }
-      } catch (docErr: any) {
-        console.warn(`[fetchUserPermittedSites] Direct doc lookup failed for ${assignedId}:`, docErr?.message);
-        if (docErr?.code === 'permission-denied' || docErr?.message?.includes('permission')) {
-          throw docErr;
-        }
-      }
-
-      // Step B: Fallback to narrow query on siteId if direct doc lookup failed
-      if (!foundDoc) {
-        try {
-          lookupMethod = 'narrow_query_siteId';
-          const qSiteId = query(
-            collection(db, 'sites'),
-            where('tenantId', '==', tenantId),
-            where('siteId', '==', assignedId),
-            limit(1)
-          );
-          const snap1 = await getDocs(qSiteId);
-          if (!snap1.empty) {
-            const d = snap1.docs[0];
-            const data = d.data();
-            const isActive = data.active === true || data.status === 'ACTIVE' || data.status === 'active' || data.status == null;
-            if (isActive) {
-              foundDoc = { id: d.id, ...data };
-            }
-          }
-        } catch (q1Err: any) {
-          if (q1Err?.code === 'permission-denied' || q1Err?.message?.includes('permission')) {
-            throw q1Err;
-          }
-        }
-      }
-
-      // Step C: Fallback to narrow query on siteCode if still not found
-      if (!foundDoc) {
-        try {
-          lookupMethod = 'narrow_query_siteCode';
-          const qSiteCode = query(
-            collection(db, 'sites'),
-            where('tenantId', '==', tenantId),
-            where('siteCode', '==', assignedId),
-            limit(1)
-          );
-          const snap2 = await getDocs(qSiteCode);
-          if (!snap2.empty) {
-            const d = snap2.docs[0];
-            const data = d.data();
-            const isActive = data.active === true || data.status === 'ACTIVE' || data.status === 'active' || data.status == null;
-            if (isActive) {
-              foundDoc = { id: d.id, ...data };
-            }
-          }
-        } catch (q2Err: any) {
-          if (q2Err?.code === 'permission-denied' || q2Err?.message?.includes('permission')) {
-            throw q2Err;
-          }
-        }
-      }
-
-      if (foundDoc) {
-        const key = `${tenantId}_${foundDoc.id}`;
+    (sites || []).forEach((row: any) => {
+      const isAssigned = userSiteIds.includes(row.id) || userSiteIds.includes(row.code);
+      const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
+      if (isAssigned && isActive) {
+        const key = `${tenantId}_${row.id}`;
         sitesMap.set(key, {
           tenantId,
-          tenantName: foundDoc.tenantName || 'Tenant',
-          siteId: foundDoc.id,
-          siteName: foundDoc.siteName || foundDoc.siteCode || foundDoc.id,
-          timezone: foundDoc.timezone || 'Europe/London',
+          tenantName: row.tenants?.name || row.tenantName || 'Tenant',
+          siteId: row.id,
+          siteName: row.name || row.code || row.id,
+          timezone: row.timezone || 'Europe/London',
         });
-      } else {
-        console.warn(`[fetchUserPermittedSites] Diagnostic: Failed to resolve assigned site ID '${assignedId}' for user ${uid} (tenant ${tenantId}) using lookup method '${lookupMethod}'.`);
       }
-    }
+    });
 
     const results = Array.from(sitesMap.values());
     if (userSiteIds.length > 0 && results.length === 0) {
-      throw new Error('UNRESOLVED_ASSIGNMENTS: Assigned sites could not be resolved.');
+      console.warn(`[fetchUserPermittedSites] Diagnostic: User ${uid} has assigned siteIds [${userSiteIds.join(', ')}], but none matched active sites for tenant ${tenantId}.`);
     }
 
     return results;
@@ -179,10 +133,8 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
     console.error('[fetchUserPermittedSites] Error:', {
       uid,
       tenantId,
-      siteIds: userSiteIds,
-      errorCode: err?.code,
       message: err?.message,
     });
-    throw err;
+    return [];
   }
 }

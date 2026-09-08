@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { db, getDoc, getDocs, setDoc, updateDoc } from '../../../services/firestoreBase';
 import { 
-  getSiteOnboarding, 
+  getSiteOnboarding,
   initializeSiteOnboarding, 
   updateSiteOnboardingStep, 
   completeSiteOnboarding, 
@@ -8,17 +9,13 @@ import {
   resetSiteOnboarding, 
   runSiteReadinessChecks 
 } from './siteOnboardingService';
-import { getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
-
-vi.mock('../../../config/firebase', () => ({
-  db: {}
-}));
 
 vi.mock('../../administration/services/settingsService', () => ({
   createAuditLog: vi.fn()
 }));
 
-vi.mock('firebase/firestore', () => ({
+vi.mock('../../../services/firestoreBase', () => ({
+  db: {},
   collection: vi.fn(),
   doc: vi.fn(),
   query: vi.fn(),

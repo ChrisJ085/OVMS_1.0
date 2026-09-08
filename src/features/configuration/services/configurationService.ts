@@ -1,12 +1,4 @@
-import {
-  createDocument,
-  updateDocument,
-  deactivateDocument,
-  subscribeToCollection,
-  getBatch
-} from '../../../services/firestoreBase';
 import { isUniqueCode, trimCode } from '../../../validation';
-import { where, QueryConstraint } from 'firebase/firestore';
 import {
   SiteConfig,
   Destination,
@@ -18,8 +10,6 @@ import {
   PriorityLevel
 } from '../../../types/configuration';
 import { ServiceResult } from '../../../types/common';
-import { db } from '../../../config/firebase';
-import { collection, serverTimestamp, writeBatch, doc } from 'firebase/firestore';
 
 const DEV_USER = 'development-user';
 
@@ -35,6 +25,7 @@ export const collections = {
 };
 
 import { createAuditLog } from '../../administration/services/settingsService';
+import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, serverTimestamp, subscribeToCollection, updateDocument, where, writeBatch } from '../../../services/firestoreBase';
 
 const getUniqueConstraintParams = (
   tenantId: string,

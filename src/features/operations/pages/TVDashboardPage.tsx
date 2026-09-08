@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { DisplayPriority } from '../../../types/priority';
 import { Announcement } from '../../../types/announcement';
 import { OperationalException } from '../../../types/exception';
 import { Product } from '../../../types/product';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useSiteOnboarding } from '../../../hooks/useSiteOnboarding';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { subscribeToProducts } from '../../inventory/services/productService';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
@@ -19,8 +16,9 @@ import {
   formatQuantityInPallets, 
   isManualInstruction 
 } from '../utils/priorityFormatters';
+import { collection, db, onSnapshot, query, subscribeToCollection, where } from '../../../services/firestoreBase';
 import { 
-  AlertTriangle, Clock, CheckCircle, Ban, Play, 
+  AlertTriangle, Clock, CheckCircle, Ban, Play,
   LayoutGrid, AlertCircle, TrendingDown,
   Wifi, WifiOff, Settings, Package, Info
 } from 'lucide-react';

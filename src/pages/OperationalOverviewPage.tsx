@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link, useOutletContext } from 'react-router-dom';
-import { collection, query, where, onSnapshot, getDocs, Timestamp, orderBy, limit } from 'firebase/firestore';
-import { db } from '../config/firebase';
 import { Priority, PriorityStatus } from '../types/priority';
 import { Recommendation } from '../types/recommendation';
 import { OperationalException, ExceptionSeverity } from '../types/exception';
@@ -10,7 +8,6 @@ import { ProductionPlanImport, ProductionPlanEntry, ProductionEvent } from '../t
 import { SiteSettings } from '../types/settings';
 import { Product } from '../types/product';
 import { Destination, ActionType, PriorityLevel } from '../types/configuration';
-import { subscribeToCollection } from '../services/firestoreBase';
 import { collections } from '../features/configuration/services/configurationService';
 import { subscribeToProducts } from '../features/inventory/services/productService';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel, formatQuantityInPallets } from '../features/operations/utils/priorityFormatters';
@@ -22,7 +19,8 @@ import { useSiteContext } from '../contexts/SiteContext';
 import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { resetSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { Sparkles, RotateCcw } from 'lucide-react';
-import {
+import { Timestamp, collection, db, getDocs, limit, onSnapshot, orderBy, query, subscribeToCollection, where } from '../services/firestoreBase';
+import { 
   Activity,
   AlertTriangle,
   CheckCircle,

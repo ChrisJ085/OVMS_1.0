@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { collection, query, where, onSnapshot, orderBy, Timestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Priority } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
@@ -10,7 +8,6 @@ import { CheckCircle, Clock, AlertTriangle, Plus, Activity, Archive, CalendarDay
 import { updatePriorityStatus, detectPriorityConflicts, deletePriority } from '../services/priorityService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel, formatQuantityInPallets } from '../utils/priorityFormatters';
@@ -18,6 +15,7 @@ import { PriorityConflict } from '../../../types/priority';
 import { PriorityConflictModal } from '../components/PriorityConflictModal';
 import { Product } from '../../../types/product';
 import { subscribeToProducts } from '../../inventory/services/productService';
+import { Timestamp, collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 const SUMMARY_TILES = [
   { id: 'active', label: 'Active', icon: <Activity className="w-5 h-5 mb-2 text-blue-400"/>, color: 'bg-blue-900/30 text-blue-200 border-blue-800' },

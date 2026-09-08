@@ -4,21 +4,7 @@ import { TenantDeletionWorkflow } from './components/TenantDeletionWorkflow';
 import { SiteSettings } from '../../../types/settings';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  getDoc,
-  getCountFromServer,
-  doc,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-  addDoc,
-  Timestamp
-} from 'firebase/firestore';
-import { db, auth } from '../../../config/firebase';
+import { supabase } from '../../../config/supabase';
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -49,6 +35,7 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { useEnvironmentMode } from '../../../contexts/EnvironmentModeContext';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { seedTestDataForTesting } from '../../planning/services/testDataSeeder';
+import { Timestamp, addDoc, collection, db, doc, getCountFromServer, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../../services/firestoreBase';
 
 export const AdminOverviewPage: React.FC = () => {
   const { userProfile, currentUser, user } = useAuth();

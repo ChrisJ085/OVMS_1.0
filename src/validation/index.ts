@@ -1,5 +1,4 @@
-import { Timestamp, collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { Timestamp, collection, db, getDocs, query, where } from '../services/firestoreBase';
 
 export const isRequired = (value: string | undefined | null): boolean => {
   if (value === undefined || value === null) return false;

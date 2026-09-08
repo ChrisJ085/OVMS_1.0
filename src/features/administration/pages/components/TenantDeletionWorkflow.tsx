@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert, Trash2, AlertTriangle, AlertOctagon, Info, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '../../../auth/context/AuthContext';
-import { db } from '../../../../config/firebase';
-import { collection, query, where, getDocs, getCountFromServer, doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { collection, db, doc, getCountFromServer, getDocs, onSnapshot, query, updateDoc, where } from '../../../../services/firestoreBase';
 
 interface TenantDeletionWorkflowProps {
   tenant: any;

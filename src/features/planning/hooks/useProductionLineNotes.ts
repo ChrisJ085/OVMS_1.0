@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Timestamp } from 'firebase/firestore';
 import { ProductionLinePlanNote, ProductionLinePlanNoteType, ProductionLinePlanNoteSeverity } from '../../../types/production';
 import { productionNotesRepository } from '../repositories/productionNotesRepository';
+import { Timestamp } from '../../../services/firestoreBase';
 
 export interface NoteFormState {
   productionLineId: string;

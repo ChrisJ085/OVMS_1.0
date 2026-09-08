@@ -1,15 +1,7 @@
-import {
-  createDocument,
-  updateDocument,
-  deactivateDocument,
-  subscribeToCollection,
-  getBatch
-} from '../../../services/firestoreBase';
 import { isUniqueCode, trimCode, trimDescription } from '../../../validation';
-import { doc, getDoc, where, QueryConstraint, orderBy, collection, query, getDocs } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Product } from '../../../types/product';
 import { ServiceResult } from '../../../types/common';
+import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, getDoc, getDocs, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/firestoreBase';
 
 const COLLECTION_NAME = 'products';
 

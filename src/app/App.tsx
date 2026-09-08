@@ -1,7 +1,8 @@
-import { isFirebaseConfigured } from '../config/firebase';
+import { isSupabaseConfigured } from '../config/supabase';
 
 export default function App() {
   const version = "0.1.0"; // Application version
+  const configured = isSupabaseConfigured();
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -20,11 +21,11 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-2">
-            <span className="text-gray-500">Firebase Status:</span>
-            {isFirebaseConfigured ? (
+            <span className="text-gray-500">Supabase Status:</span>
+            {configured ? (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>
-                Configured
+                Connected
               </span>
             ) : (
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">

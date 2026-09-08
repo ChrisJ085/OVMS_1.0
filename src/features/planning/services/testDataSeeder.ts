@@ -1,7 +1,6 @@
-import { collection, query, where, getDocs, doc, setDoc, writeBatch, Timestamp, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { ensureDefaultDecisionConfiguration } from './decisionConfigurationService';
 import { generateRecommendationForProduct } from './recommendationService';
+import { Timestamp, collection, db, doc, getDocs, query, serverTimestamp, setDoc, where, writeBatch } from '../../../services/firestoreBase';
 
 // Define structures matching types
 const PRODUCTS_COLLECTION = 'products';

@@ -1,9 +1,7 @@
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
-import { createDocument } from '../../../services/firestoreBase';
 import { ProductionLine } from '../../../types/configuration';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
+import { createDocument, db, doc, getDoc, updateDoc } from '../../../services/firestoreBase';
 
 export interface CreateProductionLineInput {
   lineCode: string;

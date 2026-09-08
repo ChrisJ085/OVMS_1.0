@@ -1,7 +1,6 @@
-import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { toEpochMillis, formatRelativeTime } from '../../../utils/timeFormatters';
 import { SiteSettings } from '../../../types/settings';
+import { collection, db, doc, getDoc, getDocs, limit, query, where } from '../../../services/firestoreBase';
 
 export type FreshnessStatus = 'FRESH' | 'AGING' | 'STALE' | 'MISSING';
 

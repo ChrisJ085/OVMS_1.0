@@ -1,7 +1,6 @@
-import { collection, query, where, getDocs, writeBatch, doc, Timestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { OperationalException, ExceptionType, ExceptionSeverity, ExceptionStatus } from '../../../types/exception';
 import { ServiceResult } from '../../../types/common';
+import { Timestamp, collection, db, doc, getDocs, query, where, writeBatch } from '../../../services/firestoreBase';
 
 const COLLECTION = 'exceptions';
 

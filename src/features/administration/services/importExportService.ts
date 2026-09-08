@@ -1,7 +1,6 @@
 import { ValidationResult } from '../../../types/importExport';
-import { db } from '../../../config/firebase';
-import { collection, query, where, getDocs, writeBatch, doc, serverTimestamp } from 'firebase/firestore';
 import { adjustInventory } from '../../inventory/services/inventoryService';
+import { collection, db, doc, getDocs, query, serverTimestamp, where, writeBatch } from '../../../services/firestoreBase';
 
 export async function validateImportData(
   tenantId: string, 
@@ -291,7 +290,9 @@ export async function commitImportData(
   
   try {
      const importJobsRef = doc(collection(db, 'importJobs'));
-     await writeBatch(db).set(importJobsRef, summary).commit();
+     const batch = writeBatch(db);
+     batch.set(importJobsRef, summary);
+     await batch.commit();
   } catch (e) {
      console.error("Failed to write audit log", e);
   }

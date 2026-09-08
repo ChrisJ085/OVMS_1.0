@@ -4,8 +4,8 @@ import { FormField } from '../../../../components/ui/FormField';
 import { ProductionEvent } from '../../../../types/production';
 import { UnitOfMeasure } from '../../../../types/configuration';
 import { updateProductionEvent } from '../../services/productionService';
-import { Timestamp } from 'firebase/firestore';
 import { useSiteContext } from '../../../../contexts/SiteContext';
+import { Timestamp } from '../../../../services/firestoreBase';
 
 interface ProductionActionModalProps {
   isOpen: boolean;

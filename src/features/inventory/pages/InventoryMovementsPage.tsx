@@ -6,10 +6,9 @@ import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { Search } from 'lucide-react';
 import { subscribeToMovements } from '../services/inventoryService';
 import { InventoryMovement } from '../../../types/inventory';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { Location } from '../../../types/inventory';
-import { where } from 'firebase/firestore';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const InventoryMovementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

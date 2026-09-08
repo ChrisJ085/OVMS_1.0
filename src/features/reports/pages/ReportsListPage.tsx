@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Download, FileText, Calendar, Filter } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { Timestamp, collection, db, getDocs, query, where } from '../../../services/firestoreBase';
 
 type ReportType = 'PRIORITY_PERFORMANCE' | 'DDXM_STOCK' | 'RECOMMENDATION_OVERRIDE' | 'INVENTORY_MOVEMENT' | 'EXCEPTION_REPORT' | 'PRODUCTION_CONTEXT';
 

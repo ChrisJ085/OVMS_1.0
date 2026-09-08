@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { Announcement, AnnouncementType, AnnouncementSeverity } from '../../../types/announcement';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { createAnnouncement, updateAnnouncement } from '../services/announcementService';
 import { Megaphone, AlertTriangle, Clock, Activity, CheckCircle, Ban, Edit, Plus } from 'lucide-react';
-import { Timestamp } from 'firebase/firestore';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
+import { Timestamp, collection, onSnapshot, orderBy, query, where } from '../../../services/firestoreBase';
 
 export const AnnouncementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

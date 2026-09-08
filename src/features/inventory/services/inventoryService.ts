@@ -1,24 +1,12 @@
-import { db } from '../../../config/firebase';
 import { logAuditEvent } from '../../../services/auditService';
-import { 
-  collection, 
-  doc, 
-  runTransaction, 
-  serverTimestamp, 
-  Timestamp, 
-  where, 
-  QueryConstraint,
-  getDocs,
-  query
-} from 'firebase/firestore';
 import { InventoryBalance, InventoryMovement, MovementType } from '../../../types/inventory';
 import { ServiceResult } from '../../../types/common';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { Product } from '../../../types/product';
 import { Location } from '../../../types/inventory';
 import { getProduct } from './productService';
 
 import { generateRecommendationForProduct } from '../../planning/services/recommendationService';
+import { QueryConstraint, Timestamp, collection, db, doc, getDocs, query, runTransaction, serverTimestamp, subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',

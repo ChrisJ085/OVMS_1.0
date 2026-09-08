@@ -1,8 +1,7 @@
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { ProductionPlanImport, ProductionPlanRow } from '../../../types/production';
 import { commitProductionPlanImport, ParsedPlanPreview } from '../services/mpps7ImportService';
 import { toAppError } from '../../../types/error';
+import { collection, db, getDocs, limit, orderBy, query, where } from '../../../services/firestoreBase';
 
 export const productionImportRepository = {
   /**

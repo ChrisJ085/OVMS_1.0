@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { OperationalException, ExceptionStatus } from '../../../types/exception';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { updateExceptionStatus, runExceptionEvaluation } from '../services/exceptionService';
 import { AlertTriangle, Clock, CheckCircle, Search, Filter, MessageSquare, Ban, Play } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { collection, db, onSnapshot, orderBy, query, where } from '../../../services/firestoreBase';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 

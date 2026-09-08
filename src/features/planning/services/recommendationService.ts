@@ -1,5 +1,3 @@
-import { collection, query, where, getDocs, Timestamp, writeBatch, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
 import { DecisionInputSnapshot, DecisionOutput } from '../../../types/decision';
 import { Recommendation, RecommendationStatus, PlannerDecision, OverrideFlags, SiteRecommendationRun } from '../../../types/recommendation';
 import { evaluateDecision, ENGINE_VERSION } from './decisionEngine';
@@ -22,6 +20,7 @@ import { RecommendationAuditSnapshot } from '../../../types/audit';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { getOutstandingStoCasesForProduct } from './northfleetStoService';
+import { Timestamp, collection, db, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from '../../../services/firestoreBase';
 
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const PROMOTIONS_COLLECTION = 'promotions';

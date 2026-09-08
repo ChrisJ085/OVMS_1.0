@@ -1,6 +1,5 @@
-import { collection, addDoc, serverTimestamp, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
-import { db } from '../config/firebase';
 import { AuditEvent } from '../types/audit';
+import { addDoc, collection, db, getDocs, limit, orderBy, query, serverTimestamp, where } from './firestoreBase';
 
 function cleanUndefined(obj: any): any {
   if (obj === undefined) return null;

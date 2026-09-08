@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatRelativeTime, formatRecLastGenerated, toEpochMillis } from './timeFormatters';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp } from '../services/firestoreBase';
 
 describe('timeFormatters', () => {
   const baseNow = 1700000000000; // Fixed timestamp in ms

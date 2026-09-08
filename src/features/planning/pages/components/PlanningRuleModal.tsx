@@ -6,8 +6,8 @@ import { Destination } from '../../../../types/configuration';
 import { createPlanningRule, updatePlanningRule } from '../../services/planningRuleService';
 import { generateRecommendationForProduct } from '../../services/recommendationService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
-import { Timestamp } from 'firebase/firestore';
 import { useSiteContext } from '../../../../contexts/SiteContext';
+import { Timestamp } from '../../../../services/firestoreBase';
 
 interface PlanningRuleModalProps {
   isOpen: boolean;

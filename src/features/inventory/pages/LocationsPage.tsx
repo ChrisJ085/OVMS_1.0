@@ -8,13 +8,12 @@ import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { Plus, Search, ClipboardPaste } from 'lucide-react';
 import { subscribeToLocations, setLocationStatus } from '../services/locationService';
 import { Location } from '../../../types/inventory';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { StorageArea } from '../../../types/configuration';
-import { where } from 'firebase/firestore';
 import { LocationModal } from './components/LocationModal';
 import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const LocationsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

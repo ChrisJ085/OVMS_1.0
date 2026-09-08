@@ -8,14 +8,13 @@ import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { Plus, Search, CalendarDays, ArrowLeft, Trash2, Edit2, AlertTriangle } from 'lucide-react';
 import { subscribeToPromotion, subscribeToPromotionRules, updatePromotion, updatePromotionRule } from '../services/promotionService';
 import { PromotionWithPhase, PromotionProductRule } from '../../../types/promotion';
-import { subscribeToCollection } from '../../../services/firestoreBase';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType } from '../../../types/configuration';
-import { where } from 'firebase/firestore';
 import { PromotionRuleModal } from './components/PromotionRuleModal';
 import { PromotionModal } from './components/PromotionModal';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { subscribeToCollection, where } from '../../../services/firestoreBase';
 
 export const PromotionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
