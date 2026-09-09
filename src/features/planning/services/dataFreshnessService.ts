@@ -1,6 +1,6 @@
 import { toEpochMillis, formatRelativeTime } from '../../../utils/timeFormatters';
 import { SiteSettings } from '../../../types/settings';
-import { collection, db, doc, getDoc, getDocs, limit, query, where } from '../../../services/firestoreBase';
+import { getDocument, getDocuments } from '../../../services/supabaseBase';
 
 export type FreshnessStatus = 'FRESH' | 'AGING' | 'STALE' | 'MISSING';
 
@@ -103,14 +103,11 @@ export const fetchSystemDataFreshness = async (
     // 1. Inventory Balances
     (async () => {
       try {
-        const q = query(
-          collection(db, 'inventoryBalances'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(100)
-        );
-        const snap = await getDocs(q);
-        if (snap.empty) {
+        const docs = await getDocuments<any>('inventoryBalances', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (docs.length === 0) {
           return { latestEpoch: null, updatedBy: null, source: null, count: 0 };
         }
 
@@ -119,8 +116,7 @@ export const fetchSystemDataFreshness = async (
         let source: string | null = null;
         let count = 0;
 
-        snap.docs.forEach(docSnap => {
-          const data = docSnap.data();
+        docs.forEach(data => {
           if ((data.quantity || 0) > 0) count++;
           const tSource = toEpochMillis(data.sourceUpdatedAt);
           const tMod = toEpochMillis(data.modifiedDate);
@@ -134,7 +130,7 @@ export const fetchSystemDataFreshness = async (
           }
         });
 
-        return { latestEpoch: maxEpoch, updatedBy: lastUser, source, count: snap.docs.length };
+        return { latestEpoch: maxEpoch, updatedBy: lastUser, source, count: docs.length };
       } catch (err) {
         console.warn('Error fetching inventory freshness:', err);
         return { latestEpoch: null, updatedBy: null, source: null, count: 0 };
@@ -145,15 +141,11 @@ export const fetchSystemDataFreshness = async (
     (async () => {
       try {
         // First check northfleetStoImports
-        const importsQ = query(
-          collection(db, 'northfleetStoImports'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(10)
-        );
-        const snap = await getDocs(importsQ);
-        if (!snap.empty) {
-          const imports = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        const imports = await getDocuments<any>('northfleetStoImports', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (imports.length > 0) {
           imports.sort((a, b) => {
             const tA = toEpochMillis(a.importedAt || a.createdDate) || 0;
             const tB = toEpochMillis(b.importedAt || b.createdDate) || 0;
@@ -170,21 +162,17 @@ export const fetchSystemDataFreshness = async (
         }
 
         // Fallback: check northfleetStoRequirements directly
-        const reqsQ = query(
-          collection(db, 'northfleetStoRequirements'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(50)
-        );
-        const reqsSnap = await getDocs(reqsQ);
-        if (reqsSnap.empty) {
+        const reqs = await getDocuments<any>('northfleetStoRequirements', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (reqs.length === 0) {
           return { latestEpoch: null, updatedBy: null, rowCount: 0, status: null };
         }
 
         let maxEpoch: number | null = null;
         let lastUser: string | null = null;
-        reqsSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
+        reqs.forEach(data => {
           const t = toEpochMillis(data.modifiedDate || data.createdDate);
           if (t && (!maxEpoch || t > maxEpoch)) {
             maxEpoch = t;
@@ -195,7 +183,7 @@ export const fetchSystemDataFreshness = async (
         return {
           latestEpoch: maxEpoch,
           updatedBy: lastUser,
-          rowCount: reqsSnap.docs.length,
+          rowCount: reqs.length,
           status: 'COMMITTED'
         };
       } catch (err) {
@@ -207,15 +195,11 @@ export const fetchSystemDataFreshness = async (
     // 3. Production Plan
     (async () => {
       try {
-        const importsQ = query(
-          collection(db, 'productionPlanImports'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(10)
-        );
-        const snap = await getDocs(importsQ);
-        if (!snap.empty) {
-          const imports = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        const imports = await getDocuments<any>('productionPlanImports', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (imports.length > 0) {
           imports.sort((a, b) => {
             const tA = toEpochMillis(a.uploadedAt || a.createdDate) || 0;
             const tB = toEpochMillis(b.uploadedAt || b.createdDate) || 0;
@@ -233,20 +217,16 @@ export const fetchSystemDataFreshness = async (
         }
 
         // Fallback: check productionPlanEntries directly
-        const entriesQ = query(
-          collection(db, 'productionPlanEntries'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(50)
-        );
-        const entriesSnap = await getDocs(entriesQ);
-        if (entriesSnap.empty) {
+        const entries = await getDocuments<any>('productionPlanEntries', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (entries.length === 0) {
           return { latestEpoch: null, updatedBy: null, fileName: null, rowCount: 0, status: null };
         }
 
         let maxEpoch: number | null = null;
-        entriesSnap.docs.forEach(docSnap => {
-          const data = docSnap.data();
+        entries.forEach(data => {
           const t = toEpochMillis(data.modifiedDate || data.createdDate);
           if (t && (!maxEpoch || t > maxEpoch)) {
             maxEpoch = t;
@@ -257,7 +237,7 @@ export const fetchSystemDataFreshness = async (
           latestEpoch: maxEpoch,
           updatedBy: null,
           fileName: 'Active Production Entries',
-          rowCount: entriesSnap.docs.length,
+          rowCount: entries.length,
           status: 'ACTIVE'
         };
       } catch (err) {
@@ -270,10 +250,8 @@ export const fetchSystemDataFreshness = async (
     (async () => {
       try {
         // First check siteRecommendationRuns
-        const runRef = doc(db, 'siteRecommendationRuns', `${tenantId}_${siteId}`);
-        const runSnap = await getDoc(runRef);
-        if (runSnap.exists()) {
-          const runData = runSnap.data();
+        const runData = await getDocument<any>('siteRecommendationRuns', `${tenantId}_${siteId}`);
+        if (runData) {
           const latestEpoch = toEpochMillis(runData.completedAt || runData.lastUpdatedAt || runData.startedAt);
           if (latestEpoch) {
             return {
@@ -286,21 +264,17 @@ export const fetchSystemDataFreshness = async (
         }
 
         // Fallback: check recommendations collection
-        const recsQ = query(
-          collection(db, 'recommendations'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(20)
-        );
-        const snap = await getDocs(recsQ);
-        if (snap.empty) {
+        const recs = await getDocuments<any>('recommendations', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (recs.length === 0) {
           return { latestEpoch: null, updatedBy: null, count: 0, inProgress: false };
         }
 
         let maxEpoch: number | null = null;
         let lastUser: string | null = null;
-        snap.docs.forEach(docSnap => {
-          const data = docSnap.data();
+        recs.forEach(data => {
           const t = toEpochMillis(data.generatedAt || data.createdDate);
           if (t && (!maxEpoch || t > maxEpoch)) {
             maxEpoch = t;
@@ -308,7 +282,7 @@ export const fetchSystemDataFreshness = async (
           }
         });
 
-        return { latestEpoch: maxEpoch, updatedBy: lastUser, count: snap.docs.length, inProgress: false };
+        return { latestEpoch: maxEpoch, updatedBy: lastUser, count: recs.length, inProgress: false };
       } catch (err) {
         console.warn('Error fetching recommendation freshness:', err);
         return { latestEpoch: null, updatedBy: null, count: 0, inProgress: false };

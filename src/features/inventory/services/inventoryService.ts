@@ -1,12 +1,11 @@
 import { logAuditEvent } from '../../../services/auditService';
-import { InventoryBalance, InventoryMovement, MovementType } from '../../../types/inventory';
+import { InventoryBalance, InventoryMovement } from '../../../types/inventory';
 import { ServiceResult } from '../../../types/common';
-import { Product } from '../../../types/product';
-import { Location } from '../../../types/inventory';
 import { getProduct } from './productService';
-
 import { generateRecommendationForProduct } from '../../planning/services/recommendationService';
-import { QueryConstraint, Timestamp, collection, db, doc, getDocs, query, runTransaction, serverTimestamp, subscribeToCollection, where } from '../../../services/supabaseBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
+import { subscribeToCollection } from '../../../services/supabaseBase';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',
@@ -46,86 +45,99 @@ export const adjustInventory = async (params: IncreaseDecreaseParams, type: 'INC
   }
 
   try {
-    await runTransaction(db, async (transaction) => {
-      // Look for an existing balance document
-      const balancesRef = collection(db, COLLECTIONS.BALANCES);
-      const q = query(
-        balancesRef, 
-        where('tenantId', '==', params.tenantId), 
-        where('siteId', '==', params.siteId),
-        where('productId', '==', params.productId),
-        where('locationId', '==', params.locationId)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      let balanceDocRef;
-      let currentQuantity = 0;
-      let balanceDocData: any = null;
+    // 1. Look for an existing balance document
+    const { data: existingData, error: fetchErr } = await supabase
+      .from('inventory_balances')
+      .select('*')
+      .eq('tenant_id', params.tenantId)
+      .eq('site_id', params.siteId)
+      .eq('product_id', params.productId)
+      .eq('location_id', params.locationId)
+      .maybeSingle();
 
-      if (!querySnapshot.empty) {
-        balanceDocRef = querySnapshot.docs[0].ref;
-        balanceDocData = querySnapshot.docs[0].data();
-        currentQuantity = balanceDocData.quantity;
-      } else {
-        balanceDocRef = doc(balancesRef);
-      }
+    if (fetchErr) {
+      throw new Error(`Failed to fetch inventory balance: ${fetchErr.message}`);
+    }
 
-      const adjustmentAmount = type === 'INCREASE' ? params.quantity : -params.quantity;
-      const newQuantity = currentQuantity + adjustmentAmount;
+    const balanceDocData = existingData ? toCamelCase<InventoryBalance>(existingData) : null;
+    const currentQuantity = balanceDocData ? balanceDocData.quantity : 0;
 
-      if (newQuantity < 0) {
-        throw new Error(`Insufficient stock. Current balance: ${currentQuantity}`);
-      }
+    const adjustmentAmount = type === 'INCREASE' ? params.quantity : -params.quantity;
+    const newQuantity = currentQuantity + adjustmentAmount;
 
-      // Update or create balance
-      if (balanceDocData) {
-        transaction.update(balanceDocRef, {
+    if (newQuantity < 0) {
+      throw new Error(`Insufficient stock. Current balance: ${currentQuantity}`);
+    }
+
+    let balanceId = balanceDocData?.id;
+
+    // 2. Update or create balance
+    if (balanceDocData && balanceId) {
+      const { error: updateErr } = await supabase
+        .from('inventory_balances')
+        .update(toSnakeCase({
           quantity: newQuantity,
           source: 'MANUAL',
-          sourceUpdatedAt: serverTimestamp(),
+          sourceUpdatedAt: new Date().toISOString(),
           modifiedBy: params.performedBy,
-          modifiedDate: serverTimestamp(),
-        });
-      } else {
-        transaction.set(balanceDocRef, {
-          tenantId: params.tenantId,
-          siteId: params.siteId,
-          productId: params.productId,
-          productCodeSnapshot: params.productCodeSnapshot,
-          descriptionSnapshot: params.descriptionSnapshot,
-          locationId: params.locationId,
-          locationCodeSnapshot: params.locationCodeSnapshot,
-          quantity: newQuantity,
-          unitOfMeasureId: params.unitOfMeasureId,
-          source: 'MANUAL',
-          sourceUpdatedAt: serverTimestamp(),
-          createdBy: params.performedBy,
-          createdDate: serverTimestamp(),
-          modifiedBy: params.performedBy,
-          modifiedDate: serverTimestamp(),
-          status: 'active'
-        });
-      }
+          modifiedDate: new Date().toISOString(),
+        }))
+        .eq('id', balanceId);
 
-      // Create movement record
-      const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
-      transaction.set(movementRef, {
+      if (updateErr) throw new Error(updateErr.message);
+    } else {
+      const newDoc = {
         tenantId: params.tenantId,
         siteId: params.siteId,
         productId: params.productId,
         productCodeSnapshot: params.productCodeSnapshot,
-        movementType: type,
-        fromLocationId: type === 'DECREASE' ? params.locationId : null,
-        toLocationId: type === 'INCREASE' ? params.locationId : null,
-        quantity: params.quantity,
-        reason: params.reason,
-        reference: params.reference,
-        balanceBefore: currentQuantity,
-        balanceAfter: newQuantity,
-        performedBy: params.performedBy,
-        timestamp: serverTimestamp(),
-      });
-    });
+        descriptionSnapshot: params.descriptionSnapshot,
+        locationId: params.locationId,
+        locationCodeSnapshot: params.locationCodeSnapshot,
+        quantity: newQuantity,
+        unitOfMeasureId: params.unitOfMeasureId,
+        source: 'MANUAL',
+        sourceUpdatedAt: new Date().toISOString(),
+        createdBy: params.performedBy,
+        createdDate: new Date().toISOString(),
+        modifiedBy: params.performedBy,
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      };
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from('inventory_balances')
+        .insert(toSnakeCase(newDoc))
+        .select('id')
+        .single();
+
+      if (insertErr || !inserted) throw new Error(insertErr?.message || 'Failed to insert inventory balance');
+      balanceId = inserted.id;
+    }
+
+    // 3. Create movement record
+    const movementDoc = {
+      tenantId: params.tenantId,
+      siteId: params.siteId,
+      productId: params.productId,
+      productCodeSnapshot: params.productCodeSnapshot,
+      movementType: type,
+      fromLocationId: type === 'DECREASE' ? params.locationId : null,
+      toLocationId: type === 'INCREASE' ? params.locationId : null,
+      quantity: params.quantity,
+      reason: params.reason,
+      reference: params.reference,
+      balanceBefore: currentQuantity,
+      balanceAfter: newQuantity,
+      performedBy: params.performedBy,
+      timestamp: new Date().toISOString(),
+    };
+
+    const { error: moveErr } = await supabase
+      .from('inventory_movements')
+      .insert(toSnakeCase(movementDoc));
+
+    if (moveErr) throw new Error(moveErr.message);
 
     // Trigger recommendation refresh for affected product
     generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
@@ -170,132 +182,139 @@ export const transferInventory = async (params: TransferParams): Promise<Service
   }
 
   try {
-    await runTransaction(db, async (transaction) => {
-      const balancesRef = collection(db, COLLECTIONS.BALANCES);
-      
-      // Get from location balance
-      const fromQ = query(
-        balancesRef, 
-        where('tenantId', '==', params.tenantId), 
-        where('siteId', '==', params.siteId),
-        where('productId', '==', params.productId),
-        where('locationId', '==', params.fromLocationId)
-      );
-      const fromSnapshot = await getDocs(fromQ);
-      
-      if (fromSnapshot.empty) {
-        throw new Error('Source location has no stock for this product');
-      }
+    // 1. Get from location balance
+    const { data: fromData, error: fromErr } = await supabase
+      .from('inventory_balances')
+      .select('*')
+      .eq('tenant_id', params.tenantId)
+      .eq('site_id', params.siteId)
+      .eq('product_id', params.productId)
+      .eq('location_id', params.fromLocationId)
+      .maybeSingle();
 
-      const fromDoc = fromSnapshot.docs[0];
-      const fromQuantity = fromDoc.data().quantity;
-      const newFromQuantity = fromQuantity - params.quantity;
+    if (fromErr || !fromData) {
+      throw new Error('Source location has no stock for this product');
+    }
 
-      if (newFromQuantity < 0) {
-        throw new Error(`Insufficient stock in source location. Current balance: ${fromQuantity}`);
-      }
+    const fromDoc = toCamelCase<InventoryBalance>(fromData);
+    const fromQuantity = fromDoc.quantity;
+    const newFromQuantity = fromQuantity - params.quantity;
 
-      // Get to location balance
-      const toQ = query(
-        balancesRef, 
-        where('tenantId', '==', params.tenantId), 
-        where('siteId', '==', params.siteId),
-        where('productId', '==', params.productId),
-        where('locationId', '==', params.toLocationId)
-      );
-      const toSnapshot = await getDocs(toQ);
+    if (newFromQuantity < 0) {
+      throw new Error(`Insufficient stock in source location. Current balance: ${fromQuantity}`);
+    }
 
-      let toDocRef;
-      let toQuantity = 0;
-      let hasToDoc = false;
+    // 2. Get to location balance
+    const { data: toData, error: toErr } = await supabase
+      .from('inventory_balances')
+      .select('*')
+      .eq('tenant_id', params.tenantId)
+      .eq('site_id', params.siteId)
+      .eq('product_id', params.productId)
+      .eq('location_id', params.toLocationId)
+      .maybeSingle();
 
-      if (!toSnapshot.empty) {
-        toDocRef = toSnapshot.docs[0].ref;
-        toQuantity = toSnapshot.docs[0].data().quantity;
-        hasToDoc = true;
-      } else {
-        toDocRef = doc(balancesRef);
-      }
+    if (toErr) throw new Error(toErr.message);
 
-      const newToQuantity = toQuantity + params.quantity;
+    const toDoc = toData ? toCamelCase<InventoryBalance>(toData) : null;
+    const toQuantity = toDoc ? toDoc.quantity : 0;
+    const newToQuantity = toQuantity + params.quantity;
 
-      // Execute updates
-      transaction.update(fromDoc.ref, {
+    // 3. Execute updates
+    const { error: updFromErr } = await supabase
+      .from('inventory_balances')
+      .update(toSnakeCase({
         quantity: newFromQuantity,
         source: 'MANUAL',
-        sourceUpdatedAt: serverTimestamp(),
+        sourceUpdatedAt: new Date().toISOString(),
         modifiedBy: params.performedBy,
-        modifiedDate: serverTimestamp(),
-      });
+        modifiedDate: new Date().toISOString(),
+      }))
+      .eq('id', fromDoc.id);
 
-      if (hasToDoc) {
-        transaction.update(toDocRef, {
+    if (updFromErr) throw new Error(updFromErr.message);
+
+    if (toDoc) {
+      const { error: updToErr } = await supabase
+        .from('inventory_balances')
+        .update(toSnakeCase({
           quantity: newToQuantity,
           source: 'MANUAL',
-          sourceUpdatedAt: serverTimestamp(),
+          sourceUpdatedAt: new Date().toISOString(),
           modifiedBy: params.performedBy,
-          modifiedDate: serverTimestamp(),
-        });
-      } else {
-        transaction.set(toDocRef, {
-          tenantId: params.tenantId,
-          siteId: params.siteId,
-          productId: params.productId,
-          productCodeSnapshot: params.productCodeSnapshot,
-          descriptionSnapshot: params.descriptionSnapshot,
-          locationId: params.toLocationId,
-          locationCodeSnapshot: params.toLocationCodeSnapshot,
-          quantity: newToQuantity,
-          unitOfMeasureId: params.unitOfMeasureId,
-          source: 'MANUAL',
-          sourceUpdatedAt: serverTimestamp(),
-          createdBy: params.performedBy,
-          createdDate: serverTimestamp(),
-          modifiedBy: params.performedBy,
-          modifiedDate: serverTimestamp(),
-          status: 'active'
-        });
-      }
+          modifiedDate: new Date().toISOString(),
+        }))
+        .eq('id', toDoc.id);
 
-      // Transfer Out Movement
-      const moveOutRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
-      transaction.set(moveOutRef, {
+      if (updToErr) throw new Error(updToErr.message);
+    } else {
+      const newToDoc = {
         tenantId: params.tenantId,
         siteId: params.siteId,
         productId: params.productId,
         productCodeSnapshot: params.productCodeSnapshot,
-        movementType: 'TRANSFER_OUT',
-        fromLocationId: params.fromLocationId,
-        toLocationId: params.toLocationId,
-        quantity: params.quantity,
-        reason: params.reason,
-        reference: params.reference,
-        balanceBefore: fromQuantity,
-        balanceAfter: newFromQuantity,
-        performedBy: params.performedBy,
-        timestamp: serverTimestamp(),
-      });
+        descriptionSnapshot: params.descriptionSnapshot,
+        locationId: params.toLocationId,
+        locationCodeSnapshot: params.toLocationCodeSnapshot,
+        quantity: newToQuantity,
+        unitOfMeasureId: params.unitOfMeasureId,
+        source: 'MANUAL',
+        sourceUpdatedAt: new Date().toISOString(),
+        createdBy: params.performedBy,
+        createdDate: new Date().toISOString(),
+        modifiedBy: params.performedBy,
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      };
 
-      // Transfer In Movement
-      const moveInRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
-      transaction.set(moveInRef, {
-        tenantId: params.tenantId,
-        siteId: params.siteId,
-        productId: params.productId,
-        productCodeSnapshot: params.productCodeSnapshot,
-        movementType: 'TRANSFER_IN',
-        fromLocationId: params.fromLocationId,
-        toLocationId: params.toLocationId,
-        quantity: params.quantity,
-        reason: params.reason,
-        reference: params.reference,
-        balanceBefore: toQuantity,
-        balanceAfter: newToQuantity,
-        performedBy: params.performedBy,
-        timestamp: serverTimestamp(),
-      });
+      const { error: insToErr } = await supabase
+        .from('inventory_balances')
+        .insert(toSnakeCase(newToDoc));
 
-    });
+      if (insToErr) throw new Error(insToErr.message);
+    }
+
+    // 4. Transfer Out Movement
+    const moveOut = {
+      tenantId: params.tenantId,
+      siteId: params.siteId,
+      productId: params.productId,
+      productCodeSnapshot: params.productCodeSnapshot,
+      movementType: 'TRANSFER_OUT',
+      fromLocationId: params.fromLocationId,
+      toLocationId: params.toLocationId,
+      quantity: params.quantity,
+      reason: params.reason,
+      reference: params.reference,
+      balanceBefore: fromQuantity,
+      balanceAfter: newFromQuantity,
+      performedBy: params.performedBy,
+      timestamp: new Date().toISOString(),
+    };
+
+    // 5. Transfer In Movement
+    const moveIn = {
+      tenantId: params.tenantId,
+      siteId: params.siteId,
+      productId: params.productId,
+      productCodeSnapshot: params.productCodeSnapshot,
+      movementType: 'TRANSFER_IN',
+      fromLocationId: params.fromLocationId,
+      toLocationId: params.toLocationId,
+      quantity: params.quantity,
+      reason: params.reason,
+      reference: params.reference,
+      balanceBefore: toQuantity,
+      balanceAfter: newToQuantity,
+      performedBy: params.performedBy,
+      timestamp: new Date().toISOString(),
+    };
+
+    const { error: insMovesErr } = await supabase
+      .from('inventory_movements')
+      .insert([toSnakeCase(moveOut), toSnakeCase(moveIn)]);
+
+    if (insMovesErr) throw new Error(insMovesErr.message);
 
     // Trigger recommendation refresh for affected product
     generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
@@ -339,13 +358,12 @@ export const subscribeToBalances = (
   onError: (error: Error) => void,
   productId?: string
 ) => {
-  const constraints: QueryConstraint[] = [
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId),
-    // Status isn't consistently used for balances but standard base document has it
+  const constraints = [
+    { field: 'tenantId', op: '==' as const, value: tenantId },
+    { field: 'siteId', op: '==' as const, value: siteId },
   ];
   if (productId) {
-    constraints.push(where('productId', '==', productId));
+    constraints.push({ field: 'productId', op: '==' as const, value: productId });
   }
   
   return subscribeToCollection<InventoryBalance>(
@@ -363,12 +381,12 @@ export const subscribeToMovements = (
   onError: (error: Error) => void,
   productId?: string
 ) => {
-  const constraints: QueryConstraint[] = [
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId)
+  const constraints = [
+    { field: 'tenantId', op: '==' as const, value: tenantId },
+    { field: 'siteId', op: '==' as const, value: siteId }
   ];
   if (productId) {
-    constraints.push(where('productId', '==', productId));
+    constraints.push({ field: 'productId', op: '==' as const, value: productId });
   }
   
   return subscribeToCollection<InventoryMovement>(
@@ -377,8 +395,8 @@ export const subscribeToMovements = (
     (items) => {
       // Sort descending by timestamp
       const sorted = [...items].sort((a, b) => {
-        const timeA = (a.timestamp as any)?.toDate?.()?.getTime() || 0;
-        const timeB = (b.timestamp as any)?.toDate?.()?.getTime() || 0;
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return timeB - timeA;
       });
       onUpdate(sorted);
@@ -396,32 +414,36 @@ export const getProductInventory = async (
     const balancesMap = new Map<string, InventoryBalance>();
 
     // 1. Query by productId
-    const qByProdId = query(
-      collection(db, COLLECTIONS.BALANCES),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('productId', '==', productId)
-    );
-    const snapProdId = await getDocs(qByProdId);
-    snapProdId.docs.forEach(d => {
-      balancesMap.set(d.id, { id: d.id, ...d.data() } as InventoryBalance);
-    });
+    const { data: dataById, error: errById } = await supabase
+      .from('inventory_balances')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('site_id', siteId)
+      .eq('product_id', productId);
+
+    if (!errById && dataById) {
+      dataById.forEach(d => {
+        balancesMap.set(d.id, toCamelCase<InventoryBalance>(d));
+      });
+    }
 
     // 2. Query by productCodeSnapshot as fallback/supplement
     const productDoc = await getProduct(productId);
     if (productDoc?.productCode) {
-      const qCode = query(
-        collection(db, COLLECTIONS.BALANCES),
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('productCodeSnapshot', '==', productDoc.productCode)
-      );
-      const snapCode = await getDocs(qCode);
-      snapCode.docs.forEach(d => {
-        if (!balancesMap.has(d.id)) {
-          balancesMap.set(d.id, { id: d.id, ...d.data() } as InventoryBalance);
-        }
-      });
+      const { data: dataByCode, error: errByCode } = await supabase
+        .from('inventory_balances')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('site_id', siteId)
+        .eq('product_code_snapshot', productDoc.productCode);
+
+      if (!errByCode && dataByCode) {
+        dataByCode.forEach(d => {
+          if (!balancesMap.has(d.id)) {
+            balancesMap.set(d.id, toCamelCase<InventoryBalance>(d));
+          }
+        });
+      }
     }
 
     const balances = Array.from(balancesMap.values());
@@ -462,31 +484,27 @@ export const batchUpdateInventoryFromPastedData = async (
     const pastedProductCodes = new Set(params.items.map(i => i.productCodeSnapshot).filter(Boolean));
 
     // Fetch all existing inventory balances for this tenant and site
-    const allBalancesQ = query(
-      collection(db, COLLECTIONS.BALANCES),
-      where('tenantId', '==', params.tenantId),
-      where('siteId', '==', params.siteId)
-    );
-    const allBalancesSnap = await getDocs(allBalancesQ);
+    const { data: allBalances, error: balErr } = await supabase
+      .from('inventory_balances')
+      .select('*')
+      .eq('tenant_id', params.tenantId)
+      .eq('site_id', params.siteId);
 
-    // Identify balance docs for products NOT in the pasted items that currently have quantity > 0
-    interface ZeroItem {
-      docRef: any;
-      data: InventoryBalance;
-    }
-    const omittedBalanceDocs: ZeroItem[] = [];
+    if (balErr) throw new Error(balErr.message);
+
+    const omittedBalanceDocs: { id: string; data: InventoryBalance }[] = [];
     const zeroedProductIds = new Set<string>();
 
-    allBalancesSnap.docs.forEach(docSnap => {
-      const data = docSnap.data() as InventoryBalance;
+    (allBalances || []).forEach(row => {
+      const data = toCamelCase<InventoryBalance>(row);
       const pId = data.productId;
       const pCode = data.productCodeSnapshot;
 
       const isPasted = (pId && pastedProductIds.has(pId)) || (pCode && pastedProductCodes.has(pCode));
       if (!isPasted && (data.quantity || 0) > 0) {
         omittedBalanceDocs.push({
-          docRef: docSnap.ref,
-          data: { id: docSnap.id, ...data }
+          id: data.id,
+          data
         });
         if (pId) zeroedProductIds.add(pId);
       }
@@ -495,129 +513,140 @@ export const batchUpdateInventoryFromPastedData = async (
     let totalUpdated = 0;
     let totalZeroed = 0;
 
-    // Process pasted items in chunks
-    const chunkSize = 200;
-    for (let i = 0; i < params.items.length; i += chunkSize) {
-      const chunk = params.items.slice(i, i + chunkSize);
+    // Process pasted items sequentially
+    for (const item of params.items) {
+      const { data: existing, error: findErr } = await supabase
+        .from('inventory_balances')
+        .select('*')
+        .eq('tenant_id', params.tenantId)
+        .eq('site_id', params.siteId)
+        .eq('product_id', item.productId)
+        .eq('location_id', params.locationId)
+        .maybeSingle();
 
-      await runTransaction(db, async (transaction) => {
-        for (const item of chunk) {
-          const balancesRef = collection(db, COLLECTIONS.BALANCES);
-          const q = query(
-            balancesRef,
-            where('tenantId', '==', params.tenantId),
-            where('siteId', '==', params.siteId),
-            where('productId', '==', item.productId),
-            where('locationId', '==', params.locationId)
-          );
+      if (findErr) throw new Error(findErr.message);
 
-          const snap = await getDocs(q);
-          let balanceDocRef;
-          let currentQuantity = 0;
-          let balanceDocData: any = null;
+      let currentQuantity = 0;
+      let balanceId = null;
 
-          if (!snap.empty) {
-            balanceDocRef = snap.docs[0].ref;
-            balanceDocData = snap.docs[0].data();
-            currentQuantity = balanceDocData.quantity || 0;
-          } else {
-            balanceDocRef = doc(balancesRef);
-          }
+      if (existing) {
+        const row = toCamelCase<InventoryBalance>(existing);
+        currentQuantity = row.quantity || 0;
+        balanceId = row.id;
+      }
 
-          const newQuantity = item.quantity;
-          const delta = newQuantity - currentQuantity;
+      const newQuantity = item.quantity;
+      const delta = newQuantity - currentQuantity;
 
-          if (balanceDocData) {
-            transaction.update(balanceDocRef, {
-              quantity: newQuantity,
-              productCodeSnapshot: item.productCodeSnapshot,
-              descriptionSnapshot: item.descriptionSnapshot,
-              source: 'IMPORT',
-              sourceUpdatedAt: serverTimestamp(),
-              modifiedBy: params.performedBy,
-              modifiedDate: serverTimestamp(),
-            });
-          } else {
-            transaction.set(balanceDocRef, {
-              tenantId: params.tenantId,
-              siteId: params.siteId,
-              productId: item.productId,
-              productCodeSnapshot: item.productCodeSnapshot,
-              descriptionSnapshot: item.descriptionSnapshot,
-              locationId: params.locationId,
-              locationCodeSnapshot: params.locationCodeSnapshot,
-              quantity: newQuantity,
-              unitOfMeasureId: item.unitOfMeasureId || '',
-              source: 'IMPORT',
-              sourceUpdatedAt: serverTimestamp(),
-              createdBy: params.performedBy,
-              createdDate: serverTimestamp(),
-              modifiedBy: params.performedBy,
-              modifiedDate: serverTimestamp(),
-              status: 'active'
-            });
-          }
-
-          const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
-          transaction.set(movementRef, {
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            productId: item.productId,
+      if (existing && balanceId) {
+        const { error: updErr } = await supabase
+          .from('inventory_balances')
+          .update(toSnakeCase({
+            quantity: newQuantity,
             productCodeSnapshot: item.productCodeSnapshot,
-            movementType: delta >= 0 ? 'INCREASE' : 'DECREASE',
-            fromLocationId: delta < 0 ? params.locationId : null,
-            toLocationId: delta >= 0 ? params.locationId : null,
-            quantity: Math.abs(delta),
-            reason: 'Pasted Stock Update',
-            reference: `Stock Update at ${params.locationCodeSnapshot}`,
-            balanceBefore: currentQuantity,
-            balanceAfter: newQuantity,
-            performedBy: params.performedBy,
-            timestamp: serverTimestamp(),
-          });
+            descriptionSnapshot: item.descriptionSnapshot,
+            source: 'IMPORT',
+            sourceUpdatedAt: new Date().toISOString(),
+            modifiedBy: params.performedBy,
+            modifiedDate: new Date().toISOString(),
+          }))
+          .eq('id', balanceId);
 
-          totalUpdated++;
-        }
-      });
+        if (updErr) throw new Error(updErr.message);
+      } else {
+        const newDoc = {
+          tenantId: params.tenantId,
+          siteId: params.siteId,
+          productId: item.productId,
+          productCodeSnapshot: item.productCodeSnapshot,
+          descriptionSnapshot: item.descriptionSnapshot,
+          locationId: params.locationId,
+          locationCodeSnapshot: params.locationCodeSnapshot,
+          quantity: newQuantity,
+          unitOfMeasureId: item.unitOfMeasureId || '',
+          source: 'IMPORT',
+          sourceUpdatedAt: new Date().toISOString(),
+          createdBy: params.performedBy,
+          createdDate: new Date().toISOString(),
+          modifiedBy: params.performedBy,
+          modifiedDate: new Date().toISOString(),
+          status: 'active'
+        };
+
+        const { error: insErr } = await supabase
+          .from('inventory_balances')
+          .insert(toSnakeCase(newDoc));
+
+        if (insErr) throw new Error(insErr.message);
+      }
+
+      const movementDoc = {
+        tenantId: params.tenantId,
+        siteId: params.siteId,
+        productId: item.productId,
+        productCodeSnapshot: item.productCodeSnapshot,
+        movementType: delta >= 0 ? 'INCREASE' : 'DECREASE',
+        fromLocationId: delta < 0 ? params.locationId : null,
+        toLocationId: delta >= 0 ? params.locationId : null,
+        quantity: Math.abs(delta),
+        reason: 'Pasted Stock Update',
+        reference: `Stock Update at ${params.locationCodeSnapshot}`,
+        balanceBefore: currentQuantity,
+        balanceAfter: newQuantity,
+        performedBy: params.performedBy,
+        timestamp: new Date().toISOString(),
+      };
+
+      const { error: moveErr } = await supabase
+        .from('inventory_movements')
+        .insert(toSnakeCase(movementDoc));
+
+      if (moveErr) throw new Error(moveErr.message);
+
+      totalUpdated++;
     }
 
-    // Process omitted items (setting their balance to 0) in chunks
-    for (let i = 0; i < omittedBalanceDocs.length; i += chunkSize) {
-      const chunk = omittedBalanceDocs.slice(i, i + chunkSize);
+    // Process omitted items (setting their balance to 0)
+    for (const item of omittedBalanceDocs) {
+      const currentQty = item.data.quantity || 0;
 
-      await runTransaction(db, async (transaction) => {
-        for (const item of chunk) {
-          const currentQty = item.data.quantity || 0;
+      const { error: updErr } = await supabase
+        .from('inventory_balances')
+        .update(toSnakeCase({
+          quantity: 0,
+          source: 'IMPORT',
+          sourceUpdatedAt: new Date().toISOString(),
+          modifiedBy: params.performedBy,
+          modifiedDate: new Date().toISOString(),
+        }))
+        .eq('id', item.id);
 
-          transaction.update(item.docRef, {
-            quantity: 0,
-            source: 'IMPORT',
-            sourceUpdatedAt: serverTimestamp(),
-            modifiedBy: params.performedBy,
-            modifiedDate: serverTimestamp(),
-          });
+      if (updErr) throw new Error(updErr.message);
 
-          const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
-          transaction.set(movementRef, {
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            productId: item.data.productId,
-            productCodeSnapshot: item.data.productCodeSnapshot,
-            movementType: 'DECREASE',
-            fromLocationId: item.data.locationId || params.locationId,
-            toLocationId: null,
-            quantity: currentQty,
-            reason: 'Pasted Stock Update - Omitted Product Zeroed',
-            reference: `Stock Update at ${params.locationCodeSnapshot} (Omitted Product Zeroed)`,
-            balanceBefore: currentQty,
-            balanceAfter: 0,
-            performedBy: params.performedBy,
-            timestamp: serverTimestamp(),
-          });
+      const movementDoc = {
+        tenantId: params.tenantId,
+        siteId: params.siteId,
+        productId: item.data.productId,
+        productCodeSnapshot: item.data.productCodeSnapshot,
+        movementType: 'DECREASE',
+        fromLocationId: item.data.locationId || params.locationId,
+        toLocationId: null,
+        quantity: currentQty,
+        reason: 'Pasted Stock Update - Omitted Product Zeroed',
+        reference: `Stock Update at ${params.locationCodeSnapshot} (Omitted Product Zeroed)`,
+        balanceBefore: currentQty,
+        balanceAfter: 0,
+        performedBy: params.performedBy,
+        timestamp: new Date().toISOString(),
+      };
 
-          totalZeroed++;
-        }
-      });
+      const { error: moveErr } = await supabase
+        .from('inventory_movements')
+        .insert(toSnakeCase(movementDoc));
+
+      if (moveErr) throw new Error(moveErr.message);
+
+      totalZeroed++;
     }
 
     // Trigger recommendation refresh for ALL affected products (pasted + zeroed)
@@ -653,45 +682,87 @@ export const deductProductInventory = async (params: DeductInventoryParams): Pro
   }
 
   try {
-    await runTransaction(db, async (transaction) => {
-      const balancesRef = collection(db, COLLECTIONS.BALANCES);
-      const q = query(
-        balancesRef, 
-        where('tenantId', '==', params.tenantId), 
-        where('siteId', '==', params.siteId),
-        where('productId', '==', params.productId)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      
-      let remainingToDeduct = params.quantity;
-      
-      const sortedDocs = querySnapshot.docs.map(docSnap => ({
-        ref: docSnap.ref,
-        id: docSnap.id,
-        data: docSnap.data() as InventoryBalance
-      })).sort((a, b) => {
-        return (b.data.quantity || 0) - (a.data.quantity || 0);
-      });
+    const { data: balances, error: balErr } = await supabase
+      .from('inventory_balances')
+      .select('*')
+      .eq('tenant_id', params.tenantId)
+      .eq('site_id', params.siteId)
+      .eq('product_id', params.productId);
 
-      const movementsToCreate: any[] = [];
+    if (balErr) throw new Error(balErr.message);
 
-      for (const item of sortedDocs) {
-        if (remainingToDeduct <= 0) break;
-        const currentQty = item.data.quantity || 0;
-        if (currentQty <= 0) continue;
+    let remainingToDeduct = params.quantity;
+    
+    const sortedDocs = (balances || []).map(row => {
+      const data = toCamelCase<InventoryBalance>(row);
+      return {
+        id: data.id,
+        data
+      };
+    }).sort((a, b) => {
+      return (b.data.quantity || 0) - (a.data.quantity || 0);
+    });
 
-        const deductAmt = Math.min(currentQty, remainingToDeduct);
-        const newQty = currentQty - deductAmt;
-        remainingToDeduct -= deductAmt;
+    const movementsToCreate: any[] = [];
 
-        transaction.update(item.ref, {
+    for (const item of sortedDocs) {
+      if (remainingToDeduct <= 0) break;
+      const currentQty = item.data.quantity || 0;
+      if (currentQty <= 0) continue;
+
+      const deductAmt = Math.min(currentQty, remainingToDeduct);
+      const newQty = currentQty - deductAmt;
+      remainingToDeduct -= deductAmt;
+
+      const { error: updErr } = await supabase
+        .from('inventory_balances')
+        .update(toSnakeCase({
           quantity: newQty,
           source: 'MANUAL',
-          sourceUpdatedAt: serverTimestamp(),
+          sourceUpdatedAt: new Date().toISOString(),
           modifiedBy: params.performedBy,
-          modifiedDate: serverTimestamp(),
-        });
+          modifiedDate: new Date().toISOString(),
+        }))
+        .eq('id', item.id);
+
+      if (updErr) throw new Error(updErr.message);
+
+      movementsToCreate.push({
+        tenantId: params.tenantId,
+        siteId: params.siteId,
+        productId: params.productId,
+        productCodeSnapshot: params.productCodeSnapshot,
+        movementType: 'DECREASE',
+        fromLocationId: item.data.locationId,
+        toLocationId: null,
+        quantity: deductAmt,
+        reason: params.reason,
+        reference: params.reference,
+        balanceBefore: currentQty,
+        balanceAfter: newQty,
+        performedBy: params.performedBy,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (remainingToDeduct > 0) {
+      if (sortedDocs.length > 0) {
+        const firstItem = sortedDocs[0];
+        const currentQty = firstItem.data.quantity || 0;
+        const newQty = currentQty - remainingToDeduct;
+
+        const { error: updErr } = await supabase
+          .from('inventory_balances')
+          .update(toSnakeCase({
+            quantity: newQty,
+            source: 'MANUAL',
+            sourceUpdatedAt: new Date().toISOString(),
+            modifiedBy: params.performedBy,
+            modifiedDate: new Date().toISOString(),
+          }))
+          .eq('id', firstItem.id);
+
+        if (updErr) throw new Error(updErr.message);
 
         movementsToCreate.push({
           tenantId: params.tenantId,
@@ -699,115 +770,89 @@ export const deductProductInventory = async (params: DeductInventoryParams): Pro
           productId: params.productId,
           productCodeSnapshot: params.productCodeSnapshot,
           movementType: 'DECREASE',
-          fromLocationId: item.data.locationId,
+          fromLocationId: firstItem.data.locationId,
           toLocationId: null,
-          quantity: deductAmt,
+          quantity: remainingToDeduct,
           reason: params.reason,
           reference: params.reference,
           balanceBefore: currentQty,
           balanceAfter: newQty,
           performedBy: params.performedBy,
-          timestamp: serverTimestamp(),
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        const { data: locationsData } = await supabase
+          .from('locations')
+          .select('*')
+          .eq('tenant_id', params.tenantId)
+          .eq('site_id', params.siteId)
+          .eq('status', 'active');
+
+        let defaultLocationId = 'SYSTEM';
+        let defaultLocationCode = 'SYSTEM';
+        
+        if (locationsData && locationsData.length > 0) {
+          defaultLocationId = locationsData[0].id;
+          defaultLocationCode = locationsData[0].location_code || 'HB-01';
+        }
+
+        const product = await getProduct(params.productId);
+        const descSnapshot = product?.description || '';
+        const uomId = product?.unitOfMeasureId || '';
+
+        const newQty = -remainingToDeduct;
+
+        const newDoc = {
+          tenantId: params.tenantId,
+          siteId: params.siteId,
+          productId: params.productId,
+          productCodeSnapshot: params.productCodeSnapshot,
+          descriptionSnapshot: descSnapshot,
+          locationId: defaultLocationId,
+          locationCodeSnapshot: defaultLocationCode,
+          quantity: newQty,
+          unitOfMeasureId: uomId,
+          source: 'MANUAL',
+          sourceUpdatedAt: new Date().toISOString(),
+          createdBy: params.performedBy,
+          createdDate: new Date().toISOString(),
+          modifiedBy: params.performedBy,
+          modifiedDate: new Date().toISOString(),
+          status: 'active'
+        };
+
+        const { error: insErr } = await supabase
+          .from('inventory_balances')
+          .insert(toSnakeCase(newDoc));
+
+        if (insErr) throw new Error(insErr.message);
+
+        movementsToCreate.push({
+          tenantId: params.tenantId,
+          siteId: params.siteId,
+          productId: params.productId,
+          productCodeSnapshot: params.productCodeSnapshot,
+          movementType: 'DECREASE',
+          fromLocationId: defaultLocationId,
+          toLocationId: null,
+          quantity: remainingToDeduct,
+          reason: params.reason,
+          reference: params.reference,
+          balanceBefore: 0,
+          balanceAfter: newQty,
+          performedBy: params.performedBy,
+          timestamp: new Date().toISOString(),
         });
       }
+    }
 
-      if (remainingToDeduct > 0) {
-        if (sortedDocs.length > 0) {
-          const firstItem = sortedDocs[0];
-          const currentQty = firstItem.data.quantity || 0;
-          const newQty = currentQty - remainingToDeduct;
+    if (movementsToCreate.length > 0) {
+      const { error: movesErr } = await supabase
+        .from('inventory_movements')
+        .insert(toSnakeCase(movementsToCreate));
 
-          transaction.update(firstItem.ref, {
-            quantity: newQty,
-            source: 'MANUAL',
-            sourceUpdatedAt: serverTimestamp(),
-            modifiedBy: params.performedBy,
-            modifiedDate: serverTimestamp(),
-          });
-
-          movementsToCreate.push({
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            productId: params.productId,
-            productCodeSnapshot: params.productCodeSnapshot,
-            movementType: 'DECREASE',
-            fromLocationId: firstItem.data.locationId,
-            toLocationId: null,
-            quantity: remainingToDeduct,
-            reason: params.reason,
-            reference: params.reference,
-            balanceBefore: currentQty,
-            balanceAfter: newQty,
-            performedBy: params.performedBy,
-            timestamp: serverTimestamp(),
-          });
-        } else {
-          const locationsRef = collection(db, 'locations');
-          const locQ = query(
-            locationsRef,
-            where('tenantId', '==', params.tenantId),
-            where('siteId', '==', params.siteId),
-            where('status', '==', 'active')
-          );
-          const locSnap = await getDocs(locQ);
-          let defaultLocationId = 'SYSTEM';
-          let defaultLocationCode = 'SYSTEM';
-          
-          if (!locSnap.empty) {
-            defaultLocationId = locSnap.docs[0].id;
-            defaultLocationCode = locSnap.docs[0].data().locationCode || 'HB-01';
-          }
-
-          const product = await getProduct(params.productId);
-          const descSnapshot = product?.description || '';
-          const uomId = product?.unitOfMeasureId || '';
-
-          const newBalanceDocRef = doc(balancesRef);
-          const newQty = -remainingToDeduct;
-
-          transaction.set(newBalanceDocRef, {
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            productId: params.productId,
-            productCodeSnapshot: params.productCodeSnapshot,
-            descriptionSnapshot: descSnapshot,
-            locationId: defaultLocationId,
-            locationCodeSnapshot: defaultLocationCode,
-            quantity: newQty,
-            unitOfMeasureId: uomId,
-            source: 'MANUAL',
-            sourceUpdatedAt: serverTimestamp(),
-            createdBy: params.performedBy,
-            createdDate: serverTimestamp(),
-            modifiedBy: params.performedBy,
-            modifiedDate: serverTimestamp(),
-            status: 'active'
-          });
-
-          movementsToCreate.push({
-            tenantId: params.tenantId,
-            siteId: params.siteId,
-            productId: params.productId,
-            productCodeSnapshot: params.productCodeSnapshot,
-            movementType: 'DECREASE',
-            fromLocationId: defaultLocationId,
-            toLocationId: null,
-            quantity: remainingToDeduct,
-            reason: params.reason,
-            reference: params.reference,
-            balanceBefore: 0,
-            balanceAfter: newQty,
-            performedBy: params.performedBy,
-            timestamp: serverTimestamp(),
-          });
-        }
-      }
-
-      for (const move of movementsToCreate) {
-        const movementRef = doc(collection(db, COLLECTIONS.MOVEMENTS));
-        transaction.set(movementRef, move);
-      }
-    });
+      if (movesErr) throw new Error(movesErr.message);
+    }
 
     generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
 
@@ -816,4 +861,3 @@ export const deductProductInventory = async (params: DeductInventoryParams): Pro
     return { success: false, error: error.message || 'Failed to deduct product inventory' };
   }
 };
-

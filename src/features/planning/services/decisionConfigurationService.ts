@@ -1,5 +1,5 @@
 import { DecisionConfiguration } from '../../../types/decision';
-import { addDoc, collection, db, doc, getDoc, getDocs, query, serverTimestamp, setDoc, where } from '../../../services/supabaseBase';
+import { getDocument, getDocuments, createDocument, setDocument, serverTimestamp } from '../../../services/supabaseBase';
 
 export const saveDecisionConfiguration = async (
   tenantId: string,
@@ -8,13 +8,12 @@ export const saveDecisionConfiguration = async (
 ): Promise<{ success: boolean; error?: string }> => {
   if (!tenantId || !siteId) return { success: false, error: 'Tenant ID and Site ID required' };
   try {
-    const configDocRef = doc(db, 'decisionConfigurations', `${tenantId}_${siteId}`);
-    await setDoc(configDocRef, {
+    await setDocument('decisionConfigurations', `${tenantId}_${siteId}`, {
       ...configData,
       tenantId,
       siteId,
       updatedAt: serverTimestamp()
-    }, { merge: true });
+    });
     return { success: true };
   } catch (err: any) {
     console.error('Error saving decision configuration:', err);
@@ -30,15 +29,12 @@ export const ensureDefaultDecisionConfiguration = async (
 
   try {
     // 1. Fetch actionTypes for tenant
-    const actionTypesSnap = await getDocs(
-      query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId))
-    );
-    let actionDocs = actionTypesSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+    const actionDocs = await getDocuments<any>('actionTypes', [{ field: 'tenantId', op: '==', value: tenantId }]);
 
     const getOrAddAction = async (code: string, label: string, colourToken: string, iconKey: string) => {
       let found = actionDocs.find(a => a.code === code || a.id === code || a.label?.toUpperCase() === code);
       if (!found) {
-        const newRef = await addDoc(collection(db, 'actionTypes'), {
+        const newId = await createDocument<any>('actionTypes', {
           tenantId,
           siteId: '',
           code,
@@ -49,7 +45,7 @@ export const ensureDefaultDecisionConfiguration = async (
           status: 'active',
           createdDate: serverTimestamp()
         });
-        found = { id: newRef.id, code, label, status: 'active' };
+        found = { id: newId, code, label, status: 'active' };
         actionDocs.push(found);
       }
       return found.id;
@@ -60,15 +56,12 @@ export const ensureDefaultDecisionConfiguration = async (
     const releaseActionId = await getOrAddAction('RELEASE', 'Release', 'release', 'Send');
 
     // 2. Fetch priorityLevels for tenant
-    const priorityLevelsSnap = await getDocs(
-      query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId))
-    );
-    let priorityDocs = priorityLevelsSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+    const priorityDocs = await getDocuments<any>('priorityLevels', [{ field: 'tenantId', op: '==', value: tenantId }]);
 
     const getOrAddPriority = async (code: string, label: string, level: number) => {
       let found = priorityDocs.find(p => p.code === code || p.id === code || p.label?.toUpperCase() === code);
       if (!found) {
-        const newRef = await addDoc(collection(db, 'priorityLevels'), {
+        const newId = await createDocument<any>('priorityLevels', {
           tenantId,
           siteId: '',
           code,
@@ -77,7 +70,7 @@ export const ensureDefaultDecisionConfiguration = async (
           status: 'active',
           createdDate: serverTimestamp()
         });
-        found = { id: newRef.id, code, label, status: 'active' };
+        found = { id: newId, code, label, status: 'active' };
         priorityDocs.push(found);
       }
       return found.id;
@@ -130,58 +123,47 @@ export const getDecisionConfiguration = async (
   if (!tenantId || !siteId) return null;
 
   try {
-    const configDocRef = doc(db, 'decisionConfigurations', `${tenantId}_${siteId}`);
-    const configSnap = await getDoc(configDocRef);
-    if (!configSnap.exists()) {
+    const configData = await getDocument<any>('decisionConfigurations', `${tenantId}_${siteId}`);
+    if (!configData) {
       if (allowAutoInit) {
         return await ensureDefaultDecisionConfiguration(tenantId, siteId);
       }
       return null;
     }
 
-    const configData = configSnap.data();
-    
     // Fetch all actionTypes, priorityLevels, and destinations for this tenant
-    const actionTypesSnap = await getDocs(
-      query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId))
-    );
-    const priorityLevelsSnap = await getDocs(
-      query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId))
-    );
-    const destinationsSnap = await getDocs(
-      query(collection(db, 'destinations'), where('tenantId', '==', tenantId))
-    );
+    const actionTypes = await getDocuments<any>('actionTypes', [{ field: 'tenantId', op: '==', value: tenantId }]);
+    const priorityLevels = await getDocuments<any>('priorityLevels', [{ field: 'tenantId', op: '==', value: tenantId }]);
+    const destinations = await getDocuments<any>('destinations', [{ field: 'tenantId', op: '==', value: tenantId }]);
 
-    const activeActionTypes = actionTypesSnap.docs
-      .filter(d => d.data().status === 'active')
-      .flatMap(d => [d.id, d.data().code].filter(Boolean));
-    const inactiveActionTypes = actionTypesSnap.docs
-      .filter(d => d.data().status === 'inactive')
-      .flatMap(d => [d.id, d.data().code].filter(Boolean));
+    const activeActionTypes = actionTypes
+      .filter(d => d.status === 'active')
+      .flatMap(d => [d.id, d.code].filter(Boolean));
+    const inactiveActionTypes = actionTypes
+      .filter(d => d.status === 'inactive')
+      .flatMap(d => [d.id, d.code].filter(Boolean));
 
-    const activePriorityLevels = priorityLevelsSnap.docs
-      .filter(d => d.data().status === 'active')
-      .flatMap(d => [d.id, d.data().code].filter(Boolean));
-    const inactivePriorityLevels = priorityLevelsSnap.docs
-      .filter(d => d.data().status === 'inactive')
-      .flatMap(d => [d.id, d.data().code].filter(Boolean));
+    const activePriorityLevels = priorityLevels
+      .filter(d => d.status === 'active')
+      .flatMap(d => [d.id, d.code].filter(Boolean));
+    const inactivePriorityLevels = priorityLevels
+      .filter(d => d.status === 'inactive')
+      .flatMap(d => [d.id, d.code].filter(Boolean));
 
-    const activeDestinations = destinationsSnap.docs
+    const activeDestinations = destinations
       .filter(d => {
-        const data = d.data();
-        const matchesStatus = data.status === 'active';
-        const matchesSite = !data.siteId || data.siteId === siteId;
+        const matchesStatus = d.status === 'active';
+        const matchesSite = !d.siteId || d.siteId === siteId;
         return matchesStatus && matchesSite;
       })
-      .flatMap(d => [d.id, d.data().destinationCode, d.data().code].filter(Boolean));
-    const inactiveDestinations = destinationsSnap.docs
+      .flatMap(d => [d.id, d.destinationCode, d.code].filter(Boolean));
+    const inactiveDestinations = destinations
       .filter(d => {
-        const data = d.data();
-        const matchesStatus = data.status === 'inactive';
-        const matchesSite = !data.siteId || data.siteId === siteId;
+        const matchesStatus = d.status === 'inactive';
+        const matchesSite = !d.siteId || d.siteId === siteId;
         return matchesStatus || !matchesSite;
       })
-      .flatMap(d => [d.id, d.data().destinationCode, d.data().code].filter(Boolean));
+      .flatMap(d => [d.id, d.destinationCode, d.code].filter(Boolean));
 
     // Validate required referenced records exist and are active
     const requiredActionIds = [
@@ -296,15 +278,12 @@ export const autoConfigureDecisionSettings = async (
     const recordsReused: string[] = [];
 
     // 1. Fetch actionTypes
-    const actionTypesSnap = await getDocs(
-      query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId))
-    );
-    let actionDocs = actionTypesSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+    const actionDocs = await getDocuments<any>('actionTypes', [{ field: 'tenantId', op: '==', value: tenantId }]);
 
     const getOrAddAction = async (code: string, label: string, colourToken: string, iconKey: string) => {
       let found = actionDocs.find(a => a.code === code || a.id === code || a.label?.toUpperCase() === code);
       if (!found) {
-        const newRef = await addDoc(collection(db, 'actionTypes'), {
+        const newId = await createDocument<any>('actionTypes', {
           tenantId,
           siteId: '',
           code,
@@ -315,7 +294,7 @@ export const autoConfigureDecisionSettings = async (
           status: 'active',
           createdDate: serverTimestamp()
         });
-        found = { id: newRef.id, code, label, status: 'active' };
+        found = { id: newId, code, label, status: 'active' };
         actionDocs.push(found);
         recordsCreated.push(`Action Type: ${label} (${code})`);
       } else {
@@ -329,15 +308,12 @@ export const autoConfigureDecisionSettings = async (
     const releaseActionId = await getOrAddAction('RELEASE', 'Release', 'release', 'Send');
 
     // 2. Fetch priorityLevels
-    const priorityLevelsSnap = await getDocs(
-      query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId))
-    );
-    let priorityDocs = priorityLevelsSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+    const priorityDocs = await getDocuments<any>('priorityLevels', [{ field: 'tenantId', op: '==', value: tenantId }]);
 
     const getOrAddPriority = async (code: string, label: string, level: number) => {
       let found = priorityDocs.find(p => p.code === code || p.id === code || p.label?.toUpperCase() === code);
       if (!found) {
-        const newRef = await addDoc(collection(db, 'priorityLevels'), {
+        const newId = await createDocument<any>('priorityLevels', {
           tenantId,
           siteId: '',
           code,
@@ -346,7 +322,7 @@ export const autoConfigureDecisionSettings = async (
           status: 'active',
           createdDate: serverTimestamp()
         });
-        found = { id: newRef.id, code, label, status: 'active' };
+        found = { id: newId, code, label, status: 'active' };
         priorityDocs.push(found);
         recordsCreated.push(`Priority Level: ${label} (${code})`);
       } else {
@@ -360,10 +336,7 @@ export const autoConfigureDecisionSettings = async (
     const lowPriorityId = await getOrAddPriority('LOW', 'Low', 3);
 
     // 3. Fetch destinations
-    const destinationsSnap = await getDocs(
-      query(collection(db, 'destinations'), where('tenantId', '==', tenantId))
-    );
-    let destDocs = destinationsSnap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+    const destDocs = await getDocuments<any>('destinations', [{ field: 'tenantId', op: '==', value: tenantId }]);
     let defaultDestinationId: string | null = null;
 
     if (destDocs.length > 0) {
@@ -375,7 +348,7 @@ export const autoConfigureDecisionSettings = async (
     }
 
     if (!defaultDestinationId) {
-      const destRef = await addDoc(collection(db, 'destinations'), {
+      const destId = await createDocument<any>('destinations', {
         tenantId,
         siteId,
         destinationCode: 'CH',
@@ -383,14 +356,12 @@ export const autoConfigureDecisionSettings = async (
         status: 'active',
         createdDate: serverTimestamp()
       });
-      defaultDestinationId = destRef.id;
+      defaultDestinationId = destId;
       recordsCreated.push(`Destination: Chester Hub (CH)`);
     }
 
     // 4. Load existing configuration
-    const configDocRef = doc(db, 'decisionConfigurations', `${tenantId}_${siteId}`);
-    const configSnap = await getDoc(configDocRef);
-    const existingConfigData = configSnap.exists() ? configSnap.data() : null;
+    const existingConfigData = await getDocument<any>('decisionConfigurations', `${tenantId}_${siteId}`);
 
     let finalHoldActionId = holdActionId;
     let finalReviewActionId = reviewActionId;

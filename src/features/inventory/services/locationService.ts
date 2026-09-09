@@ -7,7 +7,6 @@ import {
 import { isUniqueCode, trimCode } from '../../../validation';
 import { Location } from '../../../types/inventory';
 import { ServiceResult } from '../../../types/common';
-import { QueryConstraint, where } from '../../../services/supabaseBase';
 
 const COLLECTION_NAME = 'locations';
 
@@ -90,9 +89,9 @@ export const subscribeToLocations = (
   onUpdate: (locations: Location[]) => void,
   onError: (error: Error) => void
 ) => {
-  const constraints: QueryConstraint[] = [
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId)
+  const constraints = [
+    { field: 'tenantId', op: '==', value: tenantId },
+    { field: 'siteId', op: '==', value: siteId }
   ];
   
   return subscribeToCollection<Location>(

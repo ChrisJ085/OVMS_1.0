@@ -189,6 +189,29 @@ export const createDocument = async <T extends BaseDocument>(
   return inserted.id;
 };
 
+export const setDocument = async (
+  collectionName: string,
+  id: string,
+  data: Record<string, any>
+): Promise<void> => {
+  const tableName = getTableName(collectionName);
+  const snakeData = toSnakeCase({
+    ...data,
+    id,
+    modifiedBy: data.modifiedBy || DEV_USER,
+    modifiedDate: new Date().toISOString(),
+  });
+
+  const { error } = await supabase
+    .from(tableName)
+    .upsert(snakeData);
+
+  if (error) {
+    console.error(`[Supabase setDocument] Error upserting ${tableName}/${id}:`, error);
+    throw new Error(`Failed to set document ${id} in ${tableName}: ${error.message}`);
+  }
+};
+
 export const addDoc = async (collRef: any, data: any) => {
   const collectionName = typeof collRef === 'string' ? collRef : (collRef.collection || collRef);
   const id = await createDocument(collectionName, data);

@@ -19,7 +19,7 @@ import { useSiteContext } from '../contexts/SiteContext';
 import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { resetSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { Sparkles, RotateCcw } from 'lucide-react';
-import { Timestamp, collection, db, getDocs, limit, onSnapshot, orderBy, query, subscribeToCollection, where } from '../services/supabaseBase';
+import { getDocuments, subscribeToCollection } from '../services/supabaseBase';
 import { 
   Activity,
   AlertTriangle,
@@ -215,26 +215,23 @@ export const OperationalOverviewPage: React.FC = () => {
     setLoading(true);
     setError(null);
 
-    // 1. Real-time priorities listener (limited to active/open statuses)
+    // 1. Real-time priorities listener (limited to active statuses)
     let unsubPriorities = () => {};
     try {
-      const prioritiesQuery = query(
-        collection(db, 'priorities'),
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('priorityStatus', 'in', ['ACTIVE', 'SCHEDULED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
-      );
-
-      unsubPriorities = onSnapshot(
-        prioritiesQuery,
-        (snap) => {
-          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Priority));
-          fetched.sort((a, b) => {
-            const tA = (a.createdDate as any)?.toMillis?.() || 0;
-            const tB = (b.createdDate as any)?.toMillis?.() || 0;
+      unsubPriorities = subscribeToCollection<Priority>(
+        'priorities',
+        [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId },
+          { field: 'priorityStatus', op: 'in', value: ['ACTIVE', 'SCHEDULED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'] }
+        ],
+        (fetched) => {
+          const sorted = [...fetched].sort((a, b) => {
+            const tA = a.createdDate ? new Date(a.createdDate).getTime() : 0;
+            const tB = b.createdDate ? new Date(b.createdDate).getTime() : 0;
             return tB - tA;
           });
-          setPriorities(fetched);
+          setPriorities(sorted);
           setPanelErrors((prev) => ({ ...prev, priorities: undefined }));
         },
         (err) => {
@@ -250,17 +247,14 @@ export const OperationalOverviewPage: React.FC = () => {
     // 2. Real-time exceptions listener (limited to active/open statuses)
     let unsubExceptions = () => {};
     try {
-      const exceptionsQuery = query(
-        collection(db, 'exceptions'),
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('exceptionStatus', 'in', ['OPEN', 'ACKNOWLEDGED'])
-      );
-
-      unsubExceptions = onSnapshot(
-        exceptionsQuery,
-        (snap) => {
-          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as OperationalException));
+      unsubExceptions = subscribeToCollection<OperationalException>(
+        'exceptions',
+        [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId },
+          { field: 'exceptionStatus', op: 'in', value: ['OPEN', 'ACKNOWLEDGED'] }
+        ],
+        (fetched) => {
           setExceptions(fetched);
           setPanelErrors((prev) => ({ ...prev, exceptions: undefined }));
         },
@@ -277,17 +271,14 @@ export const OperationalOverviewPage: React.FC = () => {
     // 3. Real-time announcements listener (limited to active/open statuses)
     let unsubAnnouncements = () => {};
     try {
-      const announcementsQuery = query(
-        collection(db, 'announcements'),
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('active', '==', true)
-      );
-
-      unsubAnnouncements = onSnapshot(
-        announcementsQuery,
-        (snap) => {
-          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Announcement));
+      unsubAnnouncements = subscribeToCollection<Announcement>(
+        'announcements',
+        [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId },
+          { field: 'active', op: '==', value: true }
+        ],
+        (fetched) => {
           setAnnouncements(fetched);
           setPanelErrors((prev) => ({ ...prev, announcements: undefined }));
         },
@@ -307,15 +298,15 @@ export const OperationalOverviewPage: React.FC = () => {
       
       // 4a. Site Settings
       try {
-        const settingsQuery = query(
-          collection(db, 'siteSettings'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(1)
+        const settings = await getDocuments<SiteSettings>(
+          'siteSettings',
+          [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId }
+          ]
         );
-        const settingsSnap = await getDocs(settingsQuery);
-        if (!settingsSnap.empty) {
-          const settingsObj = { id: settingsSnap.docs[0].id, ...settingsSnap.docs[0].data() } as SiteSettings;
+        if (settings.length > 0) {
+          const settingsObj = settings[0];
           setSiteSettings(settingsObj);
           if (settingsObj.timezone) {
             activeTimezone = settingsObj.timezone;
@@ -327,17 +318,16 @@ export const OperationalOverviewPage: React.FC = () => {
 
       // 4b. Recommendations
       try {
-        const recsQuery = query(
-          collection(db, 'recommendations'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(100)
+        const recs = await getDocuments<Recommendation>(
+          'recommendations',
+          [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId }
+          ]
         );
-        const recsSnap = await getDocs(recsQuery);
-        const recs = recsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Recommendation));
         recs.sort((a, b) => {
-          const tA = a.generatedAt ? (typeof a.generatedAt === 'string' ? new Date(a.generatedAt).getTime() : ((a.generatedAt as any).toMillis ? (a.generatedAt as any).toMillis() : new Date(a.generatedAt as any).getTime())) : 0;
-          const tB = b.generatedAt ? (typeof b.generatedAt === 'string' ? new Date(b.generatedAt).getTime() : ((b.generatedAt as any).toMillis ? (b.generatedAt as any).toMillis() : new Date(b.generatedAt as any).getTime())) : 0;
+          const tA = a.generatedAt ? new Date(a.generatedAt).getTime() : 0;
+          const tB = b.generatedAt ? new Date(b.generatedAt).getTime() : 0;
           return tB - tA;
         });
         setRecommendations(recs.slice(0, 50));
@@ -349,18 +339,17 @@ export const OperationalOverviewPage: React.FC = () => {
 
       // 4c. Latest SAP Plan Import
       try {
-        const importsQuery = query(
-          collection(db, 'productionPlanImports'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(20)
+        const imports = await getDocuments<ProductionPlanImport>(
+          'productionPlanImports',
+          [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId }
+          ]
         );
-        const importSnap = await getDocs(importsQuery);
-        if (!importSnap.empty) {
-          const imports = importSnap.docs.map(d => ({ id: d.id, ...d.data() } as ProductionPlanImport));
+        if (imports.length > 0) {
           imports.sort((a, b) => {
-            const tA = a.uploadedAt ? (typeof a.uploadedAt === 'string' ? new Date(a.uploadedAt).getTime() : ((a.uploadedAt as any).toMillis ? (a.uploadedAt as any).toMillis() : new Date(a.uploadedAt as any).getTime())) : 0;
-            const tB = b.uploadedAt ? (typeof b.uploadedAt === 'string' ? new Date(b.uploadedAt).getTime() : ((b.uploadedAt as any).toMillis ? (b.uploadedAt as any).toMillis() : new Date(b.uploadedAt as any).getTime())) : 0;
+            const tA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
+            const tB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
             return tB - tA;
           });
           setLatestImport(imports[0]);
@@ -377,14 +366,13 @@ export const OperationalOverviewPage: React.FC = () => {
       try {
         const { startOfToday, startOfNextDay } = getSiteTimezoneBoundaries(activeTimezone);
 
-        const prodEntriesQuery = query(
-          collection(db, 'productionPlanEntries'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(1000)
+        const allEntries = await getDocuments<ProductionPlanEntry>(
+          'productionPlanEntries',
+          [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId }
+          ]
         );
-        const entriesSnap = await getDocs(prodEntriesQuery);
-        const allEntries = entriesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as unknown as ProductionPlanEntry));
         const filteredEntries = allEntries.filter((e) => {
           if (!e.productionDate) return false;
           let ms = 0;
@@ -408,27 +396,28 @@ export const OperationalOverviewPage: React.FC = () => {
 
       // 4e. Production Events
       try {
-        const prodEventsQuery = query(
-          collection(db, 'productionEvents'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId)
+        const events = await getDocuments<ProductionEvent>(
+          'productionEvents',
+          [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId }
+          ]
         );
-        const eventsSnap = await getDocs(prodEventsQuery);
-        setProductionEvents(eventsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as ProductionEvent)));
+        setProductionEvents(events);
       } catch (err: any) {
         console.error('Error fetching production events:', err);
       }
 
       // 4f. Active Promotions
       try {
-        const promosQuery = query(
-          collection(db, 'promotions'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          where('promotionStatus', '==', 'ACTIVE')
+        const promosList = await getDocuments<any>(
+          'promotions',
+          [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId },
+            { field: 'promotionStatus', op: '==', value: 'ACTIVE' }
+          ]
         );
-        const promosSnap = await getDocs(promosQuery);
-        const promosList = promosSnap.docs.map((doc) => doc.data());
         const now = new Date();
         const activePromos = promosList.filter((p: any) => {
           if (p.status === 'archived' || p.status === 'inactive') return false;
@@ -436,11 +425,11 @@ export const OperationalOverviewPage: React.FC = () => {
           const endDate = p.endDate || p.endAt;
           if (!startDate || !endDate) return false;
 
-          const startMs = startDate.toDate ? startDate.toDate().getTime() : new Date(startDate).getTime();
-          const endMs = endDate.toDate ? endDate.toDate().getTime() : new Date(endDate).getTime();
+          const startMs = new Date(startDate).getTime();
+          const endMs = new Date(endDate).getTime();
           
           const preBuildStart = p.preBuildStartDate || p.preBuildStartAt;
-          const preBuildMs = preBuildStart ? (preBuildStart.toDate ? preBuildStart.toDate().getTime() : new Date(preBuildStart).getTime()) : startMs;
+          const preBuildMs = preBuildStart ? new Date(preBuildStart).getTime() : startMs;
 
           const nowMs = now.getTime();
           return nowMs >= preBuildMs && nowMs <= endMs;
@@ -455,14 +444,14 @@ export const OperationalOverviewPage: React.FC = () => {
       // 4g. Active Sessions (for Admin)
       if (isSuperOrAdmin) {
         try {
-          const sessionsQuery = query(
-            collection(db, 'sessions'),
-            where('tenantId', '==', tenantId),
-            where('status', '==', 'ACTIVE'),
-            limit(50)
+          const sessions = await getDocuments<any>(
+            'sessions',
+            [
+              { field: 'tenantId', op: '==', value: tenantId },
+              { field: 'status', op: '==', value: 'ACTIVE' }
+            ]
           );
-          const sessionsSnap = await getDocs(sessionsQuery);
-          setActiveSessionsCount(sessionsSnap.size);
+          setActiveSessionsCount(sessions.length);
           setPanelErrors((prev) => ({ ...prev, sessions: undefined }));
         } catch (err: any) {
           console.error('Error fetching active sessions:', err);

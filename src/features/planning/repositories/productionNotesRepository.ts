@@ -2,28 +2,28 @@ import { ProductionLinePlanNote } from '../../../types/production';
 import { toAppError } from '../../../types/error';
 import { logAuditEvent } from '../../../services/auditService';
 import { toEpochMillis } from '../../../utils/timeFormatters';
-import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where } from '../../../services/supabaseBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
 
 export const productionNotesRepository = {
   /**
    * Fetches notes active within a specific date range (for grid view).
    */
-  async fetchGridNotes(tenantId: string, siteId: string, startTimestamp: Timestamp, endTimestamp: Timestamp): Promise<ProductionLinePlanNote[]> {
-    if (!db) return [];
+  async fetchGridNotes(tenantId: string, siteId: string, startTimestamp: string, endTimestamp: string): Promise<ProductionLinePlanNote[]> {
     try {
-      const notesRef = collection(db, 'productionLinePlanNotes');
-      const qNotes = query(
-        notesRef,
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('active', '==', true)
-      );
-      const snapNotes = await getDocs(qNotes);
-      const allNotes = snapNotes.docs.map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote));
+      const { data, error } = await supabase
+        .from('production_events')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('site_id', siteId)
+        .eq('active', true);
+
+      if (error) throw error;
+      const allNotes = (data || []).map(row => toCamelCase<ProductionLinePlanNote>(row));
+
       return allNotes.filter(note => {
         if (note.noteType === 'LINE_NOTE') {
-          // Keep line notes if they are not expired
-          if (!note.endAt) return true; // no expiry
+          if (!note.endAt) return true;
           const endMs = toEpochMillis(note.endAt);
           return endMs ? endMs >= Date.now() : true;
         }
@@ -42,18 +42,16 @@ export const productionNotesRepository = {
    * Fetches latest planner notes list.
    */
   async fetchNotesList(tenantId: string, siteId: string, limitCount = 50): Promise<ProductionLinePlanNote[]> {
-    if (!db) return [];
     try {
-      const notesRef = collection(db, 'productionLinePlanNotes');
-      const q = query(
-        notesRef,
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId)
-      );
-      const snap = await getDocs(q);
-      const notes = snap.docs.map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote));
+      const { data, error } = await supabase
+        .from('production_events')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('site_id', siteId);
+
+      if (error) throw error;
+      const notes = (data || []).map(row => toCamelCase<ProductionLinePlanNote>(row));
       
-      // Sort client-side by noteDate desc to avoid composite index requirement in Firestore
       notes.sort((a, b) => {
         const timeA = toEpochMillis(a.noteDate) || 0;
         const timeB = toEpochMillis(b.noteDate) || 0;
@@ -70,24 +68,35 @@ export const productionNotesRepository = {
    * Creates a new production line plan note.
    */
   async addNote(noteData: Omit<ProductionLinePlanNote, 'id'>): Promise<string> {
-    if (!db) throw new Error('Firestore instance not available');
     try {
-      const notesRef = collection(db, 'productionLinePlanNotes');
-      const docRef = await addDoc(notesRef, noteData);
+      const snakeData = toSnakeCase({
+        ...noteData,
+        createdBy: noteData.createdBy || 'development-user',
+        createdDate: new Date().toISOString(),
+        modifiedBy: noteData.modifiedBy || 'development-user',
+        modifiedDate: new Date().toISOString(),
+      });
 
-      // Log Audit Event
+      const { data, error } = await supabase
+        .from('production_events')
+        .insert(snakeData)
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
       await logAuditEvent({
         tenantId: noteData.tenantId,
         siteId: noteData.siteId,
         eventType: noteData.noteType === 'LINE_NOTE' ? 'PRODUCTION_LINE_NOTE_CREATE' : 'PLANNING_EVENT_CREATE',
         entityType: 'ProductionLinePlanNote',
-        entityId: docRef.id,
+        entityId: data.id,
         summary: `Created ${noteData.noteType === 'LINE_NOTE' ? 'Production Line Note' : 'Planning Event'} for line ${noteData.productionLineId || 'all'}: "${noteData.title}"`,
         newValue: noteData,
         performedBy: noteData.createdBy || 'System'
       });
 
-      return docRef.id;
+      return data.id;
     } catch (err) {
       throw toAppError(err, 'ADD_NOTE_FAILED');
     }
@@ -97,25 +106,35 @@ export const productionNotesRepository = {
    * Archives (deactivates) a production line note.
    */
   async deactivateNote(noteId: string, performedBy?: string): Promise<void> {
-    if (!db) throw new Error('Firestore instance not available');
     try {
-      const noteRef = doc(db, 'productionLinePlanNotes', noteId);
-      const noteSnap = await getDoc(noteRef);
+      const { data: noteSnap, error: getErr } = await supabase
+        .from('production_events')
+        .select('*')
+        .eq('id', noteId)
+        .maybeSingle();
+
+      if (getErr) throw getErr;
+
       let tenantId = 'default-tenant';
       let siteId = 'default-site';
       let title = 'Unknown Note';
       let noteType = 'LINE_NOTE';
-      if (noteSnap.exists()) {
-        const data = noteSnap.data();
-        tenantId = data.tenantId || tenantId;
-        siteId = data.siteId || siteId;
-        title = data.title || title;
-        noteType = data.noteType || noteType;
+      
+      if (noteSnap) {
+        const camelNote = toCamelCase<any>(noteSnap);
+        tenantId = camelNote.tenantId || tenantId;
+        siteId = camelNote.siteId || siteId;
+        title = camelNote.title || title;
+        noteType = camelNote.noteType || noteType;
       }
 
-      await updateDoc(noteRef, { active: false, modifiedDate: Timestamp.fromDate(new Date()) });
+      const { error: updErr } = await supabase
+        .from('production_events')
+        .update({ active: false, modified_date: new Date().toISOString() })
+        .eq('id', noteId);
 
-      // Log Audit Event
+      if (updErr) throw updErr;
+
       await logAuditEvent({
         tenantId,
         siteId,
@@ -135,28 +154,40 @@ export const productionNotesRepository = {
    * Updates an existing production line note.
    */
   async updateNote(noteId: string, updates: Partial<Omit<ProductionLinePlanNote, 'id'>>, performedBy?: string): Promise<void> {
-    if (!db) throw new Error('Firestore instance not available');
     try {
-      const noteRef = doc(db, 'productionLinePlanNotes', noteId);
-      const noteSnap = await getDoc(noteRef);
+      const { data: noteSnap, error: getErr } = await supabase
+        .from('production_events')
+        .select('*')
+        .eq('id', noteId)
+        .maybeSingle();
+
+      if (getErr) throw getErr;
+
       let tenantId = 'default-tenant';
       let siteId = 'default-site';
       let title = 'Unknown Note';
       let noteType = 'LINE_NOTE';
-      if (noteSnap.exists()) {
-        const data = noteSnap.data();
-        tenantId = data.tenantId || tenantId;
-        siteId = data.siteId || siteId;
-        title = data.title || title;
-        noteType = data.noteType || noteType;
+      
+      if (noteSnap) {
+        const camelNote = toCamelCase<any>(noteSnap);
+        tenantId = camelNote.tenantId || tenantId;
+        siteId = camelNote.siteId || siteId;
+        title = camelNote.title || title;
+        noteType = camelNote.noteType || noteType;
       }
 
-      await updateDoc(noteRef, {
+      const snakeUpdates = toSnakeCase({
         ...updates,
-        modifiedDate: Timestamp.now()
+        modifiedDate: new Date().toISOString()
       });
 
-      // Log Audit Event
+      const { error: updErr } = await supabase
+        .from('production_events')
+        .update(snakeUpdates)
+        .eq('id', noteId);
+
+      if (updErr) throw updErr;
+
       await logAuditEvent({
         tenantId,
         siteId,

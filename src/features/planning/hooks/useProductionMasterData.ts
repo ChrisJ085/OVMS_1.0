@@ -3,7 +3,8 @@ import { ProductionLine, ProductCategory } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { toAppError } from '../../../types/error';
-import { collection, db, getDocs, query, where } from '../../../services/supabaseBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase } from '../../../utils/caseTransformers';
 
 export function useProductionMasterData(tenantId: string, siteId: string) {
   const [productionLines, setProductionLines] = useState<ProductionLine[]>([]);
@@ -19,7 +20,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
   }, []);
 
   useEffect(() => {
-    if (!tenantId || !siteId || !db) {
+    if (!tenantId || !siteId) {
       setLoading(false);
       return;
     }
@@ -29,29 +30,45 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
       setLoading(true);
       setError(null);
       try {
-        // Fetch production lines
-        const linesRef = collection(db, 'productionLines');
-        const qLines = query(linesRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-        const snapLines = await getDocs(qLines);
-        const fetchedLines = snapLines.docs.map(d => ({ id: d.id, ...d.data() } as ProductionLine));
+        // Fetch production lines natively
+        const { data: lines, error: linesErr } = await supabase
+          .from('production_lines')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId);
 
-        // Fetch products
-        const productsRef = collection(db, 'products');
-        const qProducts = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId), where('status', '==', 'active'));
-        const snapProducts = await getDocs(qProducts);
-        const fetchedProducts = snapProducts.docs.map(d => ({ id: d.id, ...d.data() } as Product));
+        if (linesErr) throw linesErr;
+        const fetchedLines = (lines || []).map(row => toCamelCase<ProductionLine>(row));
 
-        // Fetch Units of Measure
-        const unitsRef = collection(db, 'unitsOfMeasure');
-        const qUnits = query(unitsRef, where('tenantId', '==', tenantId), where('siteId', '==', ''));
-        const snapUnits = await getDocs(qUnits);
-        const fetchedUnits = snapUnits.docs.map(d => ({ id: d.id, ...d.data() } as UnitOfMeasure));
+        // Fetch products natively
+        const { data: prods, error: prodsErr } = await supabase
+          .from('products')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId)
+          .eq('status', 'active');
 
-        // Fetch Product Categories
-        const catRef = collection(db, 'productCategories');
-        const qCat = query(catRef, where('tenantId', '==', tenantId));
-        const snapCat = await getDocs(qCat);
-        const fetchedCat = snapCat.docs.map(d => ({ id: d.id, ...d.data() } as ProductCategory));
+        if (prodsErr) throw prodsErr;
+        const fetchedProducts = (prods || []).map(row => toCamelCase<Product>(row));
+
+        // Fetch Units of Measure natively
+        const { data: unitsData, error: unitsErr } = await supabase
+          .from('units_of_measure')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', '');
+
+        if (unitsErr) throw unitsErr;
+        const fetchedUnits = (unitsData || []).map(row => toCamelCase<UnitOfMeasure>(row));
+
+        // Fetch Product Categories natively
+        const { data: catData, error: catErr } = await supabase
+          .from('product_categories')
+          .select('*')
+          .eq('tenant_id', tenantId);
+
+        if (catErr) throw catErr;
+        const fetchedCat = (catData || []).map(row => toCamelCase<ProductCategory>(row));
 
         if (isMounted) {
           setProductionLines(fetchedLines);

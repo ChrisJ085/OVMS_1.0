@@ -1,7 +1,7 @@
 import { isUniqueCode, trimCode, trimDescription } from '../../../validation';
 import { Product } from '../../../types/product';
 import { ServiceResult } from '../../../types/common';
-import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, getDoc, getDocs, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/supabaseBase';
+import { getDocument, getDocuments, createDocument, updateDocument, deactivateDocument, subscribeToCollection } from '../../../services/supabaseBase';
 
 const COLLECTION_NAME = 'products';
 
@@ -14,18 +14,17 @@ async function isUniqueProductCode(
   productCode: string,
   excludeId?: string
 ): Promise<boolean> {
-  const constraints = [
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId),
-    where('productCode', '==', productCode)
+  const filters = [
+    { field: 'tenantId', op: '==' as const, value: tenantId },
+    { field: 'siteId', op: '==' as const, value: siteId },
+    { field: 'productCode', op: '==' as const, value: productCode }
   ];
 
-  const q = query(collection(db, COLLECTION_NAME), ...constraints);
-  const snapshot = await getDocs(q);
+  const products = await getDocuments<Product>(COLLECTION_NAME, filters);
   
-  if (snapshot.empty) return true;
+  if (products.length === 0) return true;
   if (excludeId) {
-    const others = snapshot.docs.filter(d => d.id !== excludeId);
+    const others = products.filter(d => d.id !== excludeId);
     return others.length === 0;
   }
   return false;
@@ -33,11 +32,7 @@ async function isUniqueProductCode(
 
 export const getProduct = async (id: string): Promise<Product | null> => {
   try {
-    const d = await getDoc(doc(db, COLLECTION_NAME, id));
-    if (d.exists()) {
-      return { id: d.id, ...d.data() } as Product;
-    }
-    return null;
+    return await getDocument<Product>(COLLECTION_NAME, id);
   } catch (e) {
     console.error(e);
     return null;
@@ -170,9 +165,9 @@ export const subscribeToProducts = (
   onUpdate: (products: Product[]) => void,
   onError: (error: Error) => void
 ) => {
-  const constraints: QueryConstraint[] = [
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId)
+  const constraints = [
+    { field: 'tenantId', op: '==' as const, value: tenantId },
+    { field: 'siteId', op: '==' as const, value: siteId }
   ];
   
   return subscribeToCollection<Product>(

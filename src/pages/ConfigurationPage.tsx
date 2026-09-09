@@ -19,7 +19,7 @@ import { useSiteContext } from '../contexts/SiteContext';
 import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { reopenSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { useAuth } from '../features/auth/context/AuthContext';
-import { QueryConstraint, collection, db, getDocs, subscribeToCollection, where } from '../services/supabaseBase';
+import { getDocuments, subscribeToCollection } from '../services/supabaseBase';
 
 const TABS = [
   { id: 'sites', label: 'Sites', collection: collections.SITES, codeField: 'siteCode' },
@@ -53,16 +53,15 @@ export const ConfigurationPage: React.FC = () => {
 
   // Fetch tenant list for Super Users
   useEffect(() => {
-    if (!isSuperUser || !db) return;
+    if (!isSuperUser) return;
 
     async function loadTenants() {
       try {
-        const snap = await getDocs(collection(db!, 'tenants'));
+        const snap = await getDocuments<any>('tenants');
         const map = new Map<string, string>();
 
-        snap.forEach((d) => {
-          const data = d.data();
-          map.set(d.id, data.tenantName || data.name || d.id);
+        snap.forEach((data) => {
+          map.set(data.id, data.tenantName || data.name || data.id);
         });
 
         // Add any tenants present in availableSites
@@ -92,24 +91,24 @@ export const ConfigurationPage: React.FC = () => {
     setError(null);
     setData([]);
 
-    const constraints: QueryConstraint[] = [];
+    const constraints: any[] = [];
 
     // Filter by tenantId
     if (isSuperUser) {
       if (selectedTenantFilter !== 'ALL') {
-        constraints.push(where('tenantId', '==', selectedTenantFilter));
+        constraints.push({ field: 'tenantId', op: '==', value: selectedTenantFilter });
       }
     } else {
-      constraints.push(where('tenantId', '==', tenantId));
+      constraints.push({ field: 'tenantId', op: '==', value: tenantId });
     }
 
     // Filter by siteId for site-scoped tabs
     if (activeTab.siteScoped) {
       if (siteId) {
-        constraints.push(where('siteId', '==', siteId));
+        constraints.push({ field: 'siteId', op: '==', value: siteId });
       }
     } else {
-      constraints.push(where('siteId', '==', ''));
+      constraints.push({ field: 'siteId', op: '==', value: '' });
     }
 
     const unsubscribe = subscribeToCollection<any>(
