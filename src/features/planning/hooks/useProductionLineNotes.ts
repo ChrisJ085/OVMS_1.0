@@ -32,7 +32,11 @@ export function useProductionLineNotes(
   });
 
   const fetchNotes = useCallback(async () => {
-    if (!enabled || !tenantId || !siteId) return;
+    if (!enabled || !tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setNotesList([]);
+      setLoadingNotes(false);
+      return;
+    }
     setLoadingNotes(true);
     setError(null);
     try {

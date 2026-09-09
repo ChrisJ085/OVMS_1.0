@@ -80,7 +80,10 @@ export const DecisionSettingsPage: React.FC = () => {
   };
 
   const loadData = async () => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

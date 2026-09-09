@@ -63,7 +63,10 @@ export const AdminOverviewPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const fetchOverviewStats = async () => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const siteSettings = await getSiteSettings(tenantId, siteId);

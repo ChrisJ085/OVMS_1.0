@@ -25,7 +25,12 @@ export function useCurrentProductionPlan(tenantId: string, siteId: string, enabl
   }, [currentWeekStart]);
 
   const loadPlanData = useCallback(async () => {
-    if (!enabled || !tenantId || !siteId) return;
+    if (!enabled || !tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setActiveEntries([]);
+      setGridNotes([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

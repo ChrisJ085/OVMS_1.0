@@ -24,7 +24,10 @@ export const DashboardSettingsPage: React.FC = () => {
 
   useEffect(() => {
     const fetchSettings = async () => {
-      if (!tenantId || !siteId) return;
+      if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const data = await getSiteSettings(tenantId, siteId);

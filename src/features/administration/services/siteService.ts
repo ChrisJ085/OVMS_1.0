@@ -48,7 +48,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
 
     // 2. Tenant Admin: query all active sites in their tenant
     if (profile.role === 'TENANT_ADMIN') {
-      if (!tenantId) return [];
+      if (!tenantId || tenantId === 'GLOBAL') return [];
 
       const { data: sites, error } = await supabase
         .from('sites')
@@ -91,7 +91,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
       }
     }
 
-    if (!tenantId || userSiteIds.length === 0) {
+    if (!tenantId || tenantId === 'GLOBAL' || userSiteIds.length === 0) {
       console.log(`[fetchUserPermittedSites] User ${uid} (role ${profile.role}) has no assigned siteIds.`);
       return [];
     }

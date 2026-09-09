@@ -24,26 +24,27 @@ if (!rawUrl) {
 }
 export const supabaseUrl = normalizeSupabaseUrl(rawUrl);
 
-const anonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
-if (!anonKey) {
-  throw new Error('Configuration error: VITE_SUPABASE_ANON_KEY environment variable is required but not set.');
+const publishableKey = getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_PUBLISHABLE_KEY');
+if (!publishableKey) {
+  throw new Error('Configuration error: VITE_SUPABASE_PUBLISHABLE_KEY environment variable is required but not set.');
 }
-export const supabaseAnonKey = anonKey;
+export const supabasePublishableKey = publishableKey;
 
 export const isSupabaseConfigured = (): boolean => {
   return (
     Boolean(supabaseUrl) &&
-    Boolean(supabaseAnonKey) &&
+    Boolean(supabasePublishableKey) &&
     !supabaseUrl.includes('placeholder') &&
-    !supabaseAnonKey.includes('placeholder')
+    !supabasePublishableKey.includes('placeholder')
   );
 };
 
-export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase: SupabaseClient = createClient(supabaseUrl, supabasePublishableKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
 });
+
 

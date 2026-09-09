@@ -61,7 +61,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>Supabase is not yet configured</span>
             </div>
-            <span>Please configure the environment variables VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.</span>
+            <span>Please configure the environment variables VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.</span>
           </div>
         )}
 

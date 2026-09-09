@@ -44726,10 +44726,10 @@ var supabase_exports = {};
 __export(supabase_exports, {
   isSupabaseConfigured: () => isSupabaseConfigured,
   supabase: () => supabase,
-  supabaseAnonKey: () => supabaseAnonKey,
+  supabasePublishableKey: () => supabasePublishableKey,
   supabaseUrl: () => supabaseUrl
 });
-var getEnvVar, normalizeSupabaseUrl, rawUrl, supabaseUrl, anonKey, supabaseAnonKey, isSupabaseConfigured, supabase;
+var getEnvVar, normalizeSupabaseUrl, rawUrl, supabaseUrl, publishableKey, supabasePublishableKey, isSupabaseConfigured, supabase;
 var init_supabase = __esm({
   "src/config/supabase.ts"() {
     init_dist4();
@@ -44754,15 +44754,15 @@ var init_supabase = __esm({
       throw new Error("Configuration error: VITE_SUPABASE_URL environment variable is required but not set.");
     }
     supabaseUrl = normalizeSupabaseUrl(rawUrl);
-    anonKey = getEnvVar("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
-    if (!anonKey) {
-      throw new Error("Configuration error: VITE_SUPABASE_ANON_KEY environment variable is required but not set.");
+    publishableKey = getEnvVar("VITE_SUPABASE_PUBLISHABLE_KEY", "SUPABASE_PUBLISHABLE_KEY");
+    if (!publishableKey) {
+      throw new Error("Configuration error: VITE_SUPABASE_PUBLISHABLE_KEY environment variable is required but not set.");
     }
-    supabaseAnonKey = anonKey;
+    supabasePublishableKey = publishableKey;
     isSupabaseConfigured = () => {
-      return Boolean(supabaseUrl) && Boolean(supabaseAnonKey) && !supabaseUrl.includes("placeholder") && !supabaseAnonKey.includes("placeholder");
+      return Boolean(supabaseUrl) && Boolean(supabasePublishableKey) && !supabaseUrl.includes("placeholder") && !supabasePublishableKey.includes("placeholder");
     };
-    supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    supabase = createClient(supabaseUrl, supabasePublishableKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -44776,6 +44776,39 @@ var init_supabase = __esm({
 var import_express = __toESM(require_express2(), 1);
 init_supabase();
 import crypto2 from "crypto";
+
+// src/config/supabaseAdmin.ts
+init_dist4();
+var getEnvVar2 = (key) => {
+  if (typeof process !== "undefined" && process.env && process.env[key]) {
+    return process.env[key] || "";
+  }
+  return "";
+};
+var normalizeSupabaseUrl2 = (url) => {
+  if (!url) return "";
+  let cleaned = url.trim();
+  cleaned = cleaned.replace(/\/rest\/v1\/?$/, "");
+  cleaned = cleaned.replace(/\/$/, "");
+  return cleaned;
+};
+var rawUrl2 = getEnvVar2("SUPABASE_URL") || getEnvVar2("VITE_SUPABASE_URL");
+if (!rawUrl2) {
+  throw new Error("Configuration error: SUPABASE_URL environment variable is required for admin client.");
+}
+var supabaseAdminUrl = normalizeSupabaseUrl2(rawUrl2);
+var secretKey = getEnvVar2("SUPABASE_SECRET_KEY");
+if (!secretKey) {
+  throw new Error("Configuration error: SUPABASE_SECRET_KEY environment variable is required for admin client.");
+}
+var supabaseAdminSecretKey = secretKey;
+var supabaseAdmin = createClient(supabaseAdminUrl, supabaseAdminSecretKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false
+  }
+});
 
 // src/utils/caseTransformers.ts
 function snakeToCamelKey(key) {
@@ -45015,8 +45048,8 @@ router.post("/admin/provision-user", async (req, res) => {
     const newUserId = authData.user?.id || crypto2.randomUUID();
     createdAuthUid = authData.user ? authData.user.id : null;
     const { createClient: createClient2 } = await Promise.resolve().then(() => (init_dist4(), dist_exports));
-    const { supabaseUrl: supabaseUrl2, supabaseAnonKey: supabaseAnonKey2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
-    const adminClient = createClient2(supabaseUrl2, supabaseAnonKey2, {
+    const { supabaseUrl: supabaseUrl2, supabasePublishableKey: supabasePublishableKey2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
+    const adminClient = createClient2(supabaseUrl2, supabasePublishableKey2, {
       global: { headers: { Authorization: `Bearer ${callerToken}` } },
       auth: { persistSession: false }
     });
@@ -45038,7 +45071,7 @@ router.post("/admin/provision-user", async (req, res) => {
     if (profileErr) {
       if (createdAuthUid) {
         try {
-          await supabase.auth.admin.deleteUser(createdAuthUid);
+          await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
         } catch (rollbackErr) {
           console.warn("[Provisioning Rollback] Could not delete Auth user during rollback:", rollbackErr);
         }
@@ -45061,7 +45094,7 @@ router.post("/admin/provision-user", async (req, res) => {
         try {
           await adminClient.from("users").delete().eq("id", newUserId);
           if (createdAuthUid) {
-            await supabase.auth.admin.deleteUser(createdAuthUid);
+            await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
           }
         } catch (rollbackErr) {
           console.warn("[Provisioning Rollback] Error during sites assignment rollback:", rollbackErr);
@@ -45095,7 +45128,7 @@ router.post("/admin/provision-user", async (req, res) => {
     if (createdProfileInDb && createdAuthUid) {
       try {
         await supabase.from("users").delete().eq("id", createdAuthUid);
-        await supabase.auth.admin.deleteUser(createdAuthUid);
+        await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
       } catch (e) {
         console.warn("[Provisioning Rollback Error]:", e);
       }

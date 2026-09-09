@@ -10,6 +10,9 @@ export const productionNotesRepository = {
    * Fetches notes active within a specific date range (for grid view).
    */
   async fetchGridNotes(tenantId: string, siteId: string, startTimestamp: string, endTimestamp: string): Promise<ProductionLinePlanNote[]> {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      return [];
+    }
     try {
       const { data, error } = await supabase
         .from('production_events')
@@ -42,6 +45,9 @@ export const productionNotesRepository = {
    * Fetches latest planner notes list.
    */
   async fetchNotesList(tenantId: string, siteId: string, limitCount = 50): Promise<ProductionLinePlanNote[]> {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      return [];
+    }
     try {
       const { data, error } = await supabase
         .from('production_events')

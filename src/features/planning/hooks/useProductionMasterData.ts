@@ -20,7 +20,11 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
   }, []);
 
   useEffect(() => {
-    if (!tenantId || !siteId) {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setProductionLines([]);
+      setProducts([]);
+      setUnits([]);
+      setCategories([]);
       setLoading(false);
       return;
     }
@@ -55,8 +59,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
         const { data: unitsData, error: unitsErr } = await supabase
           .from('units_of_measure')
           .select('*')
-          .eq('tenant_id', tenantId)
-          .eq('site_id', '');
+          .eq('tenant_id', tenantId);
 
         if (unitsErr) throw unitsErr;
         const fetchedUnits = (unitsData || []).map(row => toCamelCase<UnitOfMeasure>(row));

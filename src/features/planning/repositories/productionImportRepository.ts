@@ -9,6 +9,9 @@ export const productionImportRepository = {
    * Fetches history of production plan imports for a tenant and site.
    */
   async fetchImportHistory(tenantId: string, siteId: string, limitCount = 30): Promise<ProductionPlanImport[]> {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      return [];
+    }
     try {
       const { data, error } = await supabase
         .from('production_plan_imports')

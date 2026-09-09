@@ -1,6 +1,7 @@
 import express from "express";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
+import { supabaseAdmin } from "../config/supabaseAdmin";
 import { toCamelCase, toSnakeCase } from "../utils/caseTransformers";
 
 const app = express();
@@ -294,8 +295,8 @@ router.post("/admin/provision-user", async (req, res) => {
 
     // Create a scoped client acting as the admin caller
     const { createClient } = await import('@supabase/supabase-js');
-    const { supabaseUrl, supabaseAnonKey } = await import('../config/supabase');
-    const adminClient = createClient(supabaseUrl, supabaseAnonKey, {
+    const { supabaseUrl, supabasePublishableKey } = await import('../config/supabase');
+    const adminClient = createClient(supabaseUrl, supabasePublishableKey, {
       global: { headers: { Authorization: `Bearer ${callerToken}` } },
       auth: { persistSession: false }
     });
@@ -320,7 +321,7 @@ router.post("/admin/provision-user", async (req, res) => {
       // Safe compensation: delete orphaned auth user if possible
       if (createdAuthUid) {
         try {
-          await supabase.auth.admin.deleteUser(createdAuthUid);
+          await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
         } catch (rollbackErr) {
           console.warn('[Provisioning Rollback] Could not delete Auth user during rollback:', rollbackErr);
         }
@@ -347,7 +348,7 @@ router.post("/admin/provision-user", async (req, res) => {
         try {
           await adminClient.from('users').delete().eq('id', newUserId);
           if (createdAuthUid) {
-            await supabase.auth.admin.deleteUser(createdAuthUid);
+            await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
           }
         } catch (rollbackErr) {
           console.warn('[Provisioning Rollback] Error during sites assignment rollback:', rollbackErr);
@@ -386,7 +387,7 @@ router.post("/admin/provision-user", async (req, res) => {
     if (createdProfileInDb && createdAuthUid) {
       try {
         await supabase.from('users').delete().eq('id', createdAuthUid);
-        await supabase.auth.admin.deleteUser(createdAuthUid);
+        await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
       } catch (e) {
         console.warn('[Provisioning Rollback Error]:', e);
       }

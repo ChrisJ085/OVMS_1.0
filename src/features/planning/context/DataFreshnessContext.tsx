@@ -28,7 +28,10 @@ export const DataFreshnessProvider: React.FC<{ children: ReactNode }> = ({ child
   useEffect(() => {
     let isMounted = true;
     const loadSettings = async () => {
-      if (!tenantId || !siteId) return;
+      if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+        setSiteSettings(null);
+        return;
+      }
       try {
         const settings = await getSiteSettings(tenantId, siteId);
         if (isMounted && settings) {
@@ -44,7 +47,7 @@ export const DataFreshnessProvider: React.FC<{ children: ReactNode }> = ({ child
 
   // Fetch freshness
   const performFetch = useCallback(async (isManual: boolean = false) => {
-    if (!tenantId || !siteId) {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
       setSummary(null);
       setLoading(false);
       return;
@@ -75,7 +78,7 @@ export const DataFreshnessProvider: React.FC<{ children: ReactNode }> = ({ child
 
   // Periodic refresh every 45 seconds to keep relative times and background changes current
   useEffect(() => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
     const interval = setInterval(() => {
       performFetch(false);
     }, 45000);

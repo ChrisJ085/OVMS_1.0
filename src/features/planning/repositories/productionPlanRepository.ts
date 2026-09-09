@@ -15,6 +15,9 @@ export const productionPlanRepository = {
    * Fetches production plan entries for a given tenant, site, and week start range.
    */
   async fetchPlanEntries({ tenantId, siteId, weekStart }: FetchPlanEntriesParams): Promise<ProductionPlanEntry[]> {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      return [];
+    }
     try {
       const startMs = weekStart.getTime() - 24 * 60 * 60 * 1000;
       const endMs = weekStart.getTime() + 8 * 24 * 60 * 60 * 1000;
