@@ -1,4 +1,6 @@
--- OVMS Supabase Row Level Security (RLS) Hardening Script
+const fs = require('fs');
+
+const sql = `-- OVMS Supabase Row Level Security (RLS) Hardening Script
 -- Apply this file to your Supabase instance to enforce Phase 1 Security Requirements.
 
 -- 1. Create Internal Schema for Security Functions
@@ -250,3 +252,6 @@ CREATE POLICY "Recommendations: Insert" ON public.recommendations FOR INSERT WIT
 CREATE POLICY "Recommendations: Update" ON public.recommendations FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "Recommendations: Delete" ON public.recommendations FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
+`;
+
+fs.writeFileSync('docs/supabase_rls.sql', sql);

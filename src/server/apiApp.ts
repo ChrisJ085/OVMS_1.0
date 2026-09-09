@@ -174,8 +174,16 @@ router.post("/admin/provision-user", async (req, res) => {
 
     const newUserId = authData.user?.id || crypto.randomUUID();
 
+    // Create a scoped client acting as the admin caller
+    const { createClient } = await import('@supabase/supabase-js');
+    const { supabaseUrl, supabaseAnonKey } = await import('../config/supabase');
+    const adminClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${callerToken}` } },
+      auth: { persistSession: false }
+    });
+
     currentStage = "USER_PROFILE_CREATE";
-    const { error: profileErr } = await supabase.from('users').upsert({
+    const { error: profileErr } = await adminClient.from('users').upsert({
       id: newUserId,
       email: cleanEmail,
       display_name: displayName.trim(),
@@ -199,12 +207,12 @@ router.post("/admin/provision-user", async (req, res) => {
         user_id: newUserId,
         site_id: sId
       }));
-      await supabase.from('user_sites').insert(userSiteRows);
+      await adminClient.from('user_sites').insert(userSiteRows);
     }
 
     // Insert Audit Log
     currentStage = "AUDIT_LOG_CREATE";
-    await supabase.from('audit_logs').insert({
+    await adminClient.from('audit_logs').insert({
       tenant_id: targetTenantId,
       user_id: verifiedUid,
       user_email: verifiedToken.email,
