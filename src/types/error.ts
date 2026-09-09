@@ -22,7 +22,7 @@ export function toAppError(error: unknown, fallbackMessage = 'An unexpected erro
     userMessage = 'Too many failed attempts. Please try again later.';
   } else if (rawMessage.includes('permission-denied') || rawMessage.includes('Missing or insufficient permissions')) {
     userMessage = 'You do not have permission to perform this action.';
-  } else if (!rawMessage.includes('Firebase') && !rawMessage.includes('auth/') && !rawMessage.includes('Error:')) {
+  } else if (!rawMessage.includes('auth/') && !rawMessage.includes('Error:')) {
     userMessage = rawMessage;
   }
 

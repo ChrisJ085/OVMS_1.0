@@ -1,6 +1,6 @@
 import { ProductionEvent, ProductProductionContext, ProductionRiskStatus, ProductionPlanEntry, ProductionLinePlanNote } from '../../../types/production';
 import { ServiceResult } from '../../../types/common';
-import { Timestamp, collection, createDocument, db, doc, getDoc, getDocs, limit, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/supabaseBase';
+import { createDocument, getDocument, getDocuments, subscribeToCollection, updateDocument, where } from '../../../services/dbService';
 
 const COLLECTION_NAME = 'productionEvents';
 
@@ -43,19 +43,15 @@ export const checkRunningOverlap = async (
   productId: string,
   excludeEventId?: string
 ): Promise<boolean> => {
-  const eventsRef = collection(db, COLLECTION_NAME);
-  const q = query(
-    eventsRef,
+  const events = await getDocuments<any>(COLLECTION_NAME, [
     where('tenantId', '==', tenantId),
     where('siteId', '==', siteId),
     where('productionLineId', '==', productionLineId),
     where('productId', '==', productId),
     where('productionStatus', '==', 'RUNNING')
-  );
+  ]);
 
-  const snapshot = await getDocs(q);
-  
-  for (const doc of snapshot.docs) {
+  for (const doc of events) {
     if (excludeEventId && doc.id === excludeEventId) continue;
     return true; // Another RUNNING event found
   }
@@ -356,44 +352,13 @@ export const obtainCurrentProductionContext = async (
   productId: string,
   evaluationDate?: Date
 ): Promise<ProductProductionContext> => {
-  if (!db) {
-    return {
-      productId,
-      isScheduled: false,
-      isCurrentlyInProduction: false,
-      currentProductionLine: null,
-      currentProductionDate: null,
-      plannedCasesToday: 0,
-      plannedPalletsToday: 0,
-      plannedCasesNext7Days: 0,
-      plannedPalletsNext7Days: 0,
-      nextProductionDate: null,
-      daysUntilNextProduction: null,
-      lastProductionDate: null,
-      plannerProductionStatus: null,
-      activeProductionNotes: [],
-      hasDelay: false,
-      hasShutdown: false,
-      hasMaintenance: false,
-      hasTrial: false,
-      sourceImportId: null,
-      sourceUpdatedAt: null,
-      dataFreshnessStatus: 'MISSING',
-      productionRiskStatus: 'SOURCE_MISSING'
-    };
-  }
 
   // 1. Fetch production entries for this product
-  const entriesRef = collection(db, 'productionPlanEntries');
-  const qEntries = query(
-    entriesRef,
+  const entries = await getDocuments<ProductionPlanEntry>('productionPlanEntries', [
     where('tenantId', '==', tenantId),
     where('siteId', '==', siteId),
     where('productId', '==', productId)
-  );
-
-  const snapEntries = await getDocs(qEntries);
-  const entries = snapEntries.docs.map(doc => ({ id: doc.id, ...doc.data() } as any as ProductionPlanEntry));
+  ]);
 
   const evalDate = evaluationDate || new Date();
   const evalStartOfDay = new Date(Date.UTC(evalDate.getUTCFullYear(), evalDate.getUTCMonth(), evalDate.getUTCDate(), 0, 0, 0, 0));
@@ -419,17 +384,12 @@ export const obtainCurrentProductionContext = async (
 
   let activeProductionNotes: ProductionLinePlanNote[] = [];
   if (lineIds.length > 0) {
-    const notesRef = collection(db, 'productionLinePlanNotes');
-    const qNotes = query(
-      notesRef,
+    const allNotes = await getDocuments<ProductionLinePlanNote>('productionLinePlanNotes', [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('active', '==', true)
-    );
-    const snapNotes = await getDocs(qNotes);
-    activeProductionNotes = snapNotes.docs
-      .map(d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote))
-      .filter(note => lineIds.includes(note.productionLineId));
+    ]);
+    activeProductionNotes = allNotes.filter(note => lineIds.includes(note.productionLineId));
   }
 
   const importUploadedAtMap = new Map<string, Date>();
@@ -442,10 +402,9 @@ export const obtainCurrentProductionContext = async (
 
   if (sourceImportId) {
     try {
-      const importDocRef = doc(db, 'productionPlanImports', sourceImportId);
-      const importSnap = await getDoc(importDocRef);
-      if (importSnap.exists()) {
-        const uploaded = (importSnap.data() as any).uploadedAt?.toDate ? (importSnap.data() as any).uploadedAt.toDate() : null;
+      const importDoc = await getDocument<any>('productionPlanImports', sourceImportId);
+      if (importDoc) {
+        const uploaded = importDoc.uploadedAt ? new Date(importDoc.uploadedAt) : null;
         if (uploaded) {
           importUploadedAtMap.set(sourceImportId, uploaded);
         }

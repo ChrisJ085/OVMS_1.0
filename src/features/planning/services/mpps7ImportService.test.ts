@@ -9,74 +9,49 @@ import {
 } from './mpps7ImportService';
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
-import { Timestamp, getDocs } from '../../../services/supabaseBase';
+import { getDocuments } from '../../../services/dbService';
 
-// Mock Firebase functions to allow isolated unit testing without live Firestore connection
-vi.mock('../../../services/supabaseBase', async () => {
-  const actual = await vi.importActual('../../../services/supabaseBase');
-  return {
-    ...actual,
-    getDocs: vi.fn().mockImplementation(async () => ({
-      empty: false,
-      docs: [
-        {
-          id: 'p1',
-          data: () => ({
-            productCode: 'PRD-100',
-            productName: 'Standard Beverage 500ml',
-            unitsPerCase: 12,
-            casesPerPallet: 100,
-            status: 'active'
-          })
-        },
-        {
-          id: 'p2',
-          data: () => ({
-            productCode: 'PRD-200',
-            productName: 'Zero Pallet Config SKU',
-            unitsPerCase: 24,
-            casesPerPallet: 0,
-            status: 'active'
-          })
-        },
-        {
-          id: 'p3',
-          data: () => ({
-            productCode: '04310500',
-            productName: 'F1 Andrex Skin Protect 155sc',
-            description: 'F1 Andrex Skin Protect 155sc',
-            unitsPerCase: 16,
-            casesPerPallet: 54,
-            unitOfMeasureId: 'Qt7lJJw9bHQrBBe9iDLG',
-            configurations: [
-              { unitOfMeasureId: 'Qt7lJJw9bHQrBBe9iDLG', casesPerPallet: 54, unitsPerCase: 16 }
-            ],
-            status: 'active'
-          })
-        },
-        {
-          id: 'l1',
-          data: () => ({
-            lineCode: 'LINE-01',
-            name: 'Main Canning Line 1',
-            status: 'active'
-          })
-        }
+// Mock DB functions to allow isolated unit testing
+vi.mock('../../../services/dbService', () => ({
+  where: vi.fn(),
+  getDocuments: vi.fn().mockImplementation(async () => [
+    {
+      id: 'p1',
+      productCode: 'PRD-100',
+      productName: 'Standard Beverage 500ml',
+      unitsPerCase: 12,
+      casesPerPallet: 100,
+      status: 'active'
+    },
+    {
+      id: 'p2',
+      productCode: 'PRD-200',
+      productName: 'Zero Pallet Config SKU',
+      unitsPerCase: 24,
+      casesPerPallet: 0,
+      status: 'active'
+    },
+    {
+      id: 'p3',
+      productCode: '04310500',
+      productName: 'F1 Andrex Skin Protect 155sc',
+      description: 'F1 Andrex Skin Protect 155sc',
+      unitsPerCase: 16,
+      casesPerPallet: 54,
+      unitOfMeasureId: 'Qt7lJJw9bHQrBBe9iDLG',
+      configurations: [
+        { unitOfMeasureId: 'Qt7lJJw9bHQrBBe9iDLG', casesPerPallet: 54, unitsPerCase: 16 }
       ],
-      forEach(cb: any) {
-        this.docs.forEach(cb);
-      }
-    })),
-    collection: vi.fn(),
-    query: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    limit: vi.fn(),
-    doc: vi.fn(),
-    setDoc: vi.fn().mockResolvedValue(undefined),
-    updateDoc: vi.fn().mockResolvedValue(undefined)
-  };
-});
+      status: 'active'
+    },
+    {
+      id: 'l1',
+      lineCode: 'LINE-01',
+      name: 'Main Canning Line 1',
+      status: 'active'
+    }
+  ])
+}));
 
 describe('MPPS7 Import Service Test Suite (12 Scenarios)', () => {
   beforeEach(() => {
@@ -213,20 +188,14 @@ describe('MPPS7 Import Service Test Suite (12 Scenarios)', () => {
 
   // 9. Duplicate Committed File
   it('Scenario 9: Duplicate committed file hash returns DUPLICATE_FOUND status', async () => {
-    vi.mocked(getDocs).mockResolvedValueOnce({
-      empty: false,
-      docs: [
-        {
-          id: 'import-prev-123',
-          data: () => ({
-            originalFilename: 'Standard_MPPS7.xlsx',
-            fileHash: 'hash-committed',
-            status: 'COMMITTED'
-          })
-        }
-      ],
-      forEach: (cb: any) => []
-    } as any);
+    vi.mocked(getDocuments).mockResolvedValueOnce([
+      {
+        id: 'import-prev-123',
+        originalFilename: 'Standard_MPPS7.xlsx',
+        fileHash: 'hash-committed',
+        status: 'COMMITTED'
+      }
+    ] as any);
 
     const duplicateCheck = await verifyDuplicateImport('tenant-1', 'site-1', 'hash-committed');
 
@@ -236,7 +205,7 @@ describe('MPPS7 Import Service Test Suite (12 Scenarios)', () => {
 
   // 10. Duplicate Check Failure
   it('Scenario 10: Duplicate check handles unexpected database check failures gracefully', async () => {
-    vi.mocked(getDocs).mockRejectedValueOnce(new Error('Network error simulated'));
+    vi.mocked(getDocuments).mockRejectedValueOnce(new Error('Network error simulated'));
 
     const duplicateCheck = await verifyDuplicateImport('tenant-1', 'site-1', 'hash-err');
 
@@ -246,23 +215,17 @@ describe('MPPS7 Import Service Test Suite (12 Scenarios)', () => {
 
   // 11. Older Overlapping Plan
   it('Scenario 11: Active plan comparison detects overlapping / older plans', async () => {
-    const activePeriodStart = Timestamp.fromDate(new Date('2026-01-15T00:00:00Z'));
-    const activePeriodEnd = Timestamp.fromDate(new Date('2026-01-25T00:00:00Z'));
+    const activePeriodStart = '2026-01-15T00:00:00Z';
+    const activePeriodEnd = '2026-01-25T00:00:00Z';
 
-    vi.mocked(getDocs).mockResolvedValueOnce({
-      empty: false,
-      docs: [
-        {
-          id: 'active-import-1',
-          data: () => ({
-            periodStart: activePeriodStart,
-            periodEnd: activePeriodEnd,
-            status: 'COMMITTED'
-          })
-        }
-      ],
-      forEach: (cb: any) => []
-    } as any);
+    vi.mocked(getDocuments).mockResolvedValueOnce([
+      {
+        id: 'active-import-1',
+        periodStart: activePeriodStart,
+        periodEnd: activePeriodEnd,
+        status: 'COMMITTED'
+      }
+    ] as any);
 
     const currentStart = new Date('2026-01-10T00:00:00Z');
     const currentEnd = new Date('2026-01-20T00:00:00Z');

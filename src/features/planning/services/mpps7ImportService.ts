@@ -14,7 +14,14 @@ import {
 } from '../../../types/production';
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
-import { Timestamp, collection, db, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from '../../../services/supabaseBase';
+import {
+  createDocument,
+  getDocuments,
+  setDocument,
+  updateDocument,
+  deleteDocument,
+  where
+} from '../../../services/dbService';
 
 // 1. Calculate File Hash
 export const calculateFileHash = async (file: File): Promise<string> => {
@@ -438,14 +445,13 @@ export const parseDateColumnsWithRollover = (
 
 // 7. Products & Production Lines Mapping
 export const matchImportedProducts = async (tenantId: string): Promise<Record<string, Product>> => {
-  if (!db) return {};
   try {
-    const productsRef = collection(db, 'products');
-    const q = query(productsRef, where('tenantId', '==', tenantId), where('status', '==', 'active'));
-    const snap = await getDocs(q);
+    const docs = await getDocuments<Product>('products', [
+      where('tenantId', '==', tenantId),
+      where('status', '==', 'active')
+    ]);
     const productsMap: Record<string, Product> = {};
-    snap.forEach(docSnap => {
-      const product = { id: docSnap.id, ...docSnap.data() } as Product;
+    docs.forEach(product => {
       const rawCode = (product as any).code || product.productCode || '';
       if (rawCode) {
         productsMap[rawCode.trim()] = product;
@@ -461,17 +467,12 @@ export const matchImportedProducts = async (tenantId: string): Promise<Record<st
 };
 
 export const matchProductionLines = async (tenantId: string, siteId: string): Promise<ProductionLine[]> => {
-  if (!db) return [];
   try {
-    const linesRef = collection(db, 'productionLines');
-    const q = query(
-      linesRef,
+    return await getDocuments<ProductionLine>('productionLines', [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('status', '==', 'active')
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as ProductionLine));
+    ]);
   } catch (e) {
     console.error('Failed to match production lines:', e);
     return [];
@@ -502,8 +503,6 @@ export const checkWeeklyMppsImportLimit = async (
   tenantId: string,
   siteId: string
 ): Promise<{ allowed: boolean; countThisWeek: number; maxAllowed: number; message?: string }> => {
-  if (!db) return { allowed: true, countThisWeek: 0, maxAllowed: 2 };
-
   const now = new Date();
   const dayOfWeek = now.getUTCDay(); // 0 is Sunday, 1 is Monday
   const diffToMonday = (dayOfWeek === 0 ? -6 : 1 - dayOfWeek);
@@ -511,25 +510,17 @@ export const checkWeeklyMppsImportLimit = async (
   startOfWeek.setUTCDate(now.getUTCDate() + diffToMonday);
   startOfWeek.setUTCHours(0, 0, 0, 0);
 
-  const importsRef = collection(db, 'productionPlanImports');
-  const q = query(
-    importsRef,
+  const docs = await getDocuments<any>('productionPlanImports', [
     where('tenantId', '==', tenantId),
     where('siteId', '==', siteId),
     where('status', '==', 'COMMITTED')
-  );
+  ]);
 
-  const snap = await getDocs(q);
   const startOfWeekMs = startOfWeek.getTime();
 
   let countThisWeek = 0;
-  snap.docs.forEach(d => {
-    const data = d.data();
-    const uploadedAt = data.uploadedAt?.toDate
-      ? data.uploadedAt.toDate()
-      : (data.createdDate?.toDate
-          ? data.createdDate.toDate()
-          : new Date(data.uploadedAt || data.createdDate || 0));
+  docs.forEach(data => {
+    const uploadedAt = data.uploadedAt ? new Date(data.uploadedAt) : new Date(data.createdDate || 0);
     if (uploadedAt && uploadedAt.getTime() >= startOfWeekMs) {
       countThisWeek++;
     }
@@ -553,22 +544,16 @@ export const verifyDuplicateImport = async (
   siteId: string,
   fileHash: string
 ): Promise<{ status: DuplicateCheckStatus; message: string; duplicateImportId?: string }> => {
-  if (!db) {
-    return { status: 'CHECK_FAILED', message: 'Firestore connection unavailable.' };
-  }
   try {
-    const importsRef = collection(db, 'productionPlanImports');
-    const dupQuery = query(
-      importsRef,
+    const docs = await getDocuments<any>('productionPlanImports', [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('fileHash', '==', fileHash),
-      where('status', '==', 'COMMITTED'),
-      limit(1)
-    );
-    const dupSnap = await getDocs(dupQuery);
-    if (!dupSnap.empty) {
-      const dupDoc = dupSnap.docs[0];
+      where('status', '==', 'COMMITTED')
+    ]);
+
+    if (docs.length > 0) {
+      const dupDoc = docs[0];
       return {
         status: 'DUPLICATE_FOUND',
         message: `Identical file hash committed previously (Import ID: ${dupDoc.id}).`,
@@ -589,27 +574,21 @@ export const evaluatePlanComparison = async (
   newStart: Date,
   newEnd: Date
 ): Promise<{ status: PlanComparisonStatus; message: string; activeStart?: string; activeEnd?: string }> => {
-  if (!db) {
-    return { status: 'NEWER_NON_OVERLAPPING', message: 'Firestore unavailable for active plan comparison.' };
-  }
   try {
-    const importsRef = collection(db, 'productionPlanImports');
-    const activeQuery = query(
-      importsRef,
+    const docs = await getDocuments<ProductionPlanImport>('productionPlanImports', [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
-      where('status', '==', 'COMMITTED'),
-      limit(20)
-    );
-    const activeSnap = await getDocs(activeQuery);
-    if (activeSnap.empty) {
+      where('status', '==', 'COMMITTED')
+    ]);
+
+    if (docs.length === 0) {
       return { status: 'NEWER_NON_OVERLAPPING', message: 'No active committed plans exist in system.' };
     }
 
-    const importsList = activeSnap.docs.map(d => d.data() as ProductionPlanImport);
+    const importsList = [...docs];
     importsList.sort((a, b) => {
-      const tA = a.periodStart ? (typeof a.periodStart === 'string' ? new Date(a.periodStart).getTime() : ((a.periodStart as any).toMillis ? (a.periodStart as any).toMillis() : new Date(a.periodStart as any).getTime())) : 0;
-      const tB = b.periodStart ? (typeof b.periodStart === 'string' ? new Date(b.periodStart).getTime() : ((b.periodStart as any).toMillis ? (b.periodStart as any).toMillis() : new Date(b.periodStart as any).getTime())) : 0;
+      const tA = a.periodStart ? new Date(a.periodStart as any).getTime() : 0;
+      const tB = b.periodStart ? new Date(b.periodStart as any).getTime() : 0;
       return tB - tA;
     });
     const activeDoc = importsList[0];
@@ -1255,56 +1234,15 @@ export const createImportPreview = async (
   };
 };
 
-// Batch Manager helper to prevent exceeding Firestore's 500 operations per batch limit
-class BatchManager {
-  private batch = writeBatch(db);
-  private count = 0;
-
-  async set(ref: any, data: any) {
-    this.batch.set(ref, data);
-    this.count++;
-    if (this.count >= 400) {
-      await this.flush();
-    }
-  }
-
-  async update(ref: any, data: any) {
-    this.batch.update(ref, data);
-    this.count++;
-    if (this.count >= 400) {
-      await this.flush();
-    }
-  }
-
-  async delete(ref: any) {
-    this.batch.delete(ref);
-    this.count++;
-    if (this.count >= 400) {
-      await this.flush();
-    }
-  }
-
-  async flush() {
-    if (this.count > 0) {
-      await this.batch.commit();
-      this.batch = writeBatch(db);
-      this.count = 0;
-    }
-  }
-}
-
 // 11. Commit Production Plan Import
 export const commitProductionPlanImport = async (
   preview: ParsedPlanPreview,
   notes: string = ''
 ): Promise<string> => {
-  if (!db) throw new Error('Firestore is not initialized.');
-
   if (preview.summary.errorCount > 0) {
     throw new Error(`Cannot commit production plan import with ${preview.summary.errorCount} blocking error(s). Please resolve all errors before committing.`);
   }
 
-  const importsRef = collection(db, 'productionPlanImports');
   const importId = `imp_${Math.random().toString(36).substring(2, 11)}`;
 
   const importDoc: ProductionPlanImport = {
@@ -1312,20 +1250,17 @@ export const commitProductionPlanImport = async (
     id: importId,
     status: 'COMMITTED',
     notes: notes || preview.summary.notes,
-    createdDate: Timestamp.fromDate(new Date()),
-    modifiedDate: Timestamp.fromDate(new Date())
+    createdDate: new Date().toISOString() as any,
+    modifiedDate: new Date().toISOString() as any
   };
 
-  const batchMgr = new BatchManager();
-
-  await batchMgr.set(doc(importsRef, importId), importDoc);
+  await setDocument('productionPlanImports', importId, importDoc);
 
   for (const row of preview.rows) {
-    const rowRef = doc(collection(db, `productionPlanImports/${importId}/rows`));
-    await batchMgr.set(rowRef, {
+    await createDocument(`productionPlanImports/${importId}/rows`, {
       ...row,
       importId,
-      createdDate: serverTimestamp()
+      createdDate: new Date().toISOString()
     });
   }
 
@@ -1334,11 +1269,9 @@ export const commitProductionPlanImport = async (
     preview.summary.siteId,
     preview.summary.periodStart,
     preview.summary.periodEnd,
-    importId,
-    batchMgr
+    importId
   );
 
-  const entriesRef = collection(db, 'productionPlanEntries');
   for (const row of preview.rows) {
     if (row.rowStatus === 'ERROR' || !row.matchedProductId || !row.productionLineCode) continue;
 
@@ -1358,20 +1291,17 @@ export const commitProductionPlanImport = async (
       sourceType: 'SAP_MPPS7',
       sourceSheetName: row.sourceSheetName,
       sourceRowNumber: row.sourceRowNumber,
-      sourceUpdatedAt: Timestamp.fromDate(new Date()),
+      sourceUpdatedAt: new Date().toISOString() as any,
       planVersion: '2.0',
       status: 'PLANNED'
     };
 
-    const newEntryRef = doc(entriesRef);
-    await batchMgr.set(newEntryRef, {
+    await createDocument('productionPlanEntries', {
       ...entryDoc,
-      createdDate: serverTimestamp(),
-      modifiedDate: serverTimestamp()
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString()
     });
   }
-
-  await batchMgr.flush();
 
   // Log Audit Event for MPPS/SAP Ingestion
   try {
@@ -1401,48 +1331,37 @@ export const commitProductionPlanImport = async (
 export const supersedePreviousProductionPlan = async (
   tenantId: string,
   siteId: string,
-  periodStart: Timestamp,
-  periodEnd: Timestamp,
-  newImportId: string,
-  batchMgr: any
+  periodStart: any,
+  periodEnd: any,
+  newImportId: string
 ): Promise<void> => {
-  if (!db) return;
-
   try {
-    const entriesRef = collection(db, 'productionPlanEntries');
-    const qEntries = query(
-      entriesRef,
+    const entries = await getDocuments<any>('productionPlanEntries', [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId)
-    );
+    ]);
 
     const startMs = toEpochMillis(periodStart) || 0;
     const endMs = toEpochMillis(periodEnd) || 0;
 
-    const snapEntries = await getDocs(qEntries);
-    for (const docSnap of snapEntries.docs) {
-      const entryData = docSnap.data();
+    for (const entryData of entries) {
       if (entryData.productionDate) {
         const pMillis = toEpochMillis(entryData.productionDate) || 0;
         if (pMillis >= startMs && pMillis <= endMs) {
           if (entryData.activeImportId !== newImportId && entryData.status === 'PLANNED') {
-            await batchMgr.delete(docSnap.ref);
+            await deleteDocument('productionPlanEntries', entryData.id);
           }
         }
       }
     }
 
-    const importsRef = collection(db, 'productionPlanImports');
-    const qImports = query(
-      importsRef,
+    const imports = await getDocuments<ProductionPlanImport>('productionPlanImports', [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('status', '==', 'COMMITTED')
-    );
+    ]);
 
-    const snapImports = await getDocs(qImports);
-    for (const docSnap of snapImports.docs) {
-      const impData = docSnap.data() as ProductionPlanImport;
+    for (const impData of imports) {
       const impStartMs = toEpochMillis(impData.periodStart) || 0;
       const impEndMs = toEpochMillis(impData.periodEnd) || 0;
       if (
@@ -1450,10 +1369,10 @@ export const supersedePreviousProductionPlan = async (
         impStartMs <= endMs &&
         impEndMs >= startMs
       ) {
-        await batchMgr.update(docSnap.ref, {
+        await updateDocument('productionPlanImports', impData.id, {
           status: 'SUPERSEDED',
           supersedesImportId: newImportId,
-          modifiedDate: serverTimestamp()
+          modifiedDate: new Date().toISOString()
         });
       }
     }

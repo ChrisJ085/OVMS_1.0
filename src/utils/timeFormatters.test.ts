@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { formatRelativeTime, formatRecLastGenerated, toEpochMillis } from './timeFormatters';
-import { Timestamp } from '../services/supabaseBase';
 
 describe('timeFormatters', () => {
   const baseNow = 1700000000000; // Fixed timestamp in ms
@@ -20,11 +19,11 @@ describe('timeFormatters', () => {
       expect(toEpochMillis(d)).toBe(1700000000000);
     });
 
-    it('handles Firestore Timestamp like objects', () => {
+    it('handles Timestamp-like objects', () => {
       const ts = {
         toMillis: () => 1700000000000,
         toDate: () => new Date(1700000000000)
-      } as unknown as Timestamp;
+      } as any;
       expect(toEpochMillis(ts)).toBe(1700000000000);
     });
   });

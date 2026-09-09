@@ -1,6 +1,6 @@
 import { toEpochMillis, formatRelativeTime } from '../../../utils/timeFormatters';
 import { SiteSettings } from '../../../types/settings';
-import { getDocument, getDocuments } from '../../../services/supabaseBase';
+import { getDocument, getDocuments } from '../../../services/dbService';
 
 export type FreshnessStatus = 'FRESH' | 'AGING' | 'STALE' | 'MISSING';
 

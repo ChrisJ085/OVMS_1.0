@@ -1,7 +1,7 @@
 import { ProductionLine } from '../../../types/configuration';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
-import { createDocument, db, doc, getDoc, updateDoc } from '../../../services/supabaseBase';
+import { getDocument, createDocument, updateDocument } from '../../../services/dbService';
 
 export interface CreateProductionLineInput {
   lineCode: string;
@@ -20,22 +20,17 @@ export const addSapAliasToLine = async (
   siteId: string,
   userProfileName: string
 ): Promise<ServiceResult<void>> => {
-  if (!db) {
-    return { success: false, error: 'Database connection unavailable.' };
-  }
   try {
     const cleanAlias = sapAlias.trim().toUpperCase();
     if (!cleanAlias) {
       return { success: false, error: 'SAP alias cannot be empty.' };
     }
 
-    const lineRef = doc(db, COLLECTION_NAME, lineId);
-    const lineSnap = await getDoc(lineRef);
-    if (!lineSnap.exists()) {
+    const lineData = await getDocument<ProductionLine>(COLLECTION_NAME, lineId);
+    if (!lineData) {
       return { success: false, error: `Production line with ID ${lineId} not found.` };
     }
 
-    const lineData = lineSnap.data() as ProductionLine;
     const existingAliases = Array.isArray(lineData.sapResourceAliases)
       ? lineData.sapResourceAliases
       : [];
@@ -45,9 +40,8 @@ export const addSapAliasToLine = async (
     }
 
     const updatedAliases = [...existingAliases, cleanAlias];
-    await updateDoc(lineRef, {
-      sapResourceAliases: updatedAliases,
-      modifiedDate: new Date()
+    await updateDocument(COLLECTION_NAME, lineId, {
+      sapResourceAliases: updatedAliases
     });
 
     await logAuditEvent({

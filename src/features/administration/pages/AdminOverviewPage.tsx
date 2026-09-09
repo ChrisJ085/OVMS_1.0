@@ -36,7 +36,6 @@ import { useEnvironmentMode } from '../../../contexts/EnvironmentModeContext';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { seedTestDataForTesting } from '../../planning/services/testDataSeeder';
 import { getDocument, getDocuments, where } from '../../../services/dbService';
-import { supabase } from '../../../config/supabase';
 import { toSnakeCase } from '../../../utils/caseTransformers';
 
 export const AdminOverviewPage: React.FC = () => {
@@ -439,7 +438,7 @@ export const AdminOverviewPage: React.FC = () => {
         throw new Error(fullMsg);
       }
 
-      setCreatingUserMsg(`Success! ${apiData.message || `User account and Firestore profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
+      setCreatingUserMsg(`Success! ${apiData.message || `User account and database profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
 
       // Reset form
       setNewUserEmail('');
@@ -451,7 +450,7 @@ export const AdminOverviewPage: React.FC = () => {
       console.error('Provisioning user failed:', apiErr);
       let errorText = apiErr.message || 'Failed to create user account.';
       if (apiErr.message?.includes('already exists') || apiErr.code === 'already-exists') {
-        errorText = 'An account with this email address already exists in Firebase Authentication or Firestore.';
+        errorText = 'An account with this email address already exists in Supabase.';
       } else if (apiErr.message?.includes('Forbidden') || apiErr.message?.includes('permission-denied')) {
         errorText = `Permission denied: ${apiErr.message}`;
       }

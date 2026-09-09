@@ -42,39 +42,36 @@ let mockImportDocs: any[] = [];
 let mockEntriesDocs: any[] = [];
 let mockQueryError: Error | null = null;
 
-vi.mock('../services/supabaseBase', () => ({
-  db: {},
-  doc: vi.fn(),
-  getFirestore: vi.fn(),
-  getDoc: vi.fn(() => Promise.resolve({ exists: () => false })),
-  collection: vi.fn(),
-  query: vi.fn(),
+vi.mock('../services/dbService', () => ({
   where: vi.fn(),
   orderBy: vi.fn(),
   limit: vi.fn(),
-  onSnapshot: (q: any, cb: any, errCb?: any) => {
+  subscribeToCollection: (col: string, constraints: any[], cb: any, errCb?: any) => {
     if (mockQueryError && errCb) {
       errCb(mockQueryError);
       return () => {};
     }
-    // Simulate initial snapshot supporting both collection and doc queries
-    let docs = mockPrioritiesDocs;
-    cb({ docs, exists: () => false, data: () => ({}) });
+    let docs: any[] = [];
+    if (col === 'displayPriorities' || col === 'priorities') docs = mockPrioritiesDocs.map(d => d.data ? d.data() : d);
+    else if (col === 'operationalExceptions') docs = mockExceptionsDocs.map(d => d.data ? d.data() : d);
+    else if (col === 'announcements') docs = mockAnnouncementsDocs.map(d => d.data ? d.data() : d);
+    cb(docs);
     return () => {};
   },
-  getDocs: async () => {
+  getDocuments: async (col: string) => {
     if (mockQueryError) {
       throw mockQueryError;
     }
-    return {
-      empty: mockImportDocs.length === 0,
-      size: mockRecommendationsDocs.length,
-      docs: mockRecommendationsDocs,
-    };
+    if (col === 'recommendations') return mockRecommendationsDocs.map(d => d.data ? d.data() : d);
+    if (col === 'productionPlanImports') return mockImportDocs.map(d => d.data ? d.data() : d);
+    if (col === 'productionPlanEntries') return mockEntriesDocs.map(d => d.data ? d.data() : d);
+    return [];
   },
-  Timestamp: {
-    now: () => ({ toMillis: () => Date.now(), toDate: () => new Date() }),
-  },
+  getDocument: async () => null,
+  updateDocument: async () => {},
+  setDocument: async () => {},
+  createDocument: async () => {},
+  deleteDocument: async () => {},
 }));
 
 describe('OperationalOverviewPage Test Suite', () => {

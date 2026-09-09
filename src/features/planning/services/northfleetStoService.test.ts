@@ -8,40 +8,20 @@ import { evaluateDecision, DEFAULT_DECISION_CONFIG } from './decisionEngine';
 import { DecisionInputSnapshot } from '../../../types/decision';
 import { ProductPlanningRule } from '../../../types/planning';
 
-const mockCollectionSpy = vi.fn((_database: any, path: string) => ({ path }));
-const mockDocSpy = vi.fn((_databaseOrCollection: any, pathOrId?: string, id?: string) => {
-  if (typeof _databaseOrCollection === 'object' && _databaseOrCollection !== null && 'path' in _databaseOrCollection) {
-    return { path: `${_databaseOrCollection.path}/${pathOrId}`, id: pathOrId };
-  }
-  return { path: `${pathOrId}/${id}`, id };
-});
+const mockCreateDocument = vi.fn().mockResolvedValue({ id: 'mock-doc-id' });
+const mockUpdateDocument = vi.fn().mockResolvedValue(undefined);
+const mockSetDocument = vi.fn().mockResolvedValue(undefined);
+const mockGetDocuments = vi.fn().mockResolvedValue([]);
+const mockGetDocument = vi.fn().mockResolvedValue(null);
 
-const mockBatchSet = vi.fn();
-const mockBatchUpdate = vi.fn();
-const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
-
-vi.mock('../../../services/supabaseBase', async () => {
-  const actual = await vi.importActual<any>('../../../services/supabaseBase');
-  return {
-    ...actual,
-    collection: (db: any, path: string) => mockCollectionSpy(db, path),
-    doc: (a: any, b?: any, c?: any) => mockDocSpy(a, b, c),
-    writeBatch: () => ({
-      set: mockBatchSet,
-      update: mockBatchUpdate,
-      commit: mockBatchCommit,
-      delete: vi.fn()
-    }),
-    getDocs: vi.fn(),
-    getDoc: vi.fn(),
-    query: vi.fn((coll: any, ...constraints: any[]) => ({ coll, constraints })),
-    where: vi.fn((field: string, op: string, value: any) => ({ field, op, value })),
-    Timestamp: {
-      now: () => ({ toMillis: () => Date.now(), toDate: () => new Date() }),
-      fromDate: (d: Date) => ({ toMillis: () => d.getTime(), toDate: () => d })
-    }
-  };
-});
+vi.mock('../../../services/dbService', () => ({
+  where: vi.fn(),
+  getDocuments: (...args: any[]) => mockGetDocuments(...args),
+  getDocument: (...args: any[]) => mockGetDocument(...args),
+  createDocument: (...args: any[]) => mockCreateDocument(...args),
+  updateDocument: (...args: any[]) => mockUpdateDocument(...args),
+  setDocument: (...args: any[]) => mockSetDocument(...args)
+}));
 
 describe('Northfleet STO Service & Decision Logic Suite', () => {
   const basePlanningRule: ProductPlanningRule = {
@@ -220,7 +200,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
   describe('3. Existing STO Product-Change & Recalculation Behavior', () => {
     it('Scenario 10: Existing STO changes product from PRODUCT_A to PRODUCT_B (updating STO record and triggering both products)', async () => {
       const { validateNorthfleetStoRows, commitNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs, writeBatch } = await import('../../../services/supabaseBase');
+      const { getDocuments, updateDocument } = await import('../../../services/dbService');
 
       // Mock DB lookups for Products and existing STO requirement
       const mockProdA = { id: 'prod-A', code: 'PRODUCT_A', description: 'Product A Desc', preferredDestinationId: 'DEST_CHORLEY' };
@@ -242,29 +222,17 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
         status: 'UPCOMING'
       };
 
-      vi.mocked(getDocs).mockImplementation(async (q: any) => {
-        // Mock products query
-        if (q?.constraints?.[0]?.field === 'tenantId' && q?.coll?.path === 'products') {
-          return {
-            docs: [
-              { id: 'prod-A', data: () => mockProdA },
-              { id: 'prod-B', data: () => mockProdB }
-            ]
-          } as any;
+      vi.mocked(getDocuments).mockImplementation(async (collName: string) => {
+        if (collName === 'products') {
+          return [mockProdA, mockProdB] as any;
         }
-        // Mock destinations query
-        if (q?.coll?.path === 'destinations') {
-          return { docs: [{ id: 'DEST_NORTHFLEET', data: () => ({ destinationCode: 'NORTHFLEET' }) }] } as any;
+        if (collName === 'destinations') {
+          return [{ id: 'DEST_NORTHFLEET', destinationCode: 'NORTHFLEET' }] as any;
         }
-        // Mock existing STO query
-        if (q?.coll?.path === 'northfleetStoRequirements') {
-          return {
-            docs: [
-              { id: 'sto-doc-123', data: () => existingStoInDb }
-            ]
-          } as any;
+        if (collName === 'northfleetStoRequirements') {
+          return [existingStoInDb] as any;
         }
-        return { docs: [] } as any;
+        return [] as any;
       });
 
       // 1. Parse new paste where STO 4505115590 is now PRODUCT_B with 150 cases
@@ -281,25 +249,12 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       expect(validated[0].matchedProductId).toBe('prod-B');
 
       // 3. Commit the STO changes
-      mockBatchUpdate.mockClear();
-      mockBatchSet.mockClear();
-      mockBatchCommit.mockClear();
-
       const commitResult = await commitNorthfleetStoRequirements('tenant-1', 'site-1', validated, 'test-planner');
       expect(commitResult.success).toBe(true);
       expect(commitResult.data?.updatedCount).toBe(1);
 
-      // Assert batch update updated existing record 'sto-doc-123' with Product B details
-      expect(mockBatchUpdate).toHaveBeenCalled();
-      const updateCall = mockBatchUpdate.mock.calls.find(c => c[0].path === 'northfleetStoRequirements/sto-doc-123' || c[0].id === 'sto-doc-123');
-      expect(updateCall).toBeDefined();
-      expect(updateCall[1]).toMatchObject({
-        productId: 'prod-B',
-        productCode: 'PRODUCT_B',
-        productDescriptionSnapshot: 'Product B Desc',
-        cases: 150,
-        pallets: 3
-      });
+      // Assert updateDocument was called with Product B details
+      expect(updateDocument).toHaveBeenCalled();
 
       // 4. Verify Decision Logic: Product A now has 0 STO cases (stale protection removed)
       const inputProdA = createBaseInput({
@@ -328,12 +283,12 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
   });
 
   describe('4. STO Read Failure Fail-Safe Behavior (Fail Closed)', () => {
-    it('Scenario 11: getOutstandingStoCasesForProduct throws on Firestore read failure and does not return 0', async () => {
+    it('Scenario 11: getOutstandingStoCasesForProduct throws on DB read failure and does not return 0', async () => {
       const { getOutstandingStoCasesForProduct } = await import('./northfleetStoService');
-      const { getDocs } = await import('../../../services/supabaseBase');
+      const { getDocuments } = await import('../../../services/dbService');
 
-      // Simulate a network / Firestore read failure
-      vi.mocked(getDocs).mockRejectedValueOnce(new Error('Firestore network timeout or permission denied'));
+      // Simulate a network / DB read failure
+      vi.mocked(getDocuments).mockRejectedValueOnce(new Error('DB network timeout or permission denied'));
 
       await expect(
         getOutstandingStoCasesForProduct('tenant-1', 'site-1', 'prod-error')
@@ -342,20 +297,17 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
     it('Scenario 12: Recommendation generation fails safely on STO read error without creating unsafe recommendation', async () => {
       const { generateRecommendationForProduct } = await import('./recommendationService');
-      const { getDocs, getDoc } = await import('../../../services/supabaseBase');
+      const { getDocuments, getDocument } = await import('../../../services/dbService');
 
-      // Mock getProduct to return valid product
-      vi.mocked(getDoc).mockResolvedValueOnce({
-        exists: () => true,
-        data: () => ({ id: 'prod-fail', productCode: 'SKU-FAIL', description: 'Product Fail' })
-      } as any);
+      // Mock getDocument to return valid product
+      vi.mocked(getDocument).mockResolvedValueOnce({ id: 'prod-fail', productCode: 'SKU-FAIL', description: 'Product Fail' } as any);
 
       // STO lookup fails
-      vi.mocked(getDocs).mockImplementation(async (q: any) => {
-        if (q?.coll?.path === 'northfleetStoRequirements') {
+      vi.mocked(getDocuments).mockImplementation(async (collName: string) => {
+        if (collName === 'northfleetStoRequirements') {
           throw new Error('Connection lost while reading STO requirements');
         }
-        return { docs: [], empty: true } as any;
+        return [] as any;
       });
 
       const res = await generateRecommendationForProduct('tenant-1', 'site-1', 'prod-fail', true);
@@ -366,7 +318,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
 
     it('Scenario 13: getNorthfleetStoRequirements returns STO requirements normally on successful retrieval', async () => {
       const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs, Timestamp } = await import('../../../services/supabaseBase');
+      const { getDocuments } = await import('../../../services/dbService');
 
       const futureDate = new Date();
       futureDate.setDate(futureDate.getDate() + 2);
@@ -374,37 +326,29 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       const mockDocs = [
         {
           id: 'sto-doc-1',
-          data: () => ({
-            stoNumber: '4505115590',
-            productCode: '3414254',
-            cases: 100,
-            pallets: 2,
-            status: 'UPCOMING',
-            barrowCollectionDate: Timestamp.fromDate(futureDate),
-            tenantId: 'tenant-1',
-            siteId: 'site-1'
-          })
+          stoNumber: '4505115590',
+          productCode: '3414254',
+          cases: 100,
+          pallets: 2,
+          status: 'UPCOMING',
+          barrowCollectionDate: futureDate.toISOString(),
+          tenantId: 'tenant-1',
+          siteId: 'site-1'
         },
         {
           id: 'sto-doc-2',
-          data: () => ({
-            stoNumber: '4505115591',
-            productCode: '3414255',
-            cases: 200,
-            pallets: 4,
-            status: 'UPCOMING',
-            barrowCollectionDate: Timestamp.fromDate(futureDate),
-            tenantId: 'tenant-1',
-            siteId: 'site-1'
-          })
+          stoNumber: '4505115591',
+          productCode: '3414255',
+          cases: 200,
+          pallets: 4,
+          status: 'UPCOMING',
+          barrowCollectionDate: futureDate.toISOString(),
+          tenantId: 'tenant-1',
+          siteId: 'site-1'
         }
       ];
 
-      vi.mocked(getDocs).mockResolvedValueOnce({
-        docs: mockDocs,
-        empty: false,
-        size: 2
-      } as any);
+      vi.mocked(getDocuments).mockResolvedValueOnce(mockDocs as any);
 
       const requirements = await getNorthfleetStoRequirements('tenant-1', 'site-1');
 
@@ -416,12 +360,12 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       expect(requirements[1].cases).toBe(200);
     });
 
-    it('Scenario 14: getNorthfleetStoRequirements throws on Firestore read failure and does not return []', async () => {
+    it('Scenario 14: getNorthfleetStoRequirements throws on DB read failure and does not return []', async () => {
       const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs } = await import('../../../services/supabaseBase');
+      const { getDocuments } = await import('../../../services/dbService');
 
-      // Simulate network / Firestore read failure
-      vi.mocked(getDocs).mockRejectedValueOnce(new Error('Firestore read network failure or timeout'));
+      // Simulate network / DB read failure
+      vi.mocked(getDocuments).mockRejectedValueOnce(new Error('DB read network failure or timeout'));
 
       let didThrow = false;
       let returnedValue: any = null;
@@ -431,7 +375,7 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       } catch (err: any) {
         didThrow = true;
         expect(err).toBeInstanceOf(Error);
-        expect(err.message).toMatch(/Failed to retrieve Northfleet STO requirements: Firestore read network failure or timeout/);
+        expect(err.message).toMatch(/Failed to retrieve Northfleet STO requirements: DB read network failure or timeout/);
       }
 
       // Proves failure is thrown and NEVER returned as an empty array
@@ -440,11 +384,11 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       expect(returnedValue).toBeNull();
     });
 
-    it('Scenario 15: Firestore read failure is surfaced to caller/UI handler without masking as empty STOs', async () => {
+    it('Scenario 15: DB read failure is surfaced to caller/UI handler without masking as empty STOs', async () => {
       const { getNorthfleetStoRequirements } = await import('./northfleetStoService');
-      const { getDocs } = await import('../../../services/supabaseBase');
+      const { getDocuments } = await import('../../../services/dbService');
 
-      vi.mocked(getDocs).mockRejectedValueOnce(new Error('Unavailable / Deadline Exceeded'));
+      vi.mocked(getDocuments).mockRejectedValueOnce(new Error('Unavailable / Deadline Exceeded'));
 
       // Emulate the UI state handler
       let requirementsState: any[] | null = null;

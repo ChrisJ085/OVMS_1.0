@@ -1,5 +1,5 @@
 import { DecisionConfiguration } from '../../../types/decision';
-import { getDocument, getDocuments, createDocument, setDocument, serverTimestamp } from '../../../services/supabaseBase';
+import { getDocument, getDocuments, createDocument, setDocument } from '../../../services/dbService';
 
 export const saveDecisionConfiguration = async (
   tenantId: string,
@@ -12,7 +12,7 @@ export const saveDecisionConfiguration = async (
       ...configData,
       tenantId,
       siteId,
-      updatedAt: serverTimestamp()
+      updatedAt: new Date().toISOString()
     });
     return { success: true };
   } catch (err: any) {
@@ -43,7 +43,7 @@ export const ensureDefaultDecisionConfiguration = async (
           colourToken,
           iconKey,
           status: 'active',
-          createdDate: serverTimestamp()
+          createdDate: new Date().toISOString()
         });
         found = { id: newId, code, label, status: 'active' };
         actionDocs.push(found);
@@ -68,7 +68,7 @@ export const ensureDefaultDecisionConfiguration = async (
           label,
           level,
           status: 'active',
-          createdDate: serverTimestamp()
+          createdDate: new Date().toISOString()
         });
         found = { id: newId, code, label, status: 'active' };
         priorityDocs.push(found);
@@ -292,7 +292,7 @@ export const autoConfigureDecisionSettings = async (
           colourToken,
           iconKey,
           status: 'active',
-          createdDate: serverTimestamp()
+          createdDate: new Date().toISOString()
         });
         found = { id: newId, code, label, status: 'active' };
         actionDocs.push(found);
@@ -320,7 +320,7 @@ export const autoConfigureDecisionSettings = async (
           label,
           level,
           status: 'active',
-          createdDate: serverTimestamp()
+          createdDate: new Date().toISOString()
         });
         found = { id: newId, code, label, status: 'active' };
         priorityDocs.push(found);
@@ -354,7 +354,7 @@ export const autoConfigureDecisionSettings = async (
         destinationCode: 'CH',
         destinationName: 'Chester Hub',
         status: 'active',
-        createdDate: serverTimestamp()
+        createdDate: new Date().toISOString()
       });
       defaultDestinationId = destId;
       recordsCreated.push(`Destination: Chester Hub (CH)`);

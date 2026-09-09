@@ -20,7 +20,15 @@ import { RecommendationAuditSnapshot } from '../../../types/audit';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { getOutstandingStoCasesForProduct } from './northfleetStoService';
-import { Timestamp, collection, db, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from '../../../services/supabaseBase';
+import {
+  createDocument,
+  deleteDocument,
+  getDocument,
+  getDocuments,
+  setDocument,
+  updateDocument,
+  where
+} from '../../../services/dbService';
 
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const PROMOTIONS_COLLECTION = 'promotions';
@@ -57,19 +65,12 @@ export interface GenerateRecommendationResponse extends ServiceResult<string | n
 }
 
 
-export const getSiteRecommendationRunRef = (tenantId: string, siteId: string) => {
-  return doc(db, SITE_RECOMMENDATION_RUNS_COLLECTION, `${tenantId}_${siteId}`);
-};
-
 export const fetchSiteRecommendationRun = async (
   tenantId: string,
   siteId: string
 ): Promise<SiteRecommendationRun | null> => {
   try {
-    const ref = getSiteRecommendationRunRef(tenantId, siteId);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
-    return { id: snap.id, ...snap.data() } as SiteRecommendationRun;
+    return await getDocument<SiteRecommendationRun>(SITE_RECOMMENDATION_RUNS_COLLECTION, `${tenantId}_${siteId}`);
   } catch (err) {
     console.error('Error fetching site recommendation run:', err);
     return null;
@@ -213,28 +214,22 @@ export const generateRecommendationForProduct = async (
         }
       });
     } else {
-      const promoRulesQuery = query(
-        collection(db, PROMOTION_RULES_COLLECTION),
+      const rules = await getDocuments<PromotionProductRule>(PROMOTION_RULES_COLLECTION, [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
         where('productId', '==', productId),
         where('status', '==', 'active')
-      );
-      const promoRulesSnap = await getDocs(promoRulesQuery);
-      const rules = promoRulesSnap.docs.map(d => ({ id: d.id, ...d.data() } as PromotionProductRule));
+      ]);
       
       if (rules.length > 0) {
         const promoIds = [...new Set(rules.map(r => r.promotionId))];
         if (promoIds.length > 0) {
-          const promosQuery = query(
-            collection(db, PROMOTIONS_COLLECTION),
-            where('tenantId', '==', tenantId),
-            where('__name__', 'in', promoIds)
-          );
-          const promosSnap = await getDocs(promosQuery);
+          const allPromos = await getDocuments<Promotion>(PROMOTIONS_COLLECTION, [
+            where('tenantId', '==', tenantId)
+          ]);
           const promosMap = new Map();
-          promosSnap.docs.forEach(d => {
-            const promo = withPhase({ id: d.id, ...d.data() } as Promotion);
+          allPromos.filter(p => promoIds.includes(p.id)).forEach(d => {
+            const promo = withPhase(d);
             if (promo.promotionStatus !== 'CANCELLED' && promo.promotionStatus !== 'COMPLETED' && promo.phase !== 'INACTIVE') {
               promosMap.set(d.id, promo);
             }
@@ -268,7 +263,7 @@ export const generateRecommendationForProduct = async (
       productCodeSnapshot: product.productCode,
       inventoryTotal: inventory ? inventory.totalQuantity : 0,
       inventoryByLocation: inventory ? inventory.balances : [],
-      inventoryUpdatedAt: inventory && inventory.balances.length > 0 ? (inventory.balances[0].modifiedDate as any)?.toDate?.() || new Date() : new Date(),
+      inventoryUpdatedAt: inventory && inventory.balances.length > 0 ? (inventory.balances[0].modifiedDate as any) || new Date() : new Date(),
       planningRule,
       productionContext,
       activePromotionImpacts,
@@ -287,17 +282,13 @@ export const generateRecommendationForProduct = async (
     if (preloadedContext?.activeRecommendationsByProductId) {
       existingRec = preloadedContext.activeRecommendationsByProductId.get(productId) || null;
     } else {
-      const existingQuery = query(
-        collection(db, RECOMMENDATIONS_COLLECTION),
+      const existingRecs = await getDocuments<any>(RECOMMENDATIONS_COLLECTION, [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
-        where('productId', '==', productId),
-        where('recommendationStatus', 'in', ['AWAITING_REVIEW', 'AUTO_PUBLISHED', 'APPROVED'])
-      );
-      const existingSnap = await getDocs(existingQuery);
-      if (!existingSnap.empty) {
-        existingRec = { id: existingSnap.docs[0].id, ...existingSnap.docs[0].data() };
-      }
+        where('productId', '==', productId)
+      ]);
+      const validStatuses = ['AWAITING_REVIEW', 'AUTO_PUBLISHED', 'APPROVED'];
+      existingRec = existingRecs.find(r => validStatuses.includes(r.recommendationStatus)) || null;
     }
 
     if (existingRec) {
@@ -308,43 +299,31 @@ export const generateRecommendationForProduct = async (
     }
 
     // 4. Create new recommendation and push directly to warehouse priorities
-    const batch = writeBatch(db);
-    
     if (existingRec) {
-      const existingRef = doc(db, RECOMMENDATIONS_COLLECTION, existingRec.id);
-      batch.update(existingRef, { 
+      await updateDocument(RECOMMENDATIONS_COLLECTION, existingRec.id, { 
         recommendationStatus: 'SUPERSEDED',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: new Date().toISOString(),
         modifiedBy: 'system'
       });
     }
 
-    const newRef = doc(collection(db, RECOMMENDATIONS_COLLECTION));
-    const recId = newRef.id;
+    const recId = `rec_${Math.random().toString(36).substring(2, 11)}`;
 
     // Check if an existing operational priority exists for this product
-    let activePriorities: { id: string; ref: any; data: Priority }[] = [];
+    let activePriorities: { id: string; data: Priority }[] = [];
     if (preloadedContext?.activePrioritiesByProductId) {
       const prioList = preloadedContext.activePrioritiesByProductId.get(productId) || [];
-      activePriorities = prioList.map(p => ({
-        id: p.id,
-        ref: doc(db, PRIORITIES_COLLECTION, p.id),
-        data: p
-      }));
+      activePriorities = prioList.map(p => ({ id: p.id, data: p }));
     } else {
-      const priorityQuery = query(
-        collection(db, PRIORITIES_COLLECTION),
+      const validPrioStatuses = ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'];
+      const prioDocs = await getDocuments<Priority>(PRIORITIES_COLLECTION, [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
-        where('productId', '==', productId),
-        where('priorityStatus', 'in', ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
-      );
-      const prioritySnap = await getDocs(priorityQuery);
-      activePriorities = prioritySnap.docs.map(doc => ({
-        id: doc.id,
-        ref: doc.ref,
-        data: doc.data() as Priority
-      }));
+        where('productId', '==', productId)
+      ]);
+      activePriorities = prioDocs
+        .filter(p => validPrioStatuses.includes(p.priorityStatus))
+        .map(p => ({ id: p.id, data: p }));
     }
 
     let targetPriorityId: string | null = null;
@@ -369,21 +348,19 @@ export const generateRecommendationForProduct = async (
           priorityLevelId: decisionOutput.recommendedPriorityLevelId || 'NORMAL',
           instruction: instructionText,
           sourceRecommendationId: recId,
-          modifiedDate: Timestamp.now(),
+          modifiedDate: new Date().toISOString(),
           modifiedBy: 'system'
         };
 
-        batch.update(existingRecPrio.ref, updatedPrioData);
-        batch.set(
-          doc(db, DISPLAY_PRIORITIES_COLLECTION, targetPriorityId),
+        await updateDocument(PRIORITIES_COLLECTION, targetPriorityId, updatedPrioData);
+        await setDocument(
+          DISPLAY_PRIORITIES_COLLECTION,
+          targetPriorityId,
           buildDisplayPriorityDoc({ ...prioData, ...updatedPrioData }, targetPriorityId)
         );
       } else {
         // Create new operational priority pushed to warehouse
-        const newPrioRef = doc(collection(db, PRIORITIES_COLLECTION));
-        targetPriorityId = newPrioRef.id;
-
-        const newPriority: Omit<Priority, 'id'> = {
+        const priorityData: any = {
           tenantId,
           siteId,
           sourceType: 'RECOMMENDATION',
@@ -402,40 +379,40 @@ export const generateRecommendationForProduct = async (
           destinationId: decisionOutput.recommendedDestinationId || null,
           supportingReasons: decisionOutput.explanationLines || [],
           planningContextSnapshot: null,
-          startAt: Timestamp.now(),
+          startAt: new Date().toISOString(),
           expireAt: null,
           latestProgressNote: null,
-          publishedAt: Timestamp.now(),
+          publishedAt: new Date().toISOString(),
           completedAt: null,
           cancelledAt: null,
           status: 'active',
           createdBy: 'system',
-          createdDate: Timestamp.now(),
+          createdDate: new Date().toISOString(),
           modifiedBy: 'system',
-          modifiedDate: Timestamp.now()
+          modifiedDate: new Date().toISOString()
         };
+        targetPriorityId = await createDocument(PRIORITIES_COLLECTION, priorityData);
 
-        batch.set(newPrioRef, newPriority);
-        batch.set(
-          doc(db, DISPLAY_PRIORITIES_COLLECTION, targetPriorityId),
-          buildDisplayPriorityDoc(newPriority, targetPriorityId)
+        await setDocument(
+          DISPLAY_PRIORITIES_COLLECTION,
+          targetPriorityId,
+          buildDisplayPriorityDoc(priorityData, targetPriorityId)
         );
       }
     } else {
       // No recommended action in latest generation. If a previous active recommendation priority exists, cancel it.
       if (existingRecPrio) {
         const prioData = existingRecPrio.data;
-        batch.update(existingRecPrio.ref, {
+        await updateDocument(PRIORITIES_COLLECTION, existingRecPrio.id, {
           priorityStatus: 'CANCELLED',
-          cancelledAt: Timestamp.now(),
-          modifiedDate: Timestamp.now(),
+          cancelledAt: new Date().toISOString(),
+          modifiedDate: new Date().toISOString(),
           modifiedBy: 'system'
         });
-        batch.delete(doc(db, DISPLAY_PRIORITIES_COLLECTION, existingRecPrio.id));
+        await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, existingRecPrio.id);
 
         // Log priority status change event
         await logPriorityEvent(
-          batch,
           prioData.tenantId,
           prioData.siteId,
           existingRecPrio.id,
@@ -463,8 +440,8 @@ export const generateRecommendationForProduct = async (
       decisionOutput: JSON.parse(JSON.stringify(decisionOutput)), // Serialize dates
       sourceSnapshot: JSON.parse(JSON.stringify(inputSnapshot)),
       sourceFingerprint: fingerprint,
-      generatedAt: Timestamp.now(),
-      reviewedAt: Timestamp.now(),
+      generatedAt: new Date().toISOString(),
+      reviewedAt: new Date().toISOString(),
       reviewedBy: 'system',
       plannerDecision: hasRecommendedAction ? {
         actionTypeId: decisionOutput.recommendedActionTypeId!,
@@ -476,14 +453,13 @@ export const generateRecommendationForProduct = async (
       overrideFlags: null,
       overrideReason: null,
       supersededByRecommendationId: null,
-      createdDate: Timestamp.now(),
-      modifiedDate: Timestamp.now(),
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString(),
       createdBy: 'system',
       modifiedBy: 'system'
     };
 
-    batch.set(newRef, newRecommendation);
-    await batch.commit();
+    await setDocument(RECOMMENDATIONS_COLLECTION, recId, newRecommendation);
 
     let snapshot: RecommendationAuditSnapshot | null = null;
     if (hasRecommendedAction && targetPriorityId) {
@@ -536,7 +512,7 @@ export const generateRecommendationForProduct = async (
 
     return {
       success: true,
-      data: newRef.id,
+      data: recId,
       snapshot,
       hasAction: hasRecommendedAction,
       priorityId: targetPriorityId
@@ -554,7 +530,7 @@ export const refreshSiteRecommendations = async (
   onProgress?: (progress: { current: number; total: number; productCode?: string }) => void,
   initiatorInfo?: { userId?: string; userName?: string }
 ): Promise<ServiceResult<{ generatedCount: number; conflicts: PriorityConflict[] }>> => {
-  const runDocRef = getSiteRecommendationRunRef(tenantId, siteId);
+  const runId = `${tenantId}_${siteId}`;
   const userName = initiatorInfo?.userName || 'Planner';
   const userId = initiatorInfo?.userId || 'system';
 
@@ -564,96 +540,75 @@ export const refreshSiteRecommendations = async (
 
     // 1. Fetch all required data for the site in parallel single-batch queries
     const [
-      productsSnap,
-      balancesSnap,
-      stoSnap,
-      productionEntriesSnap,
-      productionNotesSnap,
-      planningRulesSnap,
-      promoRulesSnap,
-      promotionsSnap,
+      productsDocs,
+      balancesDocs,
+      stoDocs,
+      productionEntriesDocs,
+      productionNotesDocs,
+      planningRulesDocs,
+      promoRulesDocs,
+      promotionsDocs,
       configuration,
-      activeRecsSnap,
-      activePrioritiesSnap
+      activeRecsDocs,
+      activePrioritiesDocs
     ] = await Promise.all([
-      // Active products
-      getDocs(query(
-        collection(db, 'products'),
+      getDocuments<Product>('products', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
         where('status', '==', 'active')
-      )),
-      // Site inventory balances
-      getDocs(query(
-        collection(db, 'inventoryBalances'),
+      ]),
+      getDocuments<InventoryBalance>('inventoryBalances', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId)
-      )),
-      // Site STO requirements
-      getDocs(query(
-        collection(db, 'northfleetStoRequirements'),
+      ]),
+      getDocuments<NorthfleetStoRequirement>('northfleetStoRequirements', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId)
-      )),
-      // Site production plan entries
-      getDocs(query(
-        collection(db, 'productionPlanEntries'),
+      ]),
+      getDocuments<ProductionPlanEntry>('productionPlanEntries', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId)
-      )),
-      // Site active production line notes
-      getDocs(query(
-        collection(db, 'productionLinePlanNotes'),
+      ]),
+      getDocuments<ProductionLinePlanNote>('productionLinePlanNotes', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
         where('active', '==', true)
-      )),
-      // Site active planning rules
-      getDocs(query(
-        collection(db, 'planningRules'),
+      ]),
+      getDocuments<ProductPlanningRule>('planningRules', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
         where('status', '==', 'active')
-      )),
-      // Site active promotion product rules
-      getDocs(query(
-        collection(db, 'promotionProductRules'),
+      ]),
+      getDocuments<PromotionProductRule>('promotionProductRules', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
         where('status', '==', 'active')
-      )),
-      // Site promotions
-      getDocs(query(
-        collection(db, 'promotions'),
+      ]),
+      getDocuments<Promotion>('promotions', [
         where('tenantId', '==', tenantId)
-      )),
-      // Decision configuration
+      ]),
       getDecisionConfiguration(tenantId, siteId),
-      // Active recommendations
-      getDocs(query(
-        collection(db, RECOMMENDATIONS_COLLECTION),
+      getDocuments<any>(RECOMMENDATIONS_COLLECTION, [
         where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('recommendationStatus', 'in', ['AWAITING_REVIEW', 'AUTO_PUBLISHED', 'APPROVED'])
-      )),
-      // Active priorities
-      getDocs(query(
-        collection(db, PRIORITIES_COLLECTION),
+        where('siteId', '==', siteId)
+      ]),
+      getDocuments<Priority>(PRIORITIES_COLLECTION, [
         where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('priorityStatus', 'in', ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
-      ))
+        where('siteId', '==', siteId)
+      ])
     ]);
+
+    const activeRecsFiltered = activeRecsDocs.filter(r => ['AWAITING_REVIEW', 'AUTO_PUBLISHED', 'APPROVED'].includes(r.recommendationStatus));
+    const activePrioritiesFiltered = activePrioritiesDocs.filter(p => ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(p.priorityStatus));
 
     // 2. Index Products
     const activeProducts: Product[] = [];
     const productsMap = new Map<string, Product>();
     const activeProductsByCode = new Map<string, Product>();
 
-    productsSnap.docs.forEach(d => {
-      const prod = { id: d.id, ...d.data() } as Product;
+    productsDocs.forEach(prod => {
       activeProducts.push(prod);
-      productsMap.set(d.id, prod);
+      productsMap.set(prod.id, prod);
       const code = (prod as any).code || prod.productCode;
       if (code) {
         activeProductsByCode.set(code, prod);
@@ -662,8 +617,7 @@ export const refreshSiteRecommendations = async (
 
     // 3. Index Inventory Balances
     const rawBalancesByProdId = new Map<string, Map<string, InventoryBalance>>();
-    balancesSnap.docs.forEach(d => {
-      const data = { id: d.id, ...d.data() } as InventoryBalance;
+    balancesDocs.forEach(data => {
       if (data.productId) {
         if (!rawBalancesByProdId.has(data.productId)) {
           rawBalancesByProdId.set(data.productId, new Map());
@@ -700,8 +654,7 @@ export const refreshSiteRecommendations = async (
     const todayStart = new Date(evalDate);
     todayStart.setHours(0, 0, 0, 0);
 
-    stoSnap.docs.forEach(d => {
-      const sto = { id: d.id, ...d.data() } as NorthfleetStoRequirement;
+    stoDocs.forEach(sto => {
       siteStoRequirements.push(sto);
 
       if (sto.productId) {
@@ -711,9 +664,7 @@ export const refreshSiteRecommendations = async (
         stoRequirementsByProductId.get(sto.productId)!.push(sto);
 
         if (sto.status !== 'CANCELLED') {
-          const collDate = (sto.barrowCollectionDate as any)?.toDate
-            ? (sto.barrowCollectionDate as any).toDate()
-            : new Date(sto.barrowCollectionDate as any);
+          const collDate = new Date(sto.barrowCollectionDate as any);
           collDate.setHours(0, 0, 0, 0);
 
           if (collDate.getTime() >= todayStart.getTime()) {
@@ -729,8 +680,7 @@ export const refreshSiteRecommendations = async (
     const siteProductionEntries: ProductionPlanEntry[] = [];
     const distinctImportIds = new Set<string>();
 
-    productionEntriesSnap.docs.forEach(d => {
-      const entry = { id: d.id, ...d.data() } as any as ProductionPlanEntry;
+    productionEntriesDocs.forEach(entry => {
       siteProductionEntries.push(entry);
 
       if (entry.productId) {
@@ -745,9 +695,7 @@ export const refreshSiteRecommendations = async (
       }
     });
 
-    const productionLineNotes: ProductionLinePlanNote[] = productionNotesSnap.docs.map(
-      d => ({ id: d.id, ...d.data() } as any as ProductionLinePlanNote)
-    );
+    const productionLineNotes: ProductionLinePlanNote[] = [...productionNotesDocs];
 
     // Fetch import upload times for distinct activeImportIds
     const productionImportUploadTimes = new Map<string, Date>();
@@ -755,11 +703,12 @@ export const refreshSiteRecommendations = async (
       await Promise.all(
         Array.from(distinctImportIds).map(async importId => {
           try {
-            const importDocRef = doc(db, 'productionPlanImports', importId);
-            const importSnap = await getDoc(importDocRef);
-            if (importSnap.exists()) {
-              const uploaded = (importSnap.data() as any).uploadedAt?.toDate
-                ? (importSnap.data() as any).uploadedAt.toDate()
+            const importDoc = await getDocument<any>('productionPlanImports', importId);
+            if (importDoc) {
+              const uploaded = importDoc.uploadedAt
+                ? new Date(importDoc.uploadedAt)
+                : importDoc.createdDate
+                ? new Date(importDoc.createdDate)
                 : null;
               if (uploaded) {
                 productionImportUploadTimes.set(importId, uploaded);
@@ -774,8 +723,7 @@ export const refreshSiteRecommendations = async (
 
     // 6. Index Planning Rules
     const rawPlanningRulesByProdId = new Map<string, ProductPlanningRule[]>();
-    planningRulesSnap.docs.forEach(d => {
-      const rule = { id: d.id, ...d.data() } as ProductPlanningRule;
+    planningRulesDocs.forEach(rule => {
       if (rule.productId) {
         if (!rawPlanningRulesByProdId.has(rule.productId)) {
           rawPlanningRulesByProdId.set(rule.productId, []);
@@ -788,15 +736,15 @@ export const refreshSiteRecommendations = async (
     const now = new Date();
     for (const [prodId, rules] of rawPlanningRulesByProdId.entries()) {
       rules.sort((a, b) => {
-        const timeA = (a.modifiedDate as any)?.toDate?.()?.getTime() || (a.modifiedDate as any)?.seconds * 1000 || (a.createdDate as any)?.toDate?.()?.getTime() || (a.createdDate as any)?.seconds * 1000 || 0;
-        const timeB = (b.modifiedDate as any)?.toDate?.()?.getTime() || (b.modifiedDate as any)?.seconds * 1000 || (b.createdDate as any)?.toDate?.()?.getTime() || (b.createdDate as any)?.seconds * 1000 || 0;
+        const timeA = new Date((a.modifiedDate || a.createdDate || 0) as any).getTime();
+        const timeB = new Date((b.modifiedDate || b.createdDate || 0) as any).getTime();
         return timeB - timeA;
       });
 
       let activeRule: ProductPlanningRule | null = null;
       for (const rule of rules) {
-        const from = (rule.effectiveFrom as any)?.toDate?.() || new Date(rule.effectiveFrom as any);
-        const to = rule.effectiveTo ? ((rule.effectiveTo as any)?.toDate?.() || new Date(rule.effectiveTo as any)) : null;
+        const from = new Date(rule.effectiveFrom as any);
+        const to = rule.effectiveTo ? new Date(rule.effectiveTo as any) : null;
         if (from <= now && (!to || to > now)) {
           activeRule = rule;
           break;
@@ -807,14 +755,13 @@ export const refreshSiteRecommendations = async (
 
     // 7. Index Promotions & Promotion Rules
     const promotionsMap = new Map<string, Promotion>();
-    promotionsSnap.docs.forEach(d => {
-      const promo = withPhase({ id: d.id, ...d.data() } as Promotion);
+    promotionsDocs.forEach(d => {
+      const promo = withPhase(d);
       promotionsMap.set(d.id, promo);
     });
 
     const promotionRulesByProductId = new Map<string, PromotionProductRule[]>();
-    promoRulesSnap.docs.forEach(d => {
-      const rule = { id: d.id, ...d.data() } as PromotionProductRule;
+    promoRulesDocs.forEach(rule => {
       if (rule.productId) {
         if (!promotionRulesByProductId.has(rule.productId)) {
           promotionRulesByProductId.set(rule.productId, []);
@@ -826,8 +773,7 @@ export const refreshSiteRecommendations = async (
     // 8. Index Active Recommendations & Priorities
     const activeRecommendationsByProductId = new Map<string, any>();
     const activeSiteRecommendations: any[] = [];
-    activeRecsSnap.docs.forEach(d => {
-      const rec: any = { id: d.id, ...d.data() };
+    activeRecsFiltered.forEach(rec => {
       activeSiteRecommendations.push(rec);
       if (rec.productId) {
         activeRecommendationsByProductId.set(rec.productId, rec);
@@ -836,8 +782,7 @@ export const refreshSiteRecommendations = async (
 
     const activePrioritiesByProductId = new Map<string, Priority[]>();
     const activeSitePriorities: Priority[] = [];
-    activePrioritiesSnap.docs.forEach(d => {
-      const prio = { id: d.id, ...d.data() } as Priority;
+    activePrioritiesFiltered.forEach(prio => {
       activeSitePriorities.push(prio);
       if (prio.productId) {
         if (!activePrioritiesByProductId.has(prio.productId)) {
@@ -933,13 +878,13 @@ export const refreshSiteRecommendations = async (
       evaluationDate: evalDate
     };
 
-    // Record initial run state in Firestore
+    // Record initial run state
     try {
-      await setDoc(runDocRef, {
+      await setDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
         tenantId,
         siteId,
         status: 'IN_PROGRESS',
-        startedAt: Timestamp.now(),
+        startedAt: new Date().toISOString(),
         startedBy: userId,
         startedByName: userName,
         totalProducts: totalCandidates,
@@ -948,10 +893,10 @@ export const refreshSiteRecommendations = async (
         generatedCount: 0,
         conflictsCount: 0,
         error: null,
-        lastUpdatedAt: Timestamp.now()
-      }, { merge: true });
+        lastUpdatedAt: new Date().toISOString()
+      });
     } catch (startErr) {
-      console.warn('Could not record run start in Firestore (continuing locally):', startErr);
+      console.warn('Could not record run start (continuing locally):', startErr);
     }
 
     let count = 0;
@@ -966,16 +911,16 @@ export const refreshSiteRecommendations = async (
         onProgress({ current: i + 1, total: totalCandidates, productCode: code });
       }
 
-      // Throttle Firestore progress updates (at most every ~1.5s or on final item)
+      // Throttle progress updates (at most every ~1.5s or on final item)
       const now = Date.now();
       if (now - lastFirestoreProgressWrite > 1500 || i === totalCandidates - 1) {
         lastFirestoreProgressWrite = now;
         try {
-          await updateDoc(runDocRef, {
+          await updateDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
             currentProductIndex: i + 1,
             totalProducts: totalCandidates,
             currentProductCode: code,
-            lastUpdatedAt: Timestamp.now()
+            lastUpdatedAt: new Date().toISOString()
           });
         } catch {
           // Non-blocking
@@ -995,51 +940,40 @@ export const refreshSiteRecommendations = async (
     }
 
     // Post-generation cleanup: Remove any active system-driven priorities that were NOT updated/regenerated in this run
-    const activeSystemPrioQuery = query(
-      collection(db, PRIORITIES_COLLECTION),
+    const validPrioStatuses = ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'];
+    const activeSystemPrioDocs = await getDocuments<Priority>(PRIORITIES_COLLECTION, [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
-      where('sourceType', '==', 'RECOMMENDATION'),
-      where('priorityStatus', 'in', ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'])
-    );
-    const activeSystemSnap = await getDocs(activeSystemPrioQuery);
+      where('sourceType', '==', 'RECOMMENDATION')
+    ]);
 
-    if (!activeSystemSnap.empty) {
-      const cleanupBatch = writeBatch(db);
-      let needsCleanupBatch = false;
+    const toCleanup = activeSystemPrioDocs.filter(p => validPrioStatuses.includes(p.priorityStatus));
 
-      activeSystemSnap.docs.forEach(pDoc => {
-        const pData = pDoc.data() as Priority;
-        const modTime = (pData.modifiedDate as any)?.toMillis ? (pData.modifiedDate as any).toMillis() : (pData.modifiedDate ? new Date(pData.modifiedDate as any).getTime() : 0);
-        
-        // If not touched during this run, cancel & remove
-        if (modTime < runStartedAtMs) {
-          needsCleanupBatch = true;
-          cleanupBatch.update(pDoc.ref, {
-            priorityStatus: 'CANCELLED',
-            cancelledAt: Timestamp.now(),
-            modifiedDate: Timestamp.now(),
-            modifiedBy: 'system'
-          });
-          cleanupBatch.delete(doc(db, DISPLAY_PRIORITIES_COLLECTION, pDoc.id));
-        }
-      });
-
-      if (needsCleanupBatch) {
-        await cleanupBatch.commit();
+    for (const pData of toCleanup) {
+      const modTime = pData.modifiedDate ? new Date(pData.modifiedDate as any).getTime() : 0;
+      
+      // If not touched during this run, cancel & remove
+      if (modTime < runStartedAtMs) {
+        await updateDocument(PRIORITIES_COLLECTION, pData.id, {
+          priorityStatus: 'CANCELLED',
+          cancelledAt: new Date().toISOString(),
+          modifiedDate: new Date().toISOString(),
+          modifiedBy: 'system'
+        });
+        await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, pData.id);
       }
     }
 
     // Detect conflicts between newly generated system priorities and existing manual priorities
     const conflicts = await detectPriorityConflicts(tenantId, siteId);
 
-    // Record completion in Firestore
+    // Record completion
     try {
-      await setDoc(runDocRef, {
+      await setDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
         tenantId,
         siteId,
         status: 'COMPLETED',
-        completedAt: Timestamp.now(),
+        completedAt: new Date().toISOString(),
         completedBy: userId,
         completedByName: userName,
         totalProducts: totalCandidates,
@@ -1048,10 +982,10 @@ export const refreshSiteRecommendations = async (
         generatedCount: count,
         conflictsCount: conflicts.length,
         error: null,
-        lastUpdatedAt: Timestamp.now()
-      }, { merge: true });
+        lastUpdatedAt: new Date().toISOString()
+      });
     } catch (completeErr) {
-      console.warn('Could not record run completion in Firestore:', completeErr);
+      console.warn('Could not record run completion:', completeErr);
     }
 
     return { success: true, data: { generatedCount: count, conflicts } };
@@ -1059,13 +993,13 @@ export const refreshSiteRecommendations = async (
     console.error('Failed to refresh site recommendations:', e);
 
     try {
-      await setDoc(runDocRef, {
+      await setDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
         tenantId,
         siteId,
         status: 'FAILED',
         error: e?.message || 'Failed to refresh site recommendations',
-        lastUpdatedAt: Timestamp.now()
-      }, { merge: true });
+        lastUpdatedAt: new Date().toISOString()
+      });
     } catch {
       // Non-blocking
     }
@@ -1080,20 +1014,17 @@ export const updateRecommendationStatus = async (
   decision?: PlannerDecision,
   flags?: OverrideFlags,
   reason?: string,
-  userId = 'dev-user'
+  userId = 'system'
 ): Promise<ServiceResult<void>> => {
   try {
-    const ref = doc(db, RECOMMENDATIONS_COLLECTION, id);
-    const recSnap = await getDoc(ref);
-    if (!recSnap.exists()) return { success: false, error: 'Recommendation not found' };
-
-    const recData = recSnap.data() as Recommendation;
+    const recData = await getDocument<Recommendation>(RECOMMENDATIONS_COLLECTION, id);
+    if (!recData) return { success: false, error: 'Recommendation not found' };
 
     const updateData: any = {
       recommendationStatus: status,
-      reviewedAt: Timestamp.now(),
+      reviewedAt: new Date().toISOString(),
       reviewedBy: userId,
-      modifiedDate: Timestamp.now(),
+      modifiedDate: new Date().toISOString(),
       modifiedBy: userId
     };
 
@@ -1101,19 +1032,14 @@ export const updateRecommendationStatus = async (
     if (flags) updateData.overrideFlags = flags;
     if (reason) updateData.overrideReason = reason;
 
-    const batch = writeBatch(db);
-    batch.update(ref, updateData);
+    await updateDocument(RECOMMENDATIONS_COLLECTION, id, updateData);
 
     // Sync with operational priority in warehouse if linked
     const linkedPriorityId = recData.linkedPriorityId;
     if (linkedPriorityId) {
-      const prioRef = doc(db, PRIORITIES_COLLECTION, linkedPriorityId);
-      const displayRef = doc(db, DISPLAY_PRIORITIES_COLLECTION, linkedPriorityId);
-      const prioSnap = await getDoc(prioRef);
+      const prioData = await getDocument<Priority>(PRIORITIES_COLLECTION, linkedPriorityId);
 
-      if (prioSnap.exists()) {
-        const prioData = prioSnap.data() as Priority;
-
+      if (prioData) {
         if (status === 'OVERRIDDEN' && decision) {
           const reqQty = decision.quantity;
           const updatedPrio: Partial<Priority> = {
@@ -1125,15 +1051,14 @@ export const updateRecommendationStatus = async (
             priorityLevelId: decision.priorityLevelId || prioData.priorityLevelId,
             instruction: decision.notes || 'Planner override update',
             plannerReason: reason || 'Planner override',
-            modifiedDate: Timestamp.now(),
+            modifiedDate: new Date().toISOString(),
             modifiedBy: userId
           };
 
-          batch.update(prioRef, updatedPrio);
-          batch.set(displayRef, buildDisplayPriorityDoc({ ...prioData, ...updatedPrio }, linkedPriorityId));
+          await updateDocument(PRIORITIES_COLLECTION, linkedPriorityId, updatedPrio);
+          await setDocument(DISPLAY_PRIORITIES_COLLECTION, linkedPriorityId, buildDisplayPriorityDoc({ ...prioData, ...updatedPrio }, linkedPriorityId));
 
           await logPriorityEvent(
-            batch,
             prioData.tenantId,
             prioData.siteId,
             linkedPriorityId,
@@ -1146,16 +1071,15 @@ export const updateRecommendationStatus = async (
             userId
           );
         } else if (status === 'DISMISSED') {
-          batch.update(prioRef, {
+          await updateDocument(PRIORITIES_COLLECTION, linkedPriorityId, {
             priorityStatus: 'CANCELLED',
-            cancelledAt: Timestamp.now(),
-            modifiedDate: Timestamp.now(),
+            cancelledAt: new Date().toISOString(),
+            modifiedDate: new Date().toISOString(),
             modifiedBy: userId
           });
-          batch.delete(displayRef);
+          await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, linkedPriorityId);
 
           await logPriorityEvent(
-            batch,
             prioData.tenantId,
             prioData.siteId,
             linkedPriorityId,
@@ -1171,7 +1095,6 @@ export const updateRecommendationStatus = async (
       }
     }
 
-    await batch.commit();
     return { success: true };
   } catch (e: any) {
     return { success: false, error: e.message };

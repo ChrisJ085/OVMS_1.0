@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ProductionPlanEntry, ProductionLinePlanNote } from '../../../types/production';
 import { productionPlanRepository } from '../repositories/productionPlanRepository';
 import { productionNotesRepository } from '../repositories/productionNotesRepository';
-import { Timestamp } from '../../../services/supabaseBase';
 
 export function useCurrentProductionPlan(tenantId: string, siteId: string, enabled = true) {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
@@ -33,9 +32,9 @@ export function useCurrentProductionPlan(tenantId: string, siteId: string, enabl
       const entries = await productionPlanRepository.fetchPlanEntries({ tenantId, siteId, weekStart: currentWeekStart });
       setActiveEntries(entries);
 
-      const startTimestamp = Timestamp.fromDate(new Date(currentWeekStart.getTime() - 24 * 60 * 60 * 1000));
+      const startTimestamp = new Date(currentWeekStart.getTime() - 24 * 60 * 60 * 1000).toISOString();
       const endWeek = new Date(currentWeekStart.getTime() + 8 * 24 * 60 * 60 * 1000);
-      const endTimestamp = Timestamp.fromDate(endWeek);
+      const endTimestamp = endWeek.toISOString();
 
       const notes = await productionNotesRepository.fetchGridNotes(tenantId, siteId, startTimestamp, endTimestamp);
       setGridNotes(notes);

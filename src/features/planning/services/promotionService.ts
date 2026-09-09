@@ -3,8 +3,9 @@ import {
   updateDocument,
   subscribeToCollection,
   subscribeToDocument,
-  collection, query, where, getDocs
-} from '../../../services/supabaseBase';
+  where,
+  getDocuments
+} from '../../../services/dbService';
 import { Promotion, PromotionProductRule, PromotionPhase, PromotionWithPhase } from '../../../types/promotion';
 import { ServiceResult, Timestamp } from '../../../types/common';
 import { toEpochMillis } from '../../../utils/timeFormatters';
@@ -264,7 +265,7 @@ export const subscribeToProductPromotions = (
             where('tenantId', '==', tenantId),
             // Firestore 'in' query is limited to 10. If more, we'd need chunks.
             // For now assuming < 10 active promotions per product.
-            where('__name__', 'in', promoIds)
+            where('id', 'in', promoIds)
           ],
           (promos) => {
             promotionsObj = {};

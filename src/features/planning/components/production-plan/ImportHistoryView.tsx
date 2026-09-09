@@ -47,7 +47,7 @@ export const ImportHistoryView: React.FC<ImportHistoryViewProps> = ({
               <tbody>
                 {historyImports.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500 italic">No historical imports recorded in Firestore.</td>
+                    <td colSpan={5} className="p-8 text-center text-slate-500 italic">No historical imports recorded.</td>
                   </tr>
                 ) : (
                   historyImports.map(imp => (

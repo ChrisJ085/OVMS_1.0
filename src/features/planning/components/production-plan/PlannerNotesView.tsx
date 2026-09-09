@@ -48,7 +48,7 @@ export const PlannerNotesView: React.FC<PlannerNotesViewProps> = ({
               <tbody>
                 {notesList.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500 italic">No planner notes registered in Firestore.</td>
+                    <td colSpan={5} className="p-8 text-center text-slate-500 italic">No planner notes registered.</td>
                   </tr>
                 ) : (
                   notesList.map(note => (

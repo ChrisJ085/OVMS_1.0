@@ -107,13 +107,11 @@ export const KpiDashboardPage: React.FC = () => {
       const manualPriorityRate = priorities.length > 0 ? (manualCreated / priorities.length) * 100 : 0;
 
       // 2. Recommendations
-      const qRecs = query(
-        collection(db, 'recommendations'),
+      const recDocs = await getDocuments('recommendations', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId)
-      );
-      const rSnap = await getDocs(qRecs);
-      const recs = rSnap.docs.map(d => d.data() as any).filter(r => {
+      ]);
+      const recs = recDocs.filter((r: any) => {
         const rawTs = r.createdDate || r.generatedAt;
         if (!rawTs) return false;
         const d = (rawTs as any)?.toDate ? (rawTs as any).toDate() : new Date(rawTs as any);

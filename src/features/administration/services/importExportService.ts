@@ -1,6 +1,6 @@
 import { ValidationResult } from '../../../types/importExport';
 import { adjustInventory } from '../../inventory/services/inventoryService';
-import { collection, db, doc, getDocs, query, serverTimestamp, where, writeBatch } from '../../../services/supabaseBase';
+import { getDocuments, createDocument, where } from '../../../services/dbService';
 
 export async function validateImportData(
   tenantId: string, 
@@ -13,10 +13,8 @@ export async function validateImportData(
   let rowIndex = 2; // Assuming header is row 1
 
   if (type === 'PRODUCTS') {
-    const productsRef = collection(db, 'products');
-    const q = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-    const snapshot = await getDocs(q);
-    const existingCodes = new Set(snapshot.docs.map(d => d.data().productCode));
+    const docs = await getDocuments<any>('products', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+    const existingCodes = new Set(docs.map(d => d.productCode));
 
     for (const row of data) {
       const errors: string[] = [];
@@ -38,10 +36,8 @@ export async function validateImportData(
       results.push({ rowNumber: rowIndex++, action, data: row, errors, warnings });
     }
   } else if (type === 'LOCATIONS') {
-      const locRef = collection(db, 'locations');
-      const qLoc = query(locRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-      const locSnap = await getDocs(qLoc);
-      const existingLocs = new Set(locSnap.docs.map(d => d.data().locationCode));
+      const locDocs = await getDocuments<any>('locations', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+      const existingLocs = new Set(locDocs.map(d => d.locationCode));
 
       for (const row of data) {
           const errors: string[] = [];
@@ -59,15 +55,11 @@ export async function validateImportData(
           results.push({ rowNumber: rowIndex++, action, data: row, errors, warnings: [] });
       }
   } else if (type === 'INVENTORY') {
-     const productsRef = collection(db, 'products');
-     const qProd = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-     const prodSnap = await getDocs(qProd);
-     const productMap = new Map(prodSnap.docs.map(d => [d.data().productCode, d]));
+     const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+     const productMap = new Map(prodDocs.map(d => [d.productCode, d]));
 
-     const locRef = collection(db, 'locations');
-     const qLoc = query(locRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-     const locSnap = await getDocs(qLoc);
-     const locMap = new Map(locSnap.docs.map(d => [d.data().locationCode, d]));
+     const locDocs = await getDocuments<any>('locations', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+     const locMap = new Map(locDocs.map(d => [d.locationCode, d]));
 
      for (const row of data) {
           const errors: string[] = [];
@@ -80,20 +72,20 @@ export async function validateImportData(
 
           if (row.productCode) {
             prodDoc = productMap.get(row.productCode);
-            if (!prodDoc) errors.push(`Product with code \${row.productCode} not found.`);
+            if (!prodDoc) errors.push(`Product with code ${row.productCode} not found.`);
           }
           if (row.locationCode) {
             locDoc = locMap.get(row.locationCode);
-            if (!locDoc) errors.push(`Location with code \${row.locationCode} not found.`);
+            if (!locDoc) errors.push(`Location with code ${row.locationCode} not found.`);
           }
           
           // attach resolved ids for commit
           if (prodDoc && locDoc) {
              row._productId = prodDoc.id;
-             row._productCode = prodDoc.data().productCode;
-             row._productDesc = prodDoc.data().description || '';
+             row._productCode = prodDoc.productCode;
+             row._productDesc = prodDoc.description || '';
              row._locationId = locDoc.id;
-             row._locationCode = locDoc.data().locationCode;
+             row._locationCode = locDoc.locationCode;
           }
 
           results.push({
@@ -105,15 +97,11 @@ export async function validateImportData(
           });
       }
   } else if (type === 'PLANNING_RULES') {
-    const productsRef = collection(db, 'products');
-    const qProd = query(productsRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-    const prodSnap = await getDocs(qProd);
-    const productMap = new Map(prodSnap.docs.map(d => [d.data().productCode, d]));
+    const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+    const productMap = new Map(prodDocs.map(d => [d.productCode, d]));
 
-    const rulesRef = collection(db, 'planningRules');
-    const qRules = query(rulesRef, where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-    const rulesSnap = await getDocs(qRules);
-    const existingRules = new Set(rulesSnap.docs.map(d => d.data().productCodeSnapshot));
+    const ruleDocs = await getDocuments<any>('planningRules', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+    const existingRules = new Set(ruleDocs.map(d => d.productCodeSnapshot));
 
     for (const row of data) {
       const errors: string[] = [];
@@ -214,59 +202,49 @@ export async function commitImportData(
       chunks.push(validRows.slice(i, i + 500));
     }
 
-    for (const chunk of chunks) {
-      const batch = writeBatch(db);
-      
-      for (const row of chunk) {
-        if (type === 'PRODUCTS') {
-          const ref = doc(collection(db, 'products')); // Wait, if update, we should query and use existing ID. But we're just creating for demo simplicity. Let's assume we do set.
-          batch.set(ref, {
-            tenantId,
-            siteId,
-            productCode: row.data.productCode,
-            name: row.data.name,
-            description: row.data.description || '',
-            categoryCode: row.data.categoryCode || '',
-            defaultUnitOfMeasureCode: row.data.defaultUnitOfMeasureCode || 'EA',
-            status: 'ACTIVE',
-            createdDate: serverTimestamp(),
-            modifiedDate: serverTimestamp()
-          });
-          if (row.action === 'CREATE') createdCount++;
-          if (row.action === 'UPDATE') updatedCount++;
-        } else if (type === 'LOCATIONS') {
-          const ref = doc(collection(db, 'locations'));
-          batch.set(ref, {
-            tenantId,
-            siteId,
-            locationCode: row.data.locationCode,
-            locationName: row.data.locationName,
-            areaCode: row.data.areaCode || 'DEFAULT',
-            isActive: true,
-            createdDate: serverTimestamp(),
-            modifiedDate: serverTimestamp()
-          });
-          createdCount++;
-        } else if (type === 'PLANNING_RULES') {
-          const ref = doc(collection(db, 'planningRules'));
-          batch.set(ref, {
-            tenantId,
-            siteId,
-            productId: row.data._productId,
-            productCodeSnapshot: row.data._productCode,
-            minThreshold: Number(row.data.minThreshold) || 0,
-            targetThreshold: Number(row.data.targetThreshold) || 0,
-            maxThreshold: Number(row.data.maxThreshold) || 0,
-            isActive: row.data.isActive !== 'false',
-            createdDate: serverTimestamp(),
-            modifiedDate: serverTimestamp()
-          });
-          createdCount++;
-        }
-        // Additional types...
+    for (const row of validRows) {
+      if (type === 'PRODUCTS') {
+        await createDocument<any>('products', {
+          tenantId,
+          siteId,
+          productCode: row.data.productCode,
+          name: row.data.name,
+          description: row.data.description || '',
+          categoryCode: row.data.categoryCode || '',
+          defaultUnitOfMeasureCode: row.data.defaultUnitOfMeasureCode || 'EA',
+          status: 'ACTIVE',
+          createdDate: new Date().toISOString(),
+          modifiedDate: new Date().toISOString()
+        });
+        if (row.action === 'CREATE') createdCount++;
+        if (row.action === 'UPDATE') updatedCount++;
+      } else if (type === 'LOCATIONS') {
+        await createDocument<any>('locations', {
+          tenantId,
+          siteId,
+          locationCode: row.data.locationCode,
+          locationName: row.data.locationName,
+          areaCode: row.data.areaCode || 'DEFAULT',
+          isActive: true,
+          createdDate: new Date().toISOString(),
+          modifiedDate: new Date().toISOString()
+        });
+        createdCount++;
+      } else if (type === 'PLANNING_RULES') {
+        await createDocument<any>('planningRules', {
+          tenantId,
+          siteId,
+          productId: row.data._productId,
+          productCodeSnapshot: row.data._productCode,
+          minThreshold: Number(row.data.minThreshold) || 0,
+          targetThreshold: Number(row.data.targetThreshold) || 0,
+          maxThreshold: Number(row.data.maxThreshold) || 0,
+          isActive: row.data.isActive !== 'false',
+          createdDate: new Date().toISOString(),
+          modifiedDate: new Date().toISOString()
+        });
+        createdCount++;
       }
-      
-      await batch.commit();
     }
   }
 
@@ -282,17 +260,14 @@ export async function commitImportData(
     updatedCount,
     errorCount,
     warningCount: 0,
-    startedAt: serverTimestamp(),
-    completedAt: serverTimestamp(),
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
     performedBy: performedBy?.email || 'unknown',
-    summary: `Successfully processed \${validRows.length - errorCount} rows.`
+    summary: `Successfully processed ${validRows.length - errorCount} rows.`
   };
   
   try {
-     const importJobsRef = doc(collection(db, 'importJobs'));
-     const batch = writeBatch(db);
-     batch.set(importJobsRef, summary);
-     await batch.commit();
+     await createDocument<any>('importJobs', summary);
   } catch (e) {
      console.error("Failed to write audit log", e);
   }

@@ -9,7 +9,6 @@ import {
 import { DecisionInputSnapshot, DecisionConfiguration } from '../../../types/decision';
 import { ProductPlanningRule } from '../../../types/planning';
 import { ProductProductionContext } from '../../../types/production';
-import { Timestamp } from '../../../services/supabaseBase';
 
 describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
   const basePlanningRule: ProductPlanningRule = {
@@ -33,12 +32,12 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     allowQuantityOverride: true,
     allowDestinationOverride: true,
     overrideRequiresReason: true,
-    effectiveFrom: Timestamp.now(),
+    effectiveFrom: new Date().toISOString() as any,
     effectiveTo: null,
     notes: 'Test rule notes',
     status: 'active',
-    createdDate: Timestamp.now(),
-    modifiedDate: Timestamp.now(),
+    createdDate: new Date().toISOString() as any,
+    modifiedDate: new Date().toISOString() as any,
     createdBy: 'test-user',
     modifiedBy: 'test-user'
   };

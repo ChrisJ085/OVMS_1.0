@@ -18,8 +18,8 @@ vi.mock('../../auth/context/AuthContext', () => ({
   })
 }));
 
-vi.mock('../../../services/supabaseBase', () => ({
-  db: { type: 'mocked-firestore' }
+vi.mock('../../../services/dbService', () => ({
+  dbService: {}
 }));
 
 describe('NorthfleetStoPage - Error State & Hardened Retrieval', () => {

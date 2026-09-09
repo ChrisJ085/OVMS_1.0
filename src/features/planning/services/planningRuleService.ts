@@ -1,6 +1,6 @@
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
-import { Timestamp, collection, createDocument, db, deactivateDocument, getDocs, query, serverTimestamp, subscribeToCollection, updateDocument, where } from '../../../services/supabaseBase';
+import { createDocument, deactivateDocument, getDocuments, subscribeToCollection, updateDocument, where } from '../../../services/dbService';
 
 const COLLECTION_NAME = 'planningRules';
 
@@ -47,30 +47,19 @@ export const checkOverlap = async (
   effectiveTo: Date | null,
   excludeRuleId?: string
 ): Promise<boolean> => {
-  const rulesRef = collection(db, COLLECTION_NAME);
-  // We'll fetch all active rules for the product and site and check overlapping in memory
-  // because Firestore range queries on multiple fields are tricky.
-  const q = query(
-    rulesRef,
+  const rules = await getDocuments<ProductPlanningRule>(COLLECTION_NAME, [
     where('tenantId', '==', tenantId),
     where('siteId', '==', siteId),
     where('productId', '==', productId),
     where('status', '==', 'active')
-  );
+  ]);
 
-  const snapshot = await getDocs(q);
-  
-  for (const doc of snapshot.docs) {
-    if (excludeRuleId && doc.id === excludeRuleId) continue;
-    
-    const existingRule = doc.data() as ProductPlanningRule;
-    const exFrom = (existingRule.effectiveFrom as any).toDate();
-    const exTo = existingRule.effectiveTo ? (existingRule.effectiveTo as any).toDate() : null;
+  for (const existingRule of rules) {
+    if (excludeRuleId && existingRule.id === excludeRuleId) continue;
 
-    // Overlap logic:
-    // Two periods [start1, end1] and [start2, end2] overlap if:
-    // start1 < end2 && start2 < end1
-    // (considering null as infinity)
+    const exFrom = new Date(existingRule.effectiveFrom as any);
+    const exTo = existingRule.effectiveTo ? new Date(existingRule.effectiveTo as any) : null;
+
     const start1 = effectiveFrom.getTime();
     const end1 = effectiveTo ? effectiveTo.getTime() : Infinity;
     const start2 = exFrom.getTime();
@@ -93,7 +82,7 @@ export const createPlanningRule = async (
   try {
     const fromDate = (data.effectiveFrom as any).toDate ? (data.effectiveFrom as any).toDate() : new Date(data.effectiveFrom as any);
     const toDate = data.effectiveTo ? ((data.effectiveTo as any).toDate ? (data.effectiveTo as any).toDate() : new Date(data.effectiveTo as any)) : null;
-    
+
     const isOverlapping = await checkOverlap(data.tenantId, data.siteId || '', data.productId, fromDate, toDate);
     if (isOverlapping) {
       return { success: false, error: 'Effective dates overlap with an existing active rule for this product.' };
@@ -102,8 +91,8 @@ export const createPlanningRule = async (
     const id = await createDocument<any>(COLLECTION_NAME, {
       ...data,
       status: 'active',
-      createdDate: Timestamp.now(),
-      modifiedDate: Timestamp.now()
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString()
     });
     return { success: true, data: id };
   } catch (e) {
@@ -140,7 +129,7 @@ export const updatePlanningRule = async (
 
     await updateDocument(COLLECTION_NAME, id, {
       ...data,
-      modifiedDate: Timestamp.now()
+      modifiedDate: new Date().toISOString()
     });
     return { success: true };
   } catch (e) {
@@ -189,35 +178,31 @@ export const getProductPlanningRule = async (
   productId: string
 ): Promise<ProductPlanningRule | null> => {
   try {
-    const q = query(
-      collection(db, COLLECTION_NAME),
+    const rules = await getDocuments<ProductPlanningRule>(COLLECTION_NAME, [
       where('tenantId', '==', tenantId),
       where('siteId', '==', siteId),
       where('productId', '==', productId),
       where('status', '==', 'active')
-    );
-    const snap = await getDocs(q);
-    if (snap.empty) return null;
+    ]);
+    if (rules.length === 0) return null;
 
-    const rules = snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductPlanningRule));
-    
     // Sort descending by modifiedDate or createdDate so the latest saved rule is prioritized
     rules.sort((a, b) => {
-      const timeA = (a.modifiedDate as any)?.toDate?.()?.getTime() || (a.modifiedDate as any)?.seconds * 1000 || (a.createdDate as any)?.toDate?.()?.getTime() || (a.createdDate as any)?.seconds * 1000 || 0;
-      const timeB = (b.modifiedDate as any)?.toDate?.()?.getTime() || (b.modifiedDate as any)?.seconds * 1000 || (b.createdDate as any)?.toDate?.()?.getTime() || (b.createdDate as any)?.seconds * 1000 || 0;
+      const timeA = new Date((a.modifiedDate || a.createdDate || 0) as any).getTime() || 0;
+      const timeB = new Date((b.modifiedDate || b.createdDate || 0) as any).getTime() || 0;
       return timeB - timeA;
     });
 
     const now = new Date();
     for (const rule of rules) {
-      const from = (rule.effectiveFrom as any)?.toDate?.() || new Date(rule.effectiveFrom as any);
-      const to = rule.effectiveTo ? ((rule.effectiveTo as any)?.toDate?.() || new Date(rule.effectiveTo as any)) : null;
-      
+      const from = new Date((rule.effectiveFrom as any)?.toDate?.() || rule.effectiveFrom as any);
+      const to = rule.effectiveTo ? new Date((rule.effectiveTo as any)?.toDate?.() || rule.effectiveTo as any) : null;
+
       if (from <= now && (!to || to > now)) {
         return rule;
       }
     }
-    
+
     return rules[0] || null;
   } catch (e) {
     console.error(e);

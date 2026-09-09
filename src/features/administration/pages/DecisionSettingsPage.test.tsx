@@ -9,7 +9,6 @@ import {
 } from '../../planning/services/decisionConfigurationService';
 import { evaluateDecision } from '../../planning/services/decisionEngine';
 import { logAuditEvent } from '../../../services/auditService';
-import { Timestamp } from '../../../services/supabaseBase';
 
 // Mocks
 let mockAuthUserProfile = {
@@ -55,25 +54,17 @@ vi.mock('../../../services/auditService', () => ({
   logAuditEvent: vi.fn(() => Promise.resolve('mock-audit-id'))
 }));
 
-vi.mock('../../../services/supabaseBase', async () => {
-  const actual = await vi.importActual<any>('../../../services/supabaseBase');
-  return {
-    ...actual,
-    collection: vi.fn(),
-    query: vi.fn(),
-    where: vi.fn(),
-    getDocs: vi.fn(() => Promise.resolve({
-      docs: [
-        { id: 'act-hold', data: () => ({ code: 'HOLD', label: 'Hold', status: 'active', tenantId: 'tenant-123' }) },
-        { id: 'act-review', data: () => ({ code: 'REVIEW', label: 'Review', status: 'active', tenantId: 'tenant-123' }) },
-        { id: 'act-release', data: () => ({ code: 'RELEASE', label: 'Release', status: 'active', tenantId: 'tenant-123' }) },
-        { id: 'prio-urgent', data: () => ({ code: 'URGENT', label: 'Urgent', status: 'active', tenantId: 'tenant-123' }) },
-        { id: 'prio-normal', data: () => ({ code: 'NORMAL', label: 'Normal', status: 'active', tenantId: 'tenant-123' }) },
-        { id: 'prio-low', data: () => ({ code: 'LOW', label: 'Low', status: 'active', tenantId: 'tenant-123' }) },
-      ]
-    }))
-  };
-});
+vi.mock('../../../services/dbService', () => ({
+  where: vi.fn(),
+  getDocuments: vi.fn(() => Promise.resolve([
+    { id: 'act-hold', code: 'HOLD', label: 'Hold', status: 'active', tenantId: 'tenant-123' },
+    { id: 'act-review', code: 'REVIEW', label: 'Review', status: 'active', tenantId: 'tenant-123' },
+    { id: 'act-release', code: 'RELEASE', label: 'Release', status: 'active', tenantId: 'tenant-123' },
+    { id: 'prio-urgent', code: 'URGENT', label: 'Urgent', status: 'active', tenantId: 'tenant-123' },
+    { id: 'prio-normal', code: 'NORMAL', label: 'Normal', status: 'active', tenantId: 'tenant-123' },
+    { id: 'prio-low', code: 'LOW', label: 'Low', status: 'active', tenantId: 'tenant-123' },
+  ]))
+}));
 
 describe('Decision Settings Page Behavior & Auto-Configuration Tests', () => {
   beforeEach(() => {

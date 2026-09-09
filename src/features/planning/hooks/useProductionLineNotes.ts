@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ProductionLinePlanNote, ProductionLinePlanNoteType, ProductionLinePlanNoteSeverity } from '../../../types/production';
 import { productionNotesRepository } from '../repositories/productionNotesRepository';
-import { Timestamp } from '../../../services/supabaseBase';
 
 export interface NoteFormState {
   productionLineId: string;
@@ -66,7 +65,7 @@ export function useProductionLineNotes(
         tenantId,
         siteId,
         productionLineId: noteForm.productionLineId,
-        noteDate: Timestamp.fromDate(targetDate),
+        noteDate: targetDate.toISOString(),
         noteType: noteForm.noteType,
         title: noteForm.title,
         note: noteForm.note,
@@ -76,9 +75,9 @@ export function useProductionLineNotes(
         source: 'PLANNER',
         active: true,
         createdBy: userFullName || 'Planner',
-        createdDate: Timestamp.fromDate(new Date()),
+        createdDate: new Date().toISOString(),
         modifiedBy: userFullName || 'Planner',
-        modifiedDate: Timestamp.fromDate(new Date())
+        modifiedDate: new Date().toISOString()
       };
 
       await productionNotesRepository.addNote(newNote);

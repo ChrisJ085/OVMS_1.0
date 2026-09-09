@@ -227,8 +227,8 @@ export const OperationalOverviewPage: React.FC = () => {
         ],
         (fetched) => {
           const sorted = [...fetched].sort((a, b) => {
-            const tA = a.createdDate ? new Date(a.createdDate).getTime() : 0;
-            const tB = b.createdDate ? new Date(b.createdDate).getTime() : 0;
+            const tA = a.createdDate ? new Date(a.createdDate as any).getTime() : 0;
+            const tB = b.createdDate ? new Date(b.createdDate as any).getTime() : 0;
             return tB - tA;
           });
           setPriorities(sorted);
@@ -326,8 +326,8 @@ export const OperationalOverviewPage: React.FC = () => {
           ]
         );
         recs.sort((a, b) => {
-          const tA = a.generatedAt ? new Date(a.generatedAt).getTime() : 0;
-          const tB = b.generatedAt ? new Date(b.generatedAt).getTime() : 0;
+          const tA = a.generatedAt ? new Date(a.generatedAt as any).getTime() : 0;
+          const tB = b.generatedAt ? new Date(b.generatedAt as any).getTime() : 0;
           return tB - tA;
         });
         setRecommendations(recs.slice(0, 50));
@@ -348,8 +348,8 @@ export const OperationalOverviewPage: React.FC = () => {
         );
         if (imports.length > 0) {
           imports.sort((a, b) => {
-            const tA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
-            const tB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
+            const tA = a.uploadedAt ? new Date(a.uploadedAt as any).getTime() : 0;
+            const tB = b.uploadedAt ? new Date(b.uploadedAt as any).getTime() : 0;
             return tB - tA;
           });
           setLatestImport(imports[0]);

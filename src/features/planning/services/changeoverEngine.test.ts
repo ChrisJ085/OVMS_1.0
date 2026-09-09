@@ -8,7 +8,9 @@ import { ProductionLine } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { ProductCategory } from '../../../types/configuration';
 import { ProductionPlanEntry } from '../../../types/production';
-import { Timestamp } from '../../../services/supabaseBase';
+
+const nowIso = new Date().toISOString() as any;
+const fromDateIso = (d: Date) => d.toISOString() as any;
 
 const sampleLine: ProductionLine = {
   id: 'line-f1',
@@ -19,14 +21,14 @@ const sampleLine: ProductionLine = {
   scheduledCleanDay: 'None',
   status: 'active',
   createdBy: 'test',
-  createdDate: Timestamp.now(),
+  createdDate: nowIso,
   modifiedBy: 'test',
-  modifiedDate: Timestamp.now(),
+  modifiedDate: nowIso,
 };
 
 const sampleCategories: ProductCategory[] = [
-  { id: 'cat-tissue', tenantId: 'tenant-1', code: 'TISSUE', name: 'Toilet Tissue', status: 'active', createdBy: 'test', createdDate: Timestamp.now(), modifiedBy: 'test', modifiedDate: Timestamp.now() },
-  { id: 'cat-towel', tenantId: 'tenant-1', code: 'TOWEL', name: 'Facial Tissue', status: 'active', createdBy: 'test', createdDate: Timestamp.now(), modifiedBy: 'test', modifiedDate: Timestamp.now() },
+  { id: 'cat-tissue', tenantId: 'tenant-1', code: 'TISSUE', name: 'Toilet Tissue', status: 'active', createdBy: 'test', createdDate: nowIso, modifiedBy: 'test', modifiedDate: nowIso },
+  { id: 'cat-towel', tenantId: 'tenant-1', code: 'TOWEL', name: 'Facial Tissue', status: 'active', createdBy: 'test', createdDate: nowIso, modifiedBy: 'test', modifiedDate: nowIso },
 ];
 
 const sampleProducts: Product[] = [
@@ -46,9 +48,9 @@ const sampleProducts: Product[] = [
     notes: '',
     status: 'active',
     createdBy: 'test',
-    createdDate: Timestamp.now(),
+    createdDate: nowIso,
     modifiedBy: 'test',
-    modifiedDate: Timestamp.now(),
+    modifiedDate: nowIso,
   },
   {
     id: 'prod-b',
@@ -66,9 +68,9 @@ const sampleProducts: Product[] = [
     notes: '',
     status: 'active',
     createdBy: 'test',
-    createdDate: Timestamp.now(),
+    createdDate: nowIso,
     modifiedBy: 'test',
-    modifiedDate: Timestamp.now(),
+    modifiedDate: nowIso,
   },
   {
     id: 'prod-c',
@@ -86,9 +88,9 @@ const sampleProducts: Product[] = [
     notes: '',
     status: 'active',
     createdBy: 'test',
-    createdDate: Timestamp.now(),
+    createdDate: nowIso,
     modifiedBy: 'test',
-    modifiedDate: Timestamp.now(),
+    modifiedDate: nowIso,
   },
   {
     id: 'prod-nocat',
@@ -106,9 +108,9 @@ const sampleProducts: Product[] = [
     notes: '',
     status: 'active',
     createdBy: 'test',
-    createdDate: Timestamp.now(),
+    createdDate: nowIso,
     modifiedBy: 'test',
-    modifiedDate: Timestamp.now(),
+    modifiedDate: nowIso,
   },
 ];
 
@@ -122,18 +124,18 @@ function makeEntry(id: string, productCode: string, productId: string, date: Dat
     descriptionSnapshot: productCode,
     productionLineId: 'line-f1',
     productionLineCodeSnapshot: 'F1',
-    productionDate: Timestamp.fromDate(date),
+    productionDate: fromDateIso(date),
     plannedCases: 1000,
     casesPerPallet: 40,
     plannedPallets: 25,
     sourceType: 'SAP_MPPS7',
     sourceSheetName: 'F1',
     sourceRowNumber,
-    sourceUpdatedAt: Timestamp.now(),
+    sourceUpdatedAt: nowIso,
     planVersion: '1',
     status: 'PLANNED',
-    createdDate: Timestamp.now(),
-    modifiedDate: Timestamp.now(),
+    createdDate: nowIso,
+    modifiedDate: nowIso,
   };
 }
 
@@ -158,7 +160,7 @@ describe('changeoverEngine', () => {
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'FORMAT_CHANGE' as const,
         title: 'Format Change',
         note: 'Switching format on line F1',
@@ -168,9 +170,9 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       }
     ];
 
@@ -186,7 +188,7 @@ describe('changeoverEngine', () => {
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'GRADE_CHANGE' as const,
         title: 'Grade Change',
         note: 'Switching paper grade',
@@ -196,9 +198,9 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       }
     ];
 
@@ -214,7 +216,7 @@ describe('changeoverEngine', () => {
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'CLEANING' as const,
         title: 'Deep Clean',
         note: 'Required washdown',
@@ -224,9 +226,9 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       }
     ];
 
@@ -242,7 +244,7 @@ describe('changeoverEngine', () => {
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'MAINTENANCE' as const,
         title: 'Motor overhaul',
         note: 'Replacing main drive motor',
@@ -252,9 +254,9 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       }
     ];
 
@@ -270,7 +272,7 @@ describe('changeoverEngine', () => {
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'TRIAL' as const,
         title: 'RSR trial run',
         note: 'Testing new emboss roll',
@@ -280,9 +282,9 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       }
     ];
 
@@ -298,7 +300,7 @@ describe('changeoverEngine', () => {
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'TRIAL' as const,
         title: 'Trial',
         note: 'Testing new emboss roll',
@@ -308,16 +310,16 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       },
       {
         id: 'note-b',
         tenantId: 'tenant-1',
         siteId: 'site-1',
         productionLineId: 'F1',
-        noteDate: Timestamp.fromDate(mondayDate),
+        noteDate: fromDateIso(mondayDate),
         noteType: 'CLEANING' as const,
         title: 'Clean',
         note: 'Deep clean',
@@ -327,9 +329,9 @@ describe('changeoverEngine', () => {
         source: 'PLANNER' as const,
         active: true,
         createdBy: 'Test',
-        createdDate: Timestamp.now(),
+        createdDate: nowIso,
         modifiedBy: 'Test',
-        modifiedDate: Timestamp.now(),
+        modifiedDate: nowIso,
       }
     ];
 

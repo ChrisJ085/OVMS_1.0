@@ -3,7 +3,7 @@ import { ProductPlanningRule } from '../../../types/planning';
 import { Destination } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { refreshSiteRecommendations } from './recommendationService';
-import { Timestamp, collection, createDocument, db, doc, getDocs, query, where, writeBatch } from '../../../services/supabaseBase';
+import { getDocuments, createDocument, updateDocument, where } from '../../../services/dbService';
 
 export interface PlanningRuleImportRow {
   rowIndex: number;
@@ -250,9 +250,9 @@ export const commitPlanningRulesImport = async (
         sortOrder: 10,
         status: 'active',
         createdBy: 'import',
-        createdDate: Timestamp.now(),
+        createdDate: new Date().toISOString(),
         modifiedBy: 'import',
-        modifiedDate: Timestamp.now()
+        modifiedDate: new Date().toISOString()
       };
       destMap.set(key, newDest);
       destMap.set(code.toLowerCase(), newDest);
@@ -316,9 +316,9 @@ export const commitPlanningRulesImport = async (
       notes: 'Auto-created via Planning Rules Import',
       status: 'active',
       createdBy: 'import',
-      createdDate: Timestamp.now(),
+      createdDate: new Date().toISOString(),
       modifiedBy: 'import',
-      modifiedDate: Timestamp.now()
+      modifiedDate: new Date().toISOString()
     };
 
     productMap.set(key, newProd);
@@ -336,15 +336,12 @@ export const commitPlanningRulesImport = async (
       const product = await resolveOrCreateProduct(row.productCode, row.description, row.primaryUom);
 
       // Check existing active planning rule for product
-      const rulesRef = collection(db, 'planningRules');
-      const q = query(
-        rulesRef,
+      const existingRules = await getDocuments<any>('planningRules', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId),
         where('productId', '==', product.id!),
         where('status', '==', 'active')
-      );
-      const snap = await getDocs(q);
+      ]);
 
       const rulePayload: Omit<ProductPlanningRule, 'id' | 'createdBy' | 'createdDate' | 'modifiedBy' | 'modifiedDate'> = {
         tenantId,
@@ -365,23 +362,21 @@ export const commitPlanningRulesImport = async (
         allowQuantityOverride: true,
         allowDestinationOverride: true,
         overrideRequiresReason: true,
-        effectiveFrom: Timestamp.now(),
+        effectiveFrom: new Date().toISOString(),
         effectiveTo: null,
         untilSwitchedOff: true,
         notes: `Imported from Excel on ${new Date().toLocaleDateString()}`,
         status: 'active'
       };
 
-      if (!snap.empty) {
+      if (existingRules.length > 0) {
         // Update existing rule
-        const existingDoc = snap.docs[0];
-        const batch = writeBatch(db);
-        batch.update(existingDoc.ref, {
+        const existingRule = existingRules[0];
+        await updateDocument('planningRules', existingRule.id, {
           ...rulePayload,
           modifiedBy: 'import',
-          modifiedDate: Timestamp.now()
+          modifiedDate: new Date().toISOString()
         });
-        await batch.commit();
         updatedRulesCount++;
       } else {
         // Create new rule

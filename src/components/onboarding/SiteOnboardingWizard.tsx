@@ -135,34 +135,32 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
             timezone: site.timezone || 'Europe/London'
           });
         } else {
-          const docRef = doc(db, 'sites', siteId);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            const data = snap.data();
+          const siteData = await getDocument<any>('sites', siteId);
+          if (siteData) {
             setSiteForm({
-              siteName: data.siteName || '',
-              siteCode: docSnapId(snap.id),
-              timezone: data.timezone || 'Europe/London'
+              siteName: siteData.siteName || '',
+              siteCode: siteData.id || siteId,
+              timezone: siteData.timezone || 'Europe/London'
             });
           }
         }
       } else if (stepId === 1) {
         // Production lines
-        const snap = await getDocs(query(collection(db, 'productionLines'), where('tenantId', '==', tenantId), where('siteId', '==', siteId)));
-        setLines(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const lineDocs = await getDocuments<any>('productionLines', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+        setLines(lineDocs);
       } else if (stepId === 2) {
         // Destinations
-        const snap = await getDocs(query(collection(db, 'destinations'), where('tenantId', '==', tenantId)));
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter((d: any) => !d.siteId || d.siteId === siteId);
+        const destDocs = await getDocuments<any>('destinations', [where('tenantId', '==', tenantId)]);
+        const list = destDocs.filter((d: any) => !d.siteId || d.siteId === siteId);
         setDestinations(list);
       } else if (stepId === 3) {
         // Action Types
-        const snap = await getDocs(query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId)));
-        setActions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const actionDocs = await getDocuments<any>('actionTypes', [where('tenantId', '==', tenantId)]);
+        setActions(actionDocs);
       } else if (stepId === 4) {
         // Priority Levels
-        const snap = await getDocs(query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId)));
-        setPriorities(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const priorityDocs = await getDocuments<any>('priorityLevels', [where('tenantId', '==', tenantId)]);
+        setPriorities(priorityDocs);
       } else if (stepId === 5) {
         // Operational Settings
         const settings = await getSiteSettings(tenantId, siteId);
@@ -185,13 +183,13 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         setDecisionConfig(config);
       } else if (stepId === 7) {
         // Products
-        const snap = await getDocs(query(collection(db, 'products'), where('tenantId', '==', tenantId)));
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter((p: any) => !p.siteId || p.siteId === siteId);
+        const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId)]);
+        const list = prodDocs.filter((p: any) => !p.siteId || p.siteId === siteId);
         setProducts(list);
       } else if (stepId === 8) {
         // Planning rules
-        const snap = await getDocs(query(collection(db, 'planningRules'), where('tenantId', '==', tenantId), where('siteId', '==', siteId)));
-        setRules(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const ruleDocs = await getDocuments<any>('planningRules', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+        setRules(ruleDocs);
       } else if (stepId === 9) {
         // Readiness Review
         setRunningChecks(true);
@@ -251,7 +249,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     setSubmitting(true);
     try {
       // Update site document
-      await updateDoc(doc(db, 'sites', siteId), {
+      await updateDocument('sites', siteId, {
         siteName: siteForm.siteName,
         timezone: siteForm.timezone
       });
@@ -317,7 +315,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await addDoc(collection(db, 'productionLines'), payload);
+      await createDocument('productionLines', payload);
       setNewLineForm({ lineCode: '', lineName: '', sapResourceCode: '', sortOrder: '1' });
       await loadStepData(1);
     } catch (err: any) {
@@ -329,7 +327,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
 
   const handleDeleteLine = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'productionLines', id));
+      await deleteDocument('productionLines', id);
       await loadStepData(1);
     } catch (err: any) {
       setUiError(err.message || 'Failed to delete production line.');
@@ -357,7 +355,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await addDoc(collection(db, 'destinations'), payload);
+      await createDocument('destinations', payload);
       setNewDestForm({ destinationCode: '', destinationName: '', destinationType: 'EXTERNAL_SITE', sortOrder: '1' });
       await loadStepData(2);
     } catch (err: any) {
@@ -369,7 +367,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
 
   const handleDeleteDest = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'destinations', id));
+      await deleteDocument('destinations', id);
       await loadStepData(2);
     } catch (err: any) {
       setUiError(err.message || 'Failed to delete destination.');
@@ -399,7 +397,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await addDoc(collection(db, 'actionTypes'), payload);
+      await createDocument('actionTypes', payload);
       setNewActionForm({ code: '', label: '', meaning: '', colourToken: 'hold', iconKey: 'Clock', sortOrder: '1' });
       await loadStepData(3);
     } catch (err: any) {
@@ -411,7 +409,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
 
   const handleDeleteAction = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'actionTypes', id));
+      await deleteDocument('actionTypes', id);
       await loadStepData(3);
     } catch (err: any) {
       setUiError(err.message || 'Failed to delete action type.');
@@ -441,7 +439,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await addDoc(collection(db, 'priorityLevels'), payload);
+      await createDocument('priorityLevels', payload);
       setNewPriorityForm({ code: '', label: '', level: '1', description: '', severity: 'MEDIUM', colourToken: 'normal' });
       await loadStepData(4);
     } catch (err: any) {
@@ -453,7 +451,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
 
   const handleDeletePriority = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'priorityLevels', id));
+      await deleteDocument('priorityLevels', id);
       await loadStepData(4);
     } catch (err: any) {
       setUiError(err.message || 'Failed to delete priority level.');
@@ -536,7 +534,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await addDoc(collection(db, 'products'), payload);
+      await createDocument('products', payload);
       setNewProductForm({ productCode: '', description: '', categoryId: '', unitOfMeasureId: 'KG', casesPerPallet: '100', unitsPerCase: '1' });
       await loadStepData(7);
     } catch (err: any) {
@@ -548,7 +546,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
 
   const handleDeleteProduct = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'products', id));
+      await deleteDocument('products', id);
       await loadStepData(7);
     } catch (err: any) {
       setUiError(err.message || 'Failed to delete product.');

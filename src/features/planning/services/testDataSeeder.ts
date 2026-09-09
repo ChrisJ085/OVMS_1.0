@@ -1,6 +1,6 @@
 import { ensureDefaultDecisionConfiguration } from './decisionConfigurationService';
 import { generateRecommendationForProduct } from './recommendationService';
-import { Timestamp, collection, db, doc, getDocs, query, serverTimestamp, setDoc, where, writeBatch } from '../../../services/supabaseBase';
+import { getDocuments, setDocument, where } from '../../../services/dbService';
 
 // Define structures matching types
 const PRODUCTS_COLLECTION = 'products';
@@ -23,58 +23,54 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
     }
 
     // Get configuration to resolve Action IDs and Priority IDs
-    const actionsSnap = await getDocs(query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId)));
-    const prioritiesSnap = await getDocs(query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId)));
+    const actionsDocs = await getDocuments<any>('actionTypes', [where('tenantId', '==', tenantId)]);
+    const prioritiesDocs = await getDocuments<any>('priorityLevels', [where('tenantId', '==', tenantId)]);
     
-    const releaseAction = actionsSnap.docs.find(d => d.data().code === 'RELEASE' || d.data().code === 'SEND')?.id || 'ACTION_RELEASE';
-    const holdAction = actionsSnap.docs.find(d => d.data().code === 'HOLD')?.id || 'ACTION_HOLD';
-    const normalPriority = prioritiesSnap.docs.find(d => d.data().code === 'NORMAL' || d.data().code === 'STANDARD')?.id || 'PRIORITY_NORMAL';
-    const urgentPriority = prioritiesSnap.docs.find(d => d.data().code === 'URGENT' || d.data().code === 'HIGH')?.id || 'PRIORITY_URGENT';
+    const releaseAction = actionsDocs.find(d => d.code === 'RELEASE' || d.code === 'SEND')?.id || 'ACTION_RELEASE';
+    const holdAction = actionsDocs.find(d => d.code === 'HOLD')?.id || 'ACTION_HOLD';
+    const normalPriority = prioritiesDocs.find(d => d.code === 'NORMAL' || d.code === 'STANDARD')?.id || 'PRIORITY_NORMAL';
+    const urgentPriority = prioritiesDocs.find(d => d.code === 'URGENT' || d.code === 'HIGH')?.id || 'PRIORITY_URGENT';
 
     // 2. Ensure Default Destination exists
-    const destQuery = query(collection(db, DESTINATIONS_COLLECTION), where('tenantId', '==', tenantId));
-    const destSnap = await getDocs(destQuery);
+    const destDocs = await getDocuments<any>(DESTINATIONS_COLLECTION, [where('tenantId', '==', tenantId)]);
     let preferredDestinationId = 'DEST_DEFAULT';
     
-    if (destSnap.empty) {
-      const destRef = doc(collection(db, DESTINATIONS_COLLECTION), 'DEST_DEFAULT');
-      await setDoc(destRef, {
+    if (destDocs.length === 0) {
+      await setDocument(DESTINATIONS_COLLECTION, 'DEST_DEFAULT', {
         tenantId,
         destinationCode: 'CH',
         destinationName: 'Chester Hub',
         status: 'active',
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
         createdBy: 'SYSTEM_SEED',
         modifiedBy: 'SYSTEM_SEED'
       });
     } else {
-      preferredDestinationId = destSnap.docs[0].id;
+      preferredDestinationId = destDocs[0].id;
     }
 
     // 3. Ensure Default Location exists
-    const locQuery = query(collection(db, LOCATIONS_COLLECTION), where('tenantId', '==', tenantId), where('siteId', '==', siteId));
-    const locSnap = await getDocs(locQuery);
+    const locDocs = await getDocuments<any>(LOCATIONS_COLLECTION, [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
     let locationId = 'LOC_HB1';
     let locationCode = 'HB-01';
     
-    if (locSnap.empty) {
-      const locRef = doc(collection(db, LOCATIONS_COLLECTION), 'LOC_HB1');
-      await setDoc(locRef, {
+    if (locDocs.length === 0) {
+      await setDocument(LOCATIONS_COLLECTION, 'LOC_HB1', {
         tenantId,
         siteId,
         storageAreaId: 'HB1',
         locationCode: 'HB-01',
         locationName: 'High Bay Bin 1',
         status: 'active',
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
         createdBy: 'SYSTEM_SEED',
         modifiedBy: 'SYSTEM_SEED'
       });
     } else {
-      locationId = locSnap.docs[0].id;
-      locationCode = locSnap.docs[0].data().locationCode || 'HB-01';
+      locationId = locDocs[0].id;
+      locationCode = locDocs[0].locationCode || 'HB-01';
     }
 
     // 4. Create 5 Diverse Test Products
@@ -86,12 +82,9 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
       { id: `${tenantId}_PRD_LEM_05`, code: 'PRD-LEM-05', desc: 'Lemon Lime Sparkling 500ml', min: 200, target: 500, max: 1000, currentStock: 500 }, // At Target
     ];
 
-    const batch = writeBatch(db);
-
     for (const prod of testProducts) {
       // Create Product
-      const productRef = doc(collection(db, PRODUCTS_COLLECTION), prod.id);
-      batch.set(productRef, {
+      await setDocument(PRODUCTS_COLLECTION, prod.id, {
         tenantId,
         productCode: prod.code,
         description: prod.desc,
@@ -107,15 +100,14 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
         operationallyRelevant: true,
         notes: 'Seeded test product',
         status: 'active',
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
         createdBy: 'SYSTEM_SEED',
         modifiedBy: 'SYSTEM_SEED'
       });
 
       // Create Planning Rule
-      const ruleRef = doc(collection(db, PLANNING_RULES_COLLECTION), `${prod.id}_rule`);
-      batch.set(ruleRef, {
+      await setDocument(PLANNING_RULES_COLLECTION, `${prod.id}_rule`, {
         tenantId,
         siteId,
         productId: prod.id,
@@ -135,20 +127,19 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
         allowQuantityOverride: true,
         allowDestinationOverride: true,
         overrideRequiresReason: true,
-        effectiveFrom: Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)), // Active since 30 days ago
+        effectiveFrom: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // Active since 30 days ago
         effectiveTo: null,
         untilSwitchedOff: true,
         notes: 'Seeded test planning rule',
         status: 'active',
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
         createdBy: 'SYSTEM_SEED',
         modifiedBy: 'SYSTEM_SEED'
       });
 
       // Create Inventory Balance
-      const balanceRef = doc(collection(db, BALANCES_COLLECTION), `${prod.id}_balance`);
-      batch.set(balanceRef, {
+      await setDocument(BALANCES_COLLECTION, `${prod.id}_balance`, {
         tenantId,
         siteId,
         productId: prod.id,
@@ -159,10 +150,10 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
         quantity: prod.currentStock,
         unitOfMeasureId: 'cases',
         source: 'MANUAL',
-        sourceUpdatedAt: serverTimestamp(),
+        sourceUpdatedAt: new Date().toISOString(),
         status: 'active',
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
         createdBy: 'SYSTEM_SEED',
         modifiedBy: 'SYSTEM_SEED'
       });
@@ -170,29 +161,27 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
 
     // 5. Create active promotion: Summer Refresh Special
     const promoId = `${tenantId}_PROMO_SUMMER`;
-    const promoRef = doc(collection(db, PROMOTIONS_COLLECTION), promoId);
-    batch.set(promoRef, {
+    await setDocument(PROMOTIONS_COLLECTION, promoId, {
       tenantId,
       promotionCode: 'SUMMER26',
       promotionName: 'Summer Refresh Special',
       description: 'Nationwide promotional uplift for key beverage SKUs during peak heat waves',
       importance: 'HIGH',
       promotionStatus: 'ACTIVE',
-      startDate: Timestamp.fromDate(new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)), // Started 5 days ago
-      endDate: Timestamp.fromDate(new Date(Date.now() + 15 * 24 * 60 * 60 * 1000)), // Ends in 15 days
-      preBuildStartDate: Timestamp.fromDate(new Date(Date.now() - 12 * 24 * 60 * 60 * 1000)),
-      runDownEndDate: Timestamp.fromDate(new Date(Date.now() + 20 * 24 * 60 * 60 * 1000)),
+      startDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // Started 5 days ago
+      endDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString(), // Ends in 15 days
+      preBuildStartDate: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
+      runDownEndDate: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString(),
       notes: 'Summer promotion seeding',
       status: 'active',
-      createdDate: serverTimestamp(),
-      modifiedDate: serverTimestamp(),
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString(),
       createdBy: 'SYSTEM_SEED',
       modifiedBy: 'SYSTEM_SEED'
     });
 
     // Link PRD-APP-01 (Apple Juice) and PRD-CHY-03 (Cherry Soda) to Summer promotion
-    const promoRule1Ref = doc(collection(db, PROMOTION_RULES_COLLECTION), `${promoId}_PRD_APP_01`);
-    batch.set(promoRule1Ref, {
+    await setDocument(PROMOTION_RULES_COLLECTION, `${promoId}_PRD_APP_01`, {
       tenantId,
       siteId,
       promotionId: promoId,
@@ -210,14 +199,13 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
       actionTypeOverrideId: releaseAction,
       notes: 'Promo uplift rules for apple juice',
       status: 'active',
-      createdDate: serverTimestamp(),
-      modifiedDate: serverTimestamp(),
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString(),
       createdBy: 'SYSTEM_SEED',
       modifiedBy: 'SYSTEM_SEED'
     });
 
-    const promoRule2Ref = doc(collection(db, PROMOTION_RULES_COLLECTION), `${promoId}_PRD_CHY_03`);
-    batch.set(promoRule2Ref, {
+    await setDocument(PROMOTION_RULES_COLLECTION, `${promoId}_PRD_CHY_03`, {
       tenantId,
       siteId,
       promotionId: promoId,
@@ -235,8 +223,8 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
       actionTypeOverrideId: null,
       notes: 'Promo uplift rules for cherry soda',
       status: 'active',
-      createdDate: serverTimestamp(),
-      modifiedDate: serverTimestamp(),
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString(),
       createdBy: 'SYSTEM_SEED',
       modifiedBy: 'SYSTEM_SEED'
     });
@@ -246,14 +234,12 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
     const activeImportId = 'import_seeded_system';
     
     // Seed some future production entries
-    testProducts.forEach((prod, index) => {
+    for (const [index, prod] of testProducts.entries()) {
       const entryId = `${tenantId}_PROD_ENTRY_${prod.code}`;
-      const entryRef = doc(collection(db, PRODUCTION_ENTRIES_COLLECTION), entryId);
-      
       const isScheduled = index % 2 === 0; // Alternating schedule to test different risks
       const lineId = lines[index % lines.length];
       
-      batch.set(entryRef, {
+      await setDocument(PRODUCTION_ENTRIES_COLLECTION, entryId, {
         tenantId,
         siteId,
         activeImportId,
@@ -262,26 +248,24 @@ export async function seedTestDataForTesting(tenantId: string, siteId: string): 
         descriptionSnapshot: prod.desc,
         productionLineId: lineId,
         productionLineCodeSnapshot: lineId,
-        productionDate: Timestamp.fromDate(new Date(Date.now() + (index + 1) * 24 * 60 * 60 * 1000)), // scheduled in 1 to 5 days
+        productionDate: new Date(Date.now() + (index + 1) * 24 * 60 * 60 * 1000).toISOString(), // scheduled in 1 to 5 days
         plannedCases: 400,
         casesPerPallet: 100,
         plannedPallets: 4,
         sourceType: 'SAP_MPPS7',
         sourceSheetName: 'Seeded_Schedule',
         sourceRowNumber: index + 1,
-        sourceUpdatedAt: serverTimestamp(),
+        sourceUpdatedAt: new Date().toISOString(),
         planVersion: '1.0',
         status: isScheduled ? 'PLANNED' : 'RUNNING',
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
         createdBy: 'SYSTEM_SEED',
         modifiedBy: 'SYSTEM_SEED'
       });
-    });
+    }
 
-    // Commit all seed records
-    await batch.commit();
-    console.log('Seeded database batch successfully!');
+    console.log('Seeded database records successfully!');
 
     // 7. Generate Recommendations for the 5 seeded products
     let count = 0;

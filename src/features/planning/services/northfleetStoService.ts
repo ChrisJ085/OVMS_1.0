@@ -605,8 +605,8 @@ export const getNorthfleetStoRequirements = async (
 
     // Sort by Barrow Collection Date ascending
     list.sort((a, b) => {
-      const timeA = a.barrowCollectionDate ? new Date(a.barrowCollectionDate).getTime() : 0;
-      const timeB = b.barrowCollectionDate ? new Date(b.barrowCollectionDate).getTime() : 0;
+      const timeA = a.barrowCollectionDate ? new Date(a.barrowCollectionDate as any).getTime() : 0;
+      const timeB = b.barrowCollectionDate ? new Date(b.barrowCollectionDate as any).getTime() : 0;
       return timeA - timeB;
     });
 
