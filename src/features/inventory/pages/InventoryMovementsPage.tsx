@@ -8,7 +8,7 @@ import { subscribeToMovements } from '../services/inventoryService';
 import { InventoryMovement } from '../../../types/inventory';
 import { Location } from '../../../types/inventory';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const InventoryMovementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

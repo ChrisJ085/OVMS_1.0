@@ -2,7 +2,7 @@ import { NorthfleetStoRequirement, NorthfleetStoImport, NorthfleetStoStatus } fr
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
 import { generateRecommendationForProduct } from './recommendationService';
-import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from '../../../services/supabaseBase';
 
 const STO_REQUIREMENTS_COLLECTION = 'northfleetStoRequirements';
 const STO_IMPORTS_COLLECTION = 'northfleetStoImports';

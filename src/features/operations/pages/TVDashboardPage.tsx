@@ -16,7 +16,7 @@ import {
   formatQuantityInPallets, 
   isManualInstruction 
 } from '../utils/priorityFormatters';
-import { collection, db, onSnapshot, query, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { collection, db, onSnapshot, query, subscribeToCollection, where } from '../../../services/supabaseBase';
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play,
   LayoutGrid, AlertCircle, TrendingDown,

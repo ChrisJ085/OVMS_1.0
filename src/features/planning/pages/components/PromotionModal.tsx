@@ -4,7 +4,7 @@ import { FormField } from '../../../../components/ui/FormField';
 import { Promotion, PromotionImportance, PromotionStatus } from '../../../../types/promotion';
 import { createPromotion, updatePromotion } from '../../services/promotionService';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { Timestamp } from '../../../../services/firestoreBase';
+import { Timestamp } from '../../../../services/supabaseBase';
 
 interface PromotionModalProps {
   isOpen: boolean;

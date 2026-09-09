@@ -12,7 +12,7 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { collections } from '../../configuration/services/configurationService';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
-import { Timestamp, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { Timestamp, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const DecisionEngineScenariosPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

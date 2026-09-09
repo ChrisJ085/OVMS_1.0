@@ -20,7 +20,7 @@ import { RecommendationAuditSnapshot } from '../../../types/audit';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { getOutstandingStoCasesForProduct } from './northfleetStoService';
-import { Timestamp, collection, db, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from '../../../services/supabaseBase';
 
 const RECOMMENDATIONS_COLLECTION = 'recommendations';
 const PROMOTIONS_COLLECTION = 'promotions';

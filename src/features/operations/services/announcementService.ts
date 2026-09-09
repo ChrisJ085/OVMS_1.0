@@ -1,8 +1,7 @@
 import { Announcement } from '../../../types/announcement';
 import { ServiceResult } from '../../../types/common';
-import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from '../../../services/firestoreBase';
-
-const COLLECTION = 'announcements';
+import { supabase } from '../../../config/supabase';
+import { toSnakeCase } from '../../../utils/caseTransformers';
 
 export interface AuthorIdentity {
   uid: string;
@@ -21,18 +20,29 @@ export const createAnnouncement = async (
 
     const uid = typeof author === 'string' ? author : author.uid;
     const displayName = typeof author === 'string' ? author : (author.displayName || author.email || author.uid);
+    const validUid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid) ? uid : null;
 
-    const docRef = await addDoc(collection(db, COLLECTION), {
+    const rawPayload = {
       ...announcement,
       status: 'active',
-      createdDate: Timestamp.now(),
-      modifiedDate: Timestamp.now(),
-      createdBy: uid,
+      createdBy: validUid,
       createdByName: displayName,
-      modifiedBy: uid,
-      modifiedByName: displayName
-    });
-    return { success: true, data: docRef.id };
+      modifiedBy: validUid,
+      modifiedByName: displayName,
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString()
+    };
+
+    const dbRow = toSnakeCase(rawPayload);
+
+    const { data, error } = await supabase
+      .from('announcements')
+      .insert(dbRow)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+    return { success: true, data: data.id };
   } catch (error: any) {
     console.error('Error creating announcement:', error);
     return { success: false, error: error.message };
@@ -51,14 +61,23 @@ export const updateAnnouncement = async (
 
     const uid = typeof author === 'string' ? author : author.uid;
     const displayName = typeof author === 'string' ? author : (author.displayName || author.email || author.uid);
+    const validUid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid) ? uid : null;
 
-    const docRef = doc(db, COLLECTION, id);
-    await updateDoc(docRef, {
+    const rawUpdates = {
       ...updates,
-      modifiedDate: Timestamp.now(),
-      modifiedBy: uid,
-      modifiedByName: displayName
-    });
+      modifiedBy: validUid,
+      modifiedByName: displayName,
+      modifiedDate: new Date().toISOString()
+    };
+
+    const dbUpdates = toSnakeCase(rawUpdates);
+
+    const { error } = await supabase
+      .from('announcements')
+      .update(dbUpdates)
+      .eq('id', id);
+
+    if (error) throw error;
     return { success: true };
   } catch (error: any) {
     console.error('Error updating announcement:', error);

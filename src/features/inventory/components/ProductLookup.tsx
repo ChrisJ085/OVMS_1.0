@@ -3,7 +3,7 @@ import { subscribeToProducts } from '../services/productService';
 import { Product } from '../../../types/product';
 import { Search } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../services/supabaseBase';
 
 interface ProductLookupProps {
   value?: string; // productId

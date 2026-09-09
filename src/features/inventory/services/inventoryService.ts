@@ -6,7 +6,7 @@ import { Location } from '../../../types/inventory';
 import { getProduct } from './productService';
 
 import { generateRecommendationForProduct } from '../../planning/services/recommendationService';
-import { QueryConstraint, Timestamp, collection, db, doc, getDocs, query, runTransaction, serverTimestamp, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { QueryConstraint, Timestamp, collection, db, doc, getDocs, query, runTransaction, serverTimestamp, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',

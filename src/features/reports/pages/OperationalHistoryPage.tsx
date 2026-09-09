@@ -6,7 +6,7 @@ import { Recommendation } from '../../../types/recommendation';
 import { OperationalException } from '../../../types/exception';
 import { Announcement } from '../../../types/announcement';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, collection, db, getDocs, orderBy, query, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, getDocs, orderBy, query, where } from '../../../services/supabaseBase';
 
 // Normalised history item
 interface HistoryEvent {

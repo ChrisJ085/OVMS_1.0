@@ -6,7 +6,7 @@ import { Megaphone, AlertTriangle, Clock, Activity, CheckCircle, Ban, Edit, Plus
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
-import { Timestamp, collection, onSnapshot, orderBy, query, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, onSnapshot, orderBy, query, where } from '../../../services/supabaseBase';
 
 export const AnnouncementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

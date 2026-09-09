@@ -1,8 +1,7 @@
 import { OperationalException, ExceptionType, ExceptionSeverity, ExceptionStatus } from '../../../types/exception';
 import { ServiceResult } from '../../../types/common';
-import { Timestamp, collection, db, doc, getDocs, query, where, writeBatch } from '../../../services/firestoreBase';
-
-const COLLECTION = 'exceptions';
+import { supabase } from '../../../config/supabase';
+import { toSnakeCase, toCamelCase } from '../../../utils/caseTransformers';
 
 export const runExceptionEvaluation = async (
   tenantId: string,
@@ -10,33 +9,33 @@ export const runExceptionEvaluation = async (
   userId: string
 ): Promise<ServiceResult<void>> => {
   try {
-    // We will scan priorities to check for BLOCKED or OVERDUE ones as an example
-    const qPriorities = query(
-      collection(db, 'priorities'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
-    const snap = await getDocs(qPriorities);
-    const priorities = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-    
-    for (const p of priorities) {
-      if (p.priorityStatus === 'BLOCKED') {
+    const { data: priorities, error } = await supabase
+      .from('priorities')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('site_id', siteId);
+
+    if (error) throw error;
+
+    for (const p of (priorities || [])) {
+      const camelP = toCamelCase<any>(p);
+      if (camelP.priorityStatus === 'BLOCKED') {
         await evaluateAndLogException(
           tenantId,
           siteId,
           'PRIORITY_BLOCKED',
           'PRIORITY',
-          p.id,
-          p.productCodeSnapshot || null,
-          p.id,
+          camelP.id,
+          camelP.productCodeSnapshot || null,
+          camelP.id,
           'CRITICAL',
-          `Priority Blocked: ${p.productCodeSnapshot}`,
-          p.latestProgressNote || 'Priority marked as blocked during execution.',
+          `Priority Blocked: ${camelP.productCodeSnapshot}`,
+          camelP.latestProgressNote || 'Priority marked as blocked during execution.',
           ['BLOCKED_BY_WAREHOUSE'],
           userId
         );
       } else {
-        await autoResolveExceptions(tenantId, siteId, 'PRIORITY_BLOCKED', p.id, userId, 'Priority is no longer blocked.');
+        await autoResolveExceptions(tenantId, siteId, 'PRIORITY_BLOCKED', camelP.id, userId, 'Priority is no longer blocked.');
       }
     }
     return { success: true };
@@ -61,58 +60,65 @@ export const evaluateAndLogException = async (
   userId: string
 ): Promise<void> => {
   try {
-    // Check if open exception exists
-    const q = query(
-      collection(db, COLLECTION),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('exceptionType', '==', exceptionType),
-      where('entityId', '==', entityId),
-      where('exceptionStatus', 'in', ['OPEN', 'ACKNOWLEDGED'])
-    );
+    const { data: existing, error } = await supabase
+      .from('exceptions')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('site_id', siteId)
+      .eq('exception_type', exceptionType)
+      .eq('entity_id', entityId)
+      .in('exception_status', ['OPEN', 'ACKNOWLEDGED']);
 
-    const snap = await getDocs(q);
-    const batch = writeBatch(db);
+    if (error) throw error;
 
-    if (snap.empty) {
-      // Create new exception
-      const newRef = doc(collection(db, COLLECTION));
-      const newEx: Omit<OperationalException, 'id'> = {
+    const now = new Date().toISOString();
+
+    if (!existing || existing.length === 0) {
+      const validProductId = (productId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId)) ? productId : null;
+      const validPriorityId = (priorityId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(priorityId)) ? priorityId : null;
+
+      const newEx = toSnakeCase({
         tenantId,
         siteId,
         exceptionType,
         severity,
         entityType,
         entityId,
-        productId,
-        priorityId,
+        productId: validProductId,
+        priorityId: validPriorityId,
         title,
         message,
         reasonCodes,
         exceptionStatus: 'OPEN',
-        firstDetectedAt: Timestamp.now(),
-        lastDetectedAt: Timestamp.now(),
+        firstDetectedAt: now,
+        lastDetectedAt: now,
         acknowledgedAt: null,
         resolvedAt: null,
         resolutionNote: null,
         createdBy: userId,
-        createdDate: Timestamp.now(),
+        createdDate: now,
         modifiedBy: userId,
-        modifiedDate: Timestamp.now(),
-      };
-      batch.set(newRef, newEx);
-    } else {
-      // Update last detected
-      snap.docs.forEach(d => {
-        batch.update(d.ref, {
-          lastDetectedAt: Timestamp.now(),
-          modifiedDate: Timestamp.now(),
-          modifiedBy: userId
-        });
+        modifiedDate: now
       });
-    }
 
-    await batch.commit();
+      const { error: insErr } = await supabase
+        .from('exceptions')
+        .insert(newEx);
+
+      if (insErr) throw insErr;
+    } else {
+      const ids = existing.map(e => e.id);
+      const { error: updErr } = await supabase
+        .from('exceptions')
+        .update({
+          last_detected_at: now,
+          updated_at: now,
+          updated_by: userId
+        })
+        .in('id', ids);
+
+      if (updErr) throw updErr;
+    }
   } catch (err) {
     console.error('Error evaluating exception:', err);
   }
@@ -127,30 +133,33 @@ export const autoResolveExceptions = async (
   resolutionNote: string = 'Automatically resolved by system'
 ) => {
   try {
-    const q = query(
-      collection(db, COLLECTION),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('exceptionType', '==', exceptionType),
-      where('entityId', '==', entityId),
-      where('exceptionStatus', 'in', ['OPEN', 'ACKNOWLEDGED'])
-    );
-    
-    const snap = await getDocs(q);
-    if (snap.empty) return;
+    const { data: existing, error } = await supabase
+      .from('exceptions')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('site_id', siteId)
+      .eq('exception_type', exceptionType)
+      .eq('entity_id', entityId)
+      .in('exception_status', ['OPEN', 'ACKNOWLEDGED']);
 
-    const batch = writeBatch(db);
-    snap.docs.forEach(d => {
-      batch.update(d.ref, {
-        exceptionStatus: 'RESOLVED',
-        resolvedAt: Timestamp.now(),
-        resolutionNote,
-        modifiedDate: Timestamp.now(),
-        modifiedBy: userId
-      });
-    });
-    
-    await batch.commit();
+    if (error) throw error;
+    if (!existing || existing.length === 0) return;
+
+    const ids = existing.map(e => e.id);
+    const now = new Date().toISOString();
+
+    const { error: updErr } = await supabase
+      .from('exceptions')
+      .update({
+        exception_status: 'RESOLVED',
+        resolved_at: now,
+        resolution_note: resolutionNote,
+        updated_at: now,
+        updated_by: userId
+      })
+      .in('id', ids);
+
+    if (updErr) throw updErr;
   } catch (err) {
     console.error('Error auto-resolving exceptions:', err);
   }
@@ -163,23 +172,25 @@ export const updateExceptionStatus = async (
   note?: string
 ): Promise<ServiceResult<void>> => {
   try {
-    const ref = doc(db, COLLECTION, exceptionId);
-    
+    const now = new Date().toISOString();
     const updateData: any = {
-      exceptionStatus: newStatus,
-      modifiedDate: Timestamp.now(),
-      modifiedBy: userId
+      exception_status: newStatus,
+      updated_at: now,
+      updated_by: userId
     };
 
-    if (newStatus === 'ACKNOWLEDGED') updateData.acknowledgedAt = Timestamp.now();
+    if (newStatus === 'ACKNOWLEDGED') updateData.acknowledged_at = now;
     if (newStatus === 'RESOLVED' || newStatus === 'DISMISSED') {
-      updateData.resolvedAt = Timestamp.now();
-      updateData.resolutionNote = note || `Manually ${newStatus.toLowerCase()}`;
+      updateData.resolved_at = now;
+      updateData.resolution_note = note || `Manually ${newStatus.toLowerCase()}`;
     }
-    
-    const batch = writeBatch(db);
-    batch.update(ref, updateData);
-    await batch.commit();
+
+    const { error } = await supabase
+      .from('exceptions')
+      .update(updateData)
+      .eq('id', exceptionId);
+
+    if (error) throw error;
     return { success: true };
   } catch (error: any) {
     console.error(error);

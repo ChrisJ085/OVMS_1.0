@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { db, getDoc, getDocs, setDoc, updateDoc } from '../../../services/firestoreBase';
+import { db, getDoc, getDocs, setDoc, updateDoc } from '../../../services/supabaseBase';
 import { 
   getSiteOnboarding,
   initializeSiteOnboarding, 
@@ -14,7 +14,7 @@ vi.mock('../../administration/services/settingsService', () => ({
   createAuditLog: vi.fn()
 }));
 
-vi.mock('../../../services/firestoreBase', () => ({
+vi.mock('../../../services/supabaseBase', () => ({
   db: {},
   collection: vi.fn(),
   doc: vi.fn(),

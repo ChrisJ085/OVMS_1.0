@@ -1,7 +1,7 @@
 import { ProductionPlanImport, ProductionPlanRow } from '../../../types/production';
 import { commitProductionPlanImport, ParsedPlanPreview } from '../services/mpps7ImportService';
 import { toAppError } from '../../../types/error';
-import { collection, db, getDocs, limit, orderBy, query, where } from '../../../services/firestoreBase';
+import { collection, db, getDocs, limit, orderBy, query, where } from '../../../services/supabaseBase';
 
 export const productionImportRepository = {
   /**

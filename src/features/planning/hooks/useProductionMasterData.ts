@@ -3,7 +3,7 @@ import { ProductionLine, ProductCategory } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { toAppError } from '../../../types/error';
-import { collection, db, getDocs, query, where } from '../../../services/firestoreBase';
+import { collection, db, getDocs, query, where } from '../../../services/supabaseBase';
 
 export function useProductionMasterData(tenantId: string, siteId: string) {
   const [productionLines, setProductionLines] = useState<ProductionLine[]>([]);

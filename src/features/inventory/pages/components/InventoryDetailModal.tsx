@@ -7,7 +7,7 @@ import { StorageArea, UnitOfMeasure } from '../../../../types/configuration';
 import { Location } from '../../../../types/inventory';
 import { DataTable } from '../../../../components/ui/DataTable';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../../services/supabaseBase';
 
 interface InventoryDetailModalProps {
   isOpen: boolean;

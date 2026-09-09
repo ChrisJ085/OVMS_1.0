@@ -1,6 +1,6 @@
 import { ProductionEvent, ProductProductionContext, ProductionRiskStatus, ProductionPlanEntry, ProductionLinePlanNote } from '../../../types/production';
 import { ServiceResult } from '../../../types/common';
-import { Timestamp, collection, createDocument, db, doc, getDoc, getDocs, limit, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, createDocument, db, doc, getDoc, getDocs, limit, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/supabaseBase';
 
 const COLLECTION_NAME = 'productionEvents';
 

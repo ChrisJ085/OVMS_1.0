@@ -18,7 +18,7 @@ vi.mock('../../auth/context/AuthContext', () => ({
   })
 }));
 
-vi.mock('../../../services/firestoreBase', () => ({
+vi.mock('../../../services/supabaseBase', () => ({
   db: { type: 'mocked-firestore' }
 }));
 

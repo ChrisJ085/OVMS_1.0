@@ -14,7 +14,7 @@ import {
 } from '../../../types/production';
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
-import { Timestamp, collection, db, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from '../../../services/supabaseBase';
 
 // 1. Calculate File Hash
 export const calculateFileHash = async (file: File): Promise<string> => {

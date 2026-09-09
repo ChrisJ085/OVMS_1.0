@@ -8,7 +8,7 @@ import { SiteRecommendationRun } from '../../../types/recommendation';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { formatRecLastGenerated, formatRelativeTime } from '../../../utils/timeFormatters';
-import { Timestamp, onSnapshot } from '../../../services/firestoreBase';
+import { Timestamp, onSnapshot } from '../../../services/supabaseBase';
 
 export interface GenerationProgress {
   total: number;

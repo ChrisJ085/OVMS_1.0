@@ -1,7 +1,7 @@
 import { isUniqueCode, trimCode, trimDescription } from '../../../validation';
 import { Product } from '../../../types/product';
 import { ServiceResult } from '../../../types/common';
-import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, getDoc, getDocs, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/firestoreBase';
+import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, getDoc, getDocs, orderBy, query, subscribeToCollection, updateDocument, where } from '../../../services/supabaseBase';
 
 const COLLECTION_NAME = 'products';
 

@@ -42,7 +42,7 @@ let mockImportDocs: any[] = [];
 let mockEntriesDocs: any[] = [];
 let mockQueryError: Error | null = null;
 
-vi.mock('../services/firestoreBase', () => ({
+vi.mock('../services/supabaseBase', () => ({
   db: {},
   doc: vi.fn(),
   getFirestore: vi.fn(),

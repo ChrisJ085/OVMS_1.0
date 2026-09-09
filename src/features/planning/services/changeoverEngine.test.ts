@@ -8,7 +8,7 @@ import { ProductionLine } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { ProductCategory } from '../../../types/configuration';
 import { ProductionPlanEntry } from '../../../types/production';
-import { Timestamp } from '../../../services/firestoreBase';
+import { Timestamp } from '../../../services/supabaseBase';
 
 const sampleLine: ProductionLine = {
   id: 'line-f1',

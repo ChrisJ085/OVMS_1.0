@@ -13,7 +13,7 @@ import { ProductionLine, UnitOfMeasure } from '../../../types/configuration';
 import { ProductionEventModal } from './components/ProductionEventModal';
 import { ProductionActionModal } from './components/ProductionActionModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { Timestamp, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const ProductionPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

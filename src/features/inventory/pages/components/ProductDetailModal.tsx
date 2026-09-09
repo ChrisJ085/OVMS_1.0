@@ -4,7 +4,7 @@ import { Product } from '../../../../types/product';
 import { StatusBadge } from '../../../../components/ui/StatusBadge';
 import { ProductProductionContextPanel } from '../../../planning/components/ProductProductionContextPanel';
 import { ProductPromotionsPanel } from '../../../planning/components/ProductPromotionsPanel';
-import { Timestamp } from '../../../../services/firestoreBase';
+import { Timestamp } from '../../../../services/supabaseBase';
 
 interface ProductDetailModalProps {
   isOpen: boolean;

@@ -14,7 +14,7 @@ import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { collections } from '../../configuration/services/configurationService';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const InventoryBalancesPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

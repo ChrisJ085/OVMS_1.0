@@ -1,7 +1,7 @@
 import { ProductionPlanEntry } from '../../../types/production';
 import { toAppError } from '../../../types/error';
 import { toEpochMillis } from '../../../utils/timeFormatters';
-import { Timestamp, collection, db, getDocs, query, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, getDocs, query, where } from '../../../services/supabaseBase';
 
 export interface FetchPlanEntriesParams {
   tenantId: string;

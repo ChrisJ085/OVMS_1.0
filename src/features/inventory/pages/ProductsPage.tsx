@@ -13,7 +13,7 @@ import { ProductCategory, UnitOfMeasure, Destination } from '../../../types/conf
 import { ProductModal } from './components/ProductModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const ProductsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

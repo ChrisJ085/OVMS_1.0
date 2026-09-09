@@ -1,6 +1,6 @@
 import { ValidationResult } from '../../../types/importExport';
 import { adjustInventory } from '../../inventory/services/inventoryService';
-import { collection, db, doc, getDocs, query, serverTimestamp, where, writeBatch } from '../../../services/firestoreBase';
+import { collection, db, doc, getDocs, query, serverTimestamp, where, writeBatch } from '../../../services/supabaseBase';
 
 export async function validateImportData(
   tenantId: string, 

@@ -35,7 +35,7 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { useEnvironmentMode } from '../../../contexts/EnvironmentModeContext';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { seedTestDataForTesting } from '../../planning/services/testDataSeeder';
-import { Timestamp, addDoc, collection, db, doc, getCountFromServer, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../../services/firestoreBase';
+import { Timestamp, addDoc, collection, db, doc, getCountFromServer, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../../services/supabaseBase';
 
 export const AdminOverviewPage: React.FC = () => {
   const { userProfile, currentUser, user } = useAuth();

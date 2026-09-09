@@ -1,5 +1,5 @@
 import { DecisionConfiguration } from '../../../types/decision';
-import { addDoc, collection, db, doc, getDoc, getDocs, query, serverTimestamp, setDoc, where } from '../../../services/firestoreBase';
+import { addDoc, collection, db, doc, getDoc, getDocs, query, serverTimestamp, setDoc, where } from '../../../services/supabaseBase';
 
 export const saveDecisionConfiguration = async (
   tenantId: string,

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Activity, Clock, CheckCircle, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, collection, db, getDocs, query, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, getDocs, query, where } from '../../../services/supabaseBase';
 
 export const KpiDashboardPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

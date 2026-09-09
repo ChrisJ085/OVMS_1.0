@@ -13,7 +13,7 @@ import { useSiteContext } from '../../../../contexts/SiteContext';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { productionNotesRepository } from '../../repositories/productionNotesRepository';
 import { toEpochMillis } from '../../../../utils/timeFormatters';
-import { Timestamp } from '../../../../services/firestoreBase';
+import { Timestamp } from '../../../../services/supabaseBase';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];

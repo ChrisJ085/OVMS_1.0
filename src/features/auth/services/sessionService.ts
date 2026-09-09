@@ -1,5 +1,5 @@
 import { UserProfile, UserSession } from '../../../types/auth';
-import { Timestamp, collection, doc, setDoc, updateDoc } from '../../../services/firestoreBase';
+import { Timestamp, collection, doc, setDoc, updateDoc } from '../../../services/supabaseBase';
 
 export async function createSessionRecord(profile: UserProfile, activeSiteId: string): Promise<string | null> {
   try {

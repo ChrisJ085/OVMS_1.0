@@ -25,7 +25,7 @@ export const collections = {
 };
 
 import { createAuditLog } from '../../administration/services/settingsService';
-import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, serverTimestamp, subscribeToCollection, updateDocument, where, writeBatch } from '../../../services/firestoreBase';
+import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, serverTimestamp, subscribeToCollection, updateDocument, where, writeBatch } from '../../../services/supabaseBase';
 
 const getUniqueConstraintParams = (
   tenantId: string,

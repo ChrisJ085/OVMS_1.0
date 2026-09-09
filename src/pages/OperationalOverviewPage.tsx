@@ -19,7 +19,7 @@ import { useSiteContext } from '../contexts/SiteContext';
 import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { resetSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { Sparkles, RotateCcw } from 'lucide-react';
-import { Timestamp, collection, db, getDocs, limit, onSnapshot, orderBy, query, subscribeToCollection, where } from '../services/firestoreBase';
+import { Timestamp, collection, db, getDocs, limit, onSnapshot, orderBy, query, subscribeToCollection, where } from '../services/supabaseBase';
 import { 
   Activity,
   AlertTriangle,

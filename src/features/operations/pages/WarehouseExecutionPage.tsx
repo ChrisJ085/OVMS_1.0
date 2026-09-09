@@ -11,7 +11,7 @@ import { Destination, ActionType, PriorityLevel } from '../../../types/configura
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
-import { collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 

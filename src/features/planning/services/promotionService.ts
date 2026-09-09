@@ -4,7 +4,7 @@ import {
   subscribeToCollection,
   subscribeToDocument,
   collection, query, where, getDocs
-} from '../../../services/firestoreBase';
+} from '../../../services/supabaseBase';
 import { Promotion, PromotionProductRule, PromotionPhase, PromotionWithPhase } from '../../../types/promotion';
 import { ServiceResult, Timestamp } from '../../../types/common';
 import { toEpochMillis } from '../../../utils/timeFormatters';

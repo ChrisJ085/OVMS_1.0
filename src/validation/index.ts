@@ -1,4 +1,5 @@
-import { Timestamp, collection, db, getDocs, query, where } from '../services/firestoreBase';
+import { supabase } from '../config/supabase';
+import { getTableName } from '../utils/caseTransformers';
 
 export const isRequired = (value: string | undefined | null): boolean => {
   if (value === undefined || value === null) return false;
@@ -31,10 +32,6 @@ export const isValidDateRange = (startDate: Date, expiryDate: Date): boolean => 
   return startDate <= expiryDate;
 };
 
-export const toFirestoreTimestamp = (date: Date): Timestamp => {
-  return Timestamp.fromDate(date);
-};
-
 export const isUniqueCode = async (
   collectionName: string,
   tenantId: string,
@@ -43,24 +40,31 @@ export const isUniqueCode = async (
   codeValue: string,
   excludeId?: string
 ): Promise<boolean> => {
-  if (!db) throw new Error('Firestore not initialized');
+  const tableName = getTableName(collectionName);
+  const snakeCodeField = codeField.replace(/([A-Z])/g, '_$1').toLowerCase();
   
-  const collRef = collection(db, collectionName);
-  const q = query(
-    collRef,
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId),
-    where(codeField, '==', codeValue)
-  );
-  
-  const querySnapshot = await getDocs(q);
-  if (querySnapshot.empty) return true;
-  
-  if (excludeId) {
-    // If it only found the exact same document, it's not a duplicate
-    const docs = querySnapshot.docs.filter(doc => doc.id !== excludeId);
-    return docs.length === 0;
+  let dbQuery = supabase
+    .from(tableName)
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq(snakeCodeField, codeValue);
+
+  if (siteId && siteId !== 'GLOBAL') {
+    dbQuery = dbQuery.eq('site_id', siteId);
   }
-  
+
+  const { data, error } = await dbQuery;
+  if (error) {
+    console.error(`[isUniqueCode] Error querying table ${tableName}:`, error);
+    throw error;
+  }
+
+  if (!data || data.length === 0) return true;
+
+  if (excludeId) {
+    const filtered = data.filter((row: any) => row.id !== excludeId);
+    return filtered.length === 0;
+  }
+
   return false;
 };

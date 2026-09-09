@@ -15,7 +15,7 @@ import { PriorityConflict } from '../../../types/priority';
 import { PriorityConflictModal } from '../components/PriorityConflictModal';
 import { Product } from '../../../types/product';
 import { subscribeToProducts } from '../../inventory/services/productService';
-import { Timestamp, collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 const SUMMARY_TILES = [
   { id: 'active', label: 'Active', icon: <Activity className="w-5 h-5 mb-2 text-blue-400"/>, color: 'bg-blue-900/30 text-blue-200 border-blue-800' },

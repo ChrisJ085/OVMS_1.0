@@ -3,11 +3,11 @@ import {
   updateDocument,
   deactivateDocument,
   subscribeToCollection
-} from '../../../services/firestoreBase';
+} from '../../../services/supabaseBase';
 import { isUniqueCode, trimCode } from '../../../validation';
 import { Location } from '../../../types/inventory';
 import { ServiceResult } from '../../../types/common';
-import { QueryConstraint, where } from '../../../services/firestoreBase';
+import { QueryConstraint, where } from '../../../services/supabaseBase';
 
 const COLLECTION_NAME = 'locations';
 

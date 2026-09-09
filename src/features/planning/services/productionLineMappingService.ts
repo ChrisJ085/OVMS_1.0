@@ -1,7 +1,7 @@
 import { ProductionLine } from '../../../types/configuration';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
-import { createDocument, db, doc, getDoc, updateDoc } from '../../../services/firestoreBase';
+import { createDocument, db, doc, getDoc, updateDoc } from '../../../services/supabaseBase';
 
 export interface CreateProductionLineInput {
   lineCode: string;

@@ -9,7 +9,7 @@ import {
 } from '../../planning/services/decisionConfigurationService';
 import { evaluateDecision } from '../../planning/services/decisionEngine';
 import { logAuditEvent } from '../../../services/auditService';
-import { Timestamp } from '../../../services/firestoreBase';
+import { Timestamp } from '../../../services/supabaseBase';
 
 // Mocks
 let mockAuthUserProfile = {
@@ -55,8 +55,8 @@ vi.mock('../../../services/auditService', () => ({
   logAuditEvent: vi.fn(() => Promise.resolve('mock-audit-id'))
 }));
 
-vi.mock('../../../services/firestoreBase', async () => {
-  const actual = await vi.importActual<any>('../../../services/firestoreBase');
+vi.mock('../../../services/supabaseBase', async () => {
+  const actual = await vi.importActual<any>('../../../services/supabaseBase');
   return {
     ...actual,
     collection: vi.fn(),

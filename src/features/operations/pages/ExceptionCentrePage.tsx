@@ -5,7 +5,7 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { updateExceptionStatus, runExceptionEvaluation } from '../services/exceptionService';
 import { AlertTriangle, Clock, CheckCircle, Search, Filter, MessageSquare, Ban, Play } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { collection, db, onSnapshot, orderBy, query, where } from '../../../services/firestoreBase';
+import { collection, db, onSnapshot, orderBy, query, where } from '../../../services/supabaseBase';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 

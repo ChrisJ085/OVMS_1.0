@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../features/auth/context/AuthContext';
 import { useSiteContext } from '../contexts/SiteContext';
 import { SiteOnboarding, getSiteOnboarding, initializeSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
-import { db, doc, onSnapshot } from '../services/firestoreBase';
+import { supabase } from '../config/supabase';
+import { toCamelCase } from '../utils/caseTransformers';
 
 export function useSiteOnboarding() {
   const { userProfile } = useAuth();
@@ -28,50 +29,91 @@ export function useSiteOnboarding() {
       return;
     }
 
+    let active = true;
     setLoading(true);
     setError(null);
 
-    const docId = `${tenantId}_${siteId}`;
-    const docRef = doc(db, 'siteOnboarding', docId);
+    const fetchOnboarding = async () => {
+      try {
+        const record = await getSiteOnboarding(tenantId, siteId);
+        if (!active) return;
 
-    const unsubscribe = onSnapshot(
-      docRef,
-      async (snap) => {
-        if (snap.exists()) {
-          setOnboarding(snap.data() as SiteOnboarding);
+        if (record) {
+          setOnboarding(record);
           setLoading(false);
         } else {
-          // If the record doesn't exist, let's create one if we can write
           if (canComplete && userProfile?.uid) {
             try {
               const newRecord = await initializeSiteOnboarding(tenantId, siteId, userProfile.uid);
-              setOnboarding(newRecord);
+              if (active) {
+                setOnboarding(newRecord);
+                setLoading(false);
+              }
             } catch (err: any) {
               console.error('Failed to initialize onboarding record:', err);
-              setError(err.message || 'Initialization failed');
+              if (active) {
+                setError(err.message || 'Initialization failed');
+                setLoading(false);
+              }
             }
           } else {
-            // Read-only user: mock NOT_STARTED state
-            setOnboarding({
-              tenantId,
-              siteId,
-              status: 'NOT_STARTED',
-              currentStep: 0,
-              completedSteps: [],
-              skippedOptionalSteps: []
-            });
+            if (active) {
+              setOnboarding({
+                tenantId,
+                siteId,
+                status: 'NOT_STARTED',
+                currentStep: 0,
+                completedSteps: [],
+                skippedOptionalSteps: []
+              });
+              setLoading(false);
+            }
           }
+        }
+      } catch (err: any) {
+        console.error('Error fetching onboarding:', err);
+        if (active) {
+          setError(err.message || 'Fetch failed');
           setLoading(false);
         }
-      },
-      (err) => {
-        console.error('Error listening to site onboarding:', err);
-        setError(err.message || 'Permission denied or fetch failed');
-        setLoading(false);
       }
-    );
+    };
 
-    return () => unsubscribe();
+    fetchOnboarding();
+
+    // Set up unique Realtime channel natively
+    const channelName = `realtime_site_onboarding_${tenantId}_${siteId}_${Math.random().toString(36).substring(2, 10)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'site_onboarding',
+          filter: `site_id=eq.${siteId}`
+        },
+        (payload) => {
+          if (!active) return;
+          if (payload.eventType === 'DELETE') {
+            setOnboarding(null);
+          } else if (payload.new) {
+            const camelData = toCamelCase<SiteOnboarding>(payload.new);
+            setOnboarding(camelData);
+          }
+        }
+      );
+
+    channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' && active) {
+        console.warn('Realtime channel subscription failed for site onboarding');
+      }
+    });
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
   }, [tenantId, siteId, userProfile?.uid, canComplete]);
 
   return {

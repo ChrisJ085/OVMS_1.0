@@ -14,7 +14,7 @@ import {
 } from '../../planning/services/decisionConfigurationService';
 import { DecisionConfiguration } from '../../../types/decision';
 import { logAuditEvent } from '../../../services/auditService';
-import { collection, db, getDocs, query, where } from '../../../services/firestoreBase';
+import { collection, db, getDocs, query, where } from '../../../services/supabaseBase';
 
 export const DecisionSettingsPage: React.FC = () => {
   const { currentUser, userProfile } = useAuth();

@@ -13,7 +13,7 @@ import { StorageArea } from '../../../types/configuration';
 import { LocationModal } from './components/LocationModal';
 import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const LocationsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

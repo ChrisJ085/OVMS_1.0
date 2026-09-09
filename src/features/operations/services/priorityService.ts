@@ -2,7 +2,7 @@ import { Priority, PriorityEvent, PriorityStatus, PriorityEventType, PriorityCon
 import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
-import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, runTransaction, where, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, runTransaction, where, writeBatch } from '../../../services/supabaseBase';
 
 const PRIORITIES_COLLECTION = 'priorities';
 const DISPLAY_PRIORITIES_COLLECTION = 'displayPriorities';

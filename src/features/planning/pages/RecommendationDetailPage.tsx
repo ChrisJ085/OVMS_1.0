@@ -13,7 +13,7 @@ import { collections } from '../../configuration/services/configurationService';
 import { Location } from '../../../types/inventory';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
-import { db, doc, getDoc, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { db, doc, getDoc, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const RecommendationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();

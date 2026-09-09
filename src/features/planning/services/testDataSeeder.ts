@@ -1,6 +1,6 @@
 import { ensureDefaultDecisionConfiguration } from './decisionConfigurationService';
 import { generateRecommendationForProduct } from './recommendationService';
-import { Timestamp, collection, db, doc, getDocs, query, serverTimestamp, setDoc, where, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, doc, getDocs, query, serverTimestamp, setDoc, where, writeBatch } from '../../../services/supabaseBase';
 
 // Define structures matching types
 const PRODUCTS_COLLECTION = 'products';

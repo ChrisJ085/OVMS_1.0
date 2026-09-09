@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Download, FileText, Calendar, Filter } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, collection, db, getDocs, query, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, getDocs, query, where } from '../../../services/supabaseBase';
 
 type ReportType = 'PRIORITY_PERFORMANCE' | 'DDXM_STOCK' | 'RECOMMENDATION_OVERRIDE' | 'INVENTORY_MOVEMENT' | 'EXCEPTION_REPORT' | 'PRODUCTION_CONTEXT';
 

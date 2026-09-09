@@ -19,7 +19,7 @@ import { detectPriorityConflicts } from '../../operations/services/priorityServi
 import { PriorityConflictModal } from '../../operations/components/PriorityConflictModal';
 import { useRecommendationGeneration } from '../context/RecommendationGenerationContext';
 import { DataFreshnessHoverCard } from '../../../components/layout/DataFreshnessHoverCard';
-import { collection, db, getDocs, orderBy, query, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { collection, db, getDocs, orderBy, query, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 const SUMMARY_TILES = [
   { id: 'requires-review', label: 'Requires Review', color: 'bg-blue-900 text-blue-100 border-blue-700' },

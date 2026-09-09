@@ -11,7 +11,7 @@ import { useAuth } from '../../../auth/context/AuthContext';
 import { parsePastedInventoryText, ParseResult } from '../../utils/pasteInventoryParser';
 import { batchUpdateInventoryFromPastedData } from '../../services/inventoryService';
 import { refreshSiteRecommendations } from '../../../planning/services/recommendationService';
-import { subscribeToCollection, where } from '../../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../../services/supabaseBase';
 
 interface PasteInventoryModalProps {
   isOpen: boolean;

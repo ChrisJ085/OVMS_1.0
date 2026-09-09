@@ -13,7 +13,7 @@ import { collections } from '../../configuration/services/configurationService';
 import { ProductLookup } from '../../inventory/components/ProductLookup';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
-import { Timestamp, db, doc, getDoc, subscribeToCollection, where } from '../../../services/firestoreBase';
+import { Timestamp, db, doc, getDoc, subscribeToCollection, where } from '../../../services/supabaseBase';
 
 export const CreatePriorityPage: React.FC = () => {
   const { currentUser } = useAuth();

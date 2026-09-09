@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Timestamp, collection, db, doc, getDoc, getDocs, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, collection, db, doc, getDoc, getDocs, writeBatch } from '../../../services/supabaseBase';
 import { 
   createPriority,
   checkDuplicatePriority,
@@ -35,8 +35,8 @@ const mockBatchUpdate = vi.fn();
 const mockBatchDelete = vi.fn();
 const mockBatchCommit = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('../../../services/firestoreBase', async () => {
-  const actual = await vi.importActual<any>('../../../services/firestoreBase');
+vi.mock('../../../services/supabaseBase', async () => {
+  const actual = await vi.importActual<any>('../../../services/supabaseBase');
   return {
     ...actual,
     collection: (db: any, path: string) => mockCollectionSpy(db, path),

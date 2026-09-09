@@ -3,7 +3,7 @@ import { ProductPlanningRule } from '../../../types/planning';
 import { Destination } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { refreshSiteRecommendations } from './recommendationService';
-import { Timestamp, collection, createDocument, db, doc, getDocs, query, where, writeBatch } from '../../../services/firestoreBase';
+import { Timestamp, collection, createDocument, db, doc, getDocs, query, where, writeBatch } from '../../../services/supabaseBase';
 
 export interface PlanningRuleImportRow {
   rowIndex: number;

@@ -1,6 +1,6 @@
 import { ProductPlanningRule, PlanningBandStatus } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
-import { Timestamp, collection, createDocument, db, deactivateDocument, getDocs, query, serverTimestamp, subscribeToCollection, updateDocument, where } from '../../../services/firestoreBase';
+import { Timestamp, collection, createDocument, db, deactivateDocument, getDocs, query, serverTimestamp, subscribeToCollection, updateDocument, where } from '../../../services/supabaseBase';
 
 const COLLECTION_NAME = 'planningRules';
 

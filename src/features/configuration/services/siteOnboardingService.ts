@@ -1,5 +1,6 @@
 import { createAuditLog } from '../../administration/services/settingsService';
-import { collection, db, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, updateDoc, where } from '../../../services/firestoreBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
 
 export interface SiteOnboarding {
   tenantId: string;
@@ -45,17 +46,22 @@ export interface ReadinessCheckResult {
   };
 }
 
-const COLLECTION = 'siteOnboarding';
-
 export const getSiteOnboarding = async (tenantId: string, siteId: string): Promise<SiteOnboarding | null> => {
   if (!tenantId || !siteId) return null;
   try {
-    const docRef = doc(db, COLLECTION, `${tenantId}_${siteId}`);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      return snap.data() as SiteOnboarding;
+    const { data, error } = await supabase
+      .from('site_onboarding')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('site_id', siteId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching site onboarding:', error);
+      return null;
     }
-    return null;
+    if (!data) return null;
+    return toCamelCase<SiteOnboarding>(data);
   } catch (err) {
     console.error('Error fetching site onboarding:', err);
     return null;
@@ -67,8 +73,6 @@ export const initializeSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<SiteOnboarding> => {
-  const docId = `${tenantId}_${siteId}`;
-  const docRef = doc(db, COLLECTION, docId);
   const data: SiteOnboarding = {
     tenantId,
     siteId,
@@ -77,11 +81,19 @@ export const initializeSiteOnboarding = async (
     completedSteps: [],
     skippedOptionalSteps: [],
     startedBy: userId,
-    startedAt: new Date(),
+    startedAt: new Date().toISOString() as any,
     lastUpdatedBy: userId,
-    lastUpdatedAt: new Date()
+    lastUpdatedAt: new Date().toISOString() as any
   };
-  await setDoc(docRef, data);
+
+  const { error } = await supabase
+    .from('site_onboarding')
+    .insert(toSnakeCase(data));
+
+  if (error) {
+    console.error('Failed to initialize onboarding record:', error);
+    throw error;
+  }
   return data;
 };
 
@@ -94,16 +106,22 @@ export const updateSiteOnboardingStep = async (
   userId: string,
   status: SiteOnboarding['status'] = 'IN_PROGRESS'
 ): Promise<void> => {
-  const docId = `${tenantId}_${siteId}`;
-  const docRef = doc(db, COLLECTION, docId);
-  await updateDoc(docRef, {
-    currentStep,
-    completedSteps,
-    skippedOptionalSteps,
+  const payload = {
+    current_step: currentStep,
+    completed_steps: completedSteps,
+    skipped_optional_steps: skippedOptionalSteps,
     status,
-    lastUpdatedBy: userId,
-    lastUpdatedAt: serverTimestamp()
-  });
+    last_updated_by: userId,
+    last_updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from('site_onboarding')
+    .update(payload)
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
+
+  if (error) throw error;
 };
 
 export const dismissOnboardingModal = async (
@@ -111,13 +129,17 @@ export const dismissOnboardingModal = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
-  const docId = `${tenantId}_${siteId}`;
-  const docRef = doc(db, COLLECTION, docId);
-  await updateDoc(docRef, {
-    dismissedAt: serverTimestamp(),
-    lastUpdatedBy: userId,
-    lastUpdatedAt: serverTimestamp()
-  });
+  const { error } = await supabase
+    .from('site_onboarding')
+    .update({
+      dismissed_at: new Date().toISOString(),
+      last_updated_by: userId,
+      last_updated_at: new Date().toISOString()
+    })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
+
+  if (error) throw error;
 };
 
 export const completeSiteOnboarding = async (
@@ -125,24 +147,33 @@ export const completeSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
-  const docId = `${tenantId}_${siteId}`;
-  
   // 1. Update siteOnboarding record to COMPLETED
-  const onboardingRef = doc(db, COLLECTION, docId);
-  await updateDoc(onboardingRef, {
-    status: 'COMPLETED',
-    completedBy: userId,
-    completedAt: serverTimestamp(),
-    lastUpdatedBy: userId,
-    lastUpdatedAt: serverTimestamp()
-  });
+  const { error: onboardingErr } = await supabase
+    .from('site_onboarding')
+    .update({
+      status: 'COMPLETED',
+      completed_by: userId,
+      completed_at: new Date().toISOString(),
+      last_updated_by: userId,
+      last_updated_at: new Date().toISOString()
+    })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
+
+  if (onboardingErr) throw onboardingErr;
 
   // 2. Mark the site document itself as operationally ready / onboardingComplete
-  const siteRef = doc(db, 'sites', siteId);
-  await updateDoc(siteRef, {
-    onboardingComplete: true,
-    operationalStatus: 'READY'
-  });
+  const { error: siteErr } = await supabase
+    .from('sites')
+    .update({
+      onboarding_complete: true,
+      operational_status: 'READY'
+    })
+    .eq('id', siteId);
+
+  if (siteErr) {
+    console.warn('Failed to update sites onboarding status:', siteErr.message);
+  }
 
   // 3. Log Audit Event
   await createAuditLog({
@@ -150,12 +181,12 @@ export const completeSiteOnboarding = async (
     siteId,
     eventType: 'ONBOARDING_COMPLETED',
     entityType: 'SiteOnboarding',
-    entityId: docId,
+    entityId: `${tenantId}_${siteId}`,
     summary: `Guided site onboarding completed for site ${siteId}`,
     previousValue: { status: 'IN_PROGRESS' },
     newValue: { status: 'COMPLETED' },
     performedBy: userId,
-    timestamp: serverTimestamp()
+    timestamp: new Date()
   });
 };
 
@@ -164,23 +195,32 @@ export const reopenSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
-  const docId = `${tenantId}_${siteId}`;
-
   // 1. Update onboarding status
-  const onboardingRef = doc(db, COLLECTION, docId);
-  await updateDoc(onboardingRef, {
-    status: 'IN_PROGRESS',
-    reopenedAt: serverTimestamp(),
-    lastUpdatedBy: userId,
-    lastUpdatedAt: serverTimestamp()
-  });
+  const { error: onboardingErr } = await supabase
+    .from('site_onboarding')
+    .update({
+      status: 'IN_PROGRESS',
+      reopened_at: new Date().toISOString(),
+      last_updated_by: userId,
+      last_updated_at: new Date().toISOString()
+    })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
+
+  if (onboardingErr) throw onboardingErr;
 
   // 2. Reopen the site document onboardingComplete
-  const siteRef = doc(db, 'sites', siteId);
-  await updateDoc(siteRef, {
-    onboardingComplete: false,
-    operationalStatus: 'ONBOARDING'
-  });
+  const { error: siteErr } = await supabase
+    .from('sites')
+    .update({
+      onboarding_complete: false,
+      operational_status: 'ONBOARDING'
+    })
+    .eq('id', siteId);
+
+  if (siteErr) {
+    console.warn('Failed to update sites onboarding status:', siteErr.message);
+  }
 
   // 3. Log Audit Event
   await createAuditLog({
@@ -188,12 +228,12 @@ export const reopenSiteOnboarding = async (
     siteId,
     eventType: 'ONBOARDING_REOPENED',
     entityType: 'SiteOnboarding',
-    entityId: docId,
+    entityId: `${tenantId}_${siteId}`,
     summary: `Onboarding reopened for site ${siteId}`,
     previousValue: { status: 'COMPLETED' },
     newValue: { status: 'IN_PROGRESS' },
     performedBy: userId,
-    timestamp: serverTimestamp()
+    timestamp: new Date()
   });
 };
 
@@ -202,11 +242,8 @@ export const resetSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
-  const docId = `${tenantId}_${siteId}`;
-
   // 1. Reset siteOnboarding progress
-  const onboardingRef = doc(db, COLLECTION, docId);
-  await setDoc(onboardingRef, {
+  const data: SiteOnboarding = {
     tenantId,
     siteId,
     status: 'NOT_STARTED',
@@ -214,17 +251,29 @@ export const resetSiteOnboarding = async (
     completedSteps: [],
     skippedOptionalSteps: [],
     startedBy: userId,
-    startedAt: serverTimestamp(),
+    startedAt: new Date().toISOString() as any,
     lastUpdatedBy: userId,
-    lastUpdatedAt: serverTimestamp()
-  });
+    lastUpdatedAt: new Date().toISOString() as any
+  };
+
+  const { error: onboardingErr } = await supabase
+    .from('site_onboarding')
+    .upsert(toSnakeCase(data), { onConflict: 'tenant_id,site_id' });
+
+  if (onboardingErr) throw onboardingErr;
 
   // 2. Reopen site document
-  const siteRef = doc(db, 'sites', siteId);
-  await updateDoc(siteRef, {
-    onboardingComplete: false,
-    operationalStatus: 'ONBOARDING'
-  });
+  const { error: siteErr } = await supabase
+    .from('sites')
+    .update({
+      onboarding_complete: false,
+      operational_status: 'ONBOARDING'
+    })
+    .eq('id', siteId);
+
+  if (siteErr) {
+    console.warn('Failed to update sites onboarding status:', siteErr.message);
+  }
 
   // 3. Log Audit Event
   await createAuditLog({
@@ -232,12 +281,12 @@ export const resetSiteOnboarding = async (
     siteId,
     eventType: 'ONBOARDING_RESET',
     entityType: 'SiteOnboarding',
-    entityId: docId,
+    entityId: `${tenantId}_${siteId}`,
     summary: `Onboarding progress completely reset for site ${siteId}`,
     previousValue: null,
     newValue: { status: 'NOT_STARTED' },
     performedBy: userId,
-    timestamp: serverTimestamp()
+    timestamp: new Date()
   });
 };
 
@@ -245,40 +294,46 @@ export const runSiteReadinessChecks = async (
   tenantId: string,
   siteId: string
 ): Promise<ReadinessCheckResult> => {
-  // Production lines count
-  const linesSnap = await getDocs(
-    query(collection(db, 'productionLines'), where('tenantId', '==', tenantId), where('siteId', '==', siteId), where('status', '==', 'active'))
-  );
-  const productionLinesCount = linesSnap.size;
+  // 1. Production lines count
+  const { count: productionLinesCount } = await supabase
+    .from('production_lines')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId)
+    .eq('status', 'active');
 
-  // Destinations count
-  const destsSnap = await getDocs(
-    query(collection(db, 'destinations'), where('tenantId', '==', tenantId))
-  );
-  // Filter active and (siteId === siteId or siteId === '')
-  const activeDests = destsSnap.docs.filter(d => {
-    const data = d.data();
-    return data.status === 'active' && (!data.siteId || data.siteId === siteId);
-  });
-  const destinationsCount = activeDests.length;
+  // 2. Destinations count
+  const { data: dests } = await supabase
+    .from('destinations')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active');
+  const destinationsCount = (dests || []).filter((d: any) => !d.site_id || d.site_id === siteId).length;
 
-  // Action types count
-  const actionsSnap = await getDocs(
-    query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId))
-  );
-  const actionTypesCount = actionsSnap.docs.filter(d => d.data().status === 'active').length;
+  // 3. Action types count
+  const { count: actionTypesCount } = await supabase
+    .from('action_types')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active');
 
-  // Priority levels count
-  const prioritiesSnap = await getDocs(
-    query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId))
-  );
-  const priorityLevelsCount = prioritiesSnap.docs.filter(d => d.data().status === 'active').length;
+  // 4. Priority levels count
+  const { count: priorityLevelsCount } = await supabase
+    .from('priority_levels')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active');
 
-  // Decision Settings check
+  // 5. Decision Settings check
   let decisionSettingsIncomplete = true;
-  const decisionDoc = await getDoc(doc(db, 'decisionConfigurations', `${tenantId}_${siteId}`));
-  if (decisionDoc.exists()) {
-    const data = decisionDoc.data();
+  const { data: decisionDoc } = await supabase
+    .from('decision_configurations')
+    .select('*')
+    .eq('id', `${tenantId}_${siteId}`)
+    .maybeSingle();
+
+  if (decisionDoc) {
+    const data = toCamelCase<any>(decisionDoc);
     if (
       data.holdActionId &&
       data.reviewActionId &&
@@ -291,65 +346,67 @@ export const runSiteReadinessChecks = async (
     }
   }
 
-  // Products count
-  const productsSnap = await getDocs(
-    query(collection(db, 'products'), where('tenantId', '==', tenantId))
-  );
-  // Filter for matching siteId or global
-  const activeProducts = productsSnap.docs.filter(d => {
-    const data = d.data();
-    return !data.siteId || data.siteId === siteId;
-  });
-  const productsCount = activeProducts.length;
+  // 6. Products count
+  const { data: products } = await supabase
+    .from('products')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active');
+  const productsCount = (products || []).filter((p: any) => !p.site_id || p.site_id === siteId).length;
 
-  // Planning Rules count
-  const rulesSnap = await getDocs(
-    query(collection(db, 'planningRules'), where('tenantId', '==', tenantId), where('siteId', '==', siteId))
-  );
-  const planningRulesCount = rulesSnap.size;
+  // 7. Planning Rules count
+  const { count: planningRulesCount } = await supabase
+    .from('planning_rules')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
 
-  // Site Inactive check
+  // 8. Site Inactive check
   let siteInactive = true;
-  const siteDoc = await getDoc(doc(db, 'sites', siteId));
-  if (siteDoc.exists()) {
-    const data = siteDoc.data();
-    const isActive = data.active === true || data.status === 'ACTIVE' || data.status === 'active' || data.status == null;
+  const { data: siteDoc } = await supabase
+    .from('sites')
+    .select('*')
+    .eq('id', siteId)
+    .maybeSingle();
+
+  if (siteDoc) {
+    const isActive = siteDoc.active === true || siteDoc.status === 'ACTIVE' || siteDoc.status === 'active' || siteDoc.status == null;
     if (isActive) {
       siteInactive = false;
     }
   }
 
   // Recommendations: Display account check
-  let noDisplayAccount = true;
-  const displayUsersSnap = await getDocs(
-    query(collection(db, 'users'), where('tenantId', '==', tenantId), where('role', '==', 'DISPLAY'))
-  );
-  if (displayUsersSnap.size > 0) {
-    noDisplayAccount = false;
-  }
+  const { count: displayUsersCount } = await supabase
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('role', 'DISPLAY');
+  const noDisplayAccount = (displayUsersCount || 0) === 0;
 
   // Recommendations: Warehouse Operator check
-  let noWarehouseOperator = true;
-  const whUsersSnap = await getDocs(
-    query(collection(db, 'users'), where('tenantId', '==', tenantId), where('role', '==', 'WAREHOUSE_OPERATOR'))
-  );
-  if (whUsersSnap.size > 0) {
-    noWarehouseOperator = false;
-  }
+  const { count: whUsersCount } = await supabase
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('role', 'WAREHOUSE_OPERATOR');
+  const noWarehouseOperator = (whUsersCount || 0) === 0;
 
   // Recommendations: Promotions count
-  const promoSnap = await getDocs(
-    query(collection(db, 'promotions'), where('tenantId', '==', tenantId), where('siteId', '==', siteId))
-  );
-  const promotionsCount = promoSnap.size;
-  const noPromotions = promotionsCount === 0;
+  const { count: promotionsCount } = await supabase
+    .from('promotions')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
+  const noPromotions = (promotionsCount || 0) === 0;
 
   // Recommendations: MPPS imports count
-  const importsSnap = await getDocs(
-    query(collection(db, 'productionPlanImports'), where('tenantId', '==', tenantId), where('siteId', '==', siteId))
-  );
-  const mppsImportsCount = importsSnap.size;
-  const noMppsImports = mppsImportsCount === 0;
+  const { count: mppsImportsCount } = await supabase
+    .from('production_plan_imports')
+    .select('*', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('site_id', siteId);
+  const noMppsImports = (mppsImportsCount || 0) === 0;
 
   return {
     blockers: {
@@ -363,17 +420,17 @@ export const runSiteReadinessChecks = async (
       noWarehouseOperator,
       noPromotions,
       noMppsImports,
-      noPlanningRules: planningRulesCount === 0
+      noPlanningRules: (planningRulesCount || 0) === 0
     },
     counts: {
-      productionLines: productionLinesCount,
+      productionLines: productionLinesCount || 0,
       destinations: destinationsCount,
-      actionTypes: actionTypesCount,
-      priorityLevels: priorityLevelsCount,
+      actionTypes: actionTypesCount || 0,
+      priorityLevels: priorityLevelsCount || 0,
       products: productsCount,
-      planningRules: planningRulesCount,
-      promotions: promotionsCount,
-      mppsImports: mppsImportsCount
+      planningRules: planningRulesCount || 0,
+      promotions: promotionsCount || 0,
+      mppsImports: mppsImportsCount || 0
     }
   };
 };

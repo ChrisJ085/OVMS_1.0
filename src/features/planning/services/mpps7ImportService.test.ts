@@ -9,11 +9,11 @@ import {
 } from './mpps7ImportService';
 import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
-import { Timestamp, getDocs } from '../../../services/firestoreBase';
+import { Timestamp, getDocs } from '../../../services/supabaseBase';
 
 // Mock Firebase functions to allow isolated unit testing without live Firestore connection
-vi.mock('../../../services/firestoreBase', async () => {
-  const actual = await vi.importActual('../../../services/firestoreBase');
+vi.mock('../../../services/supabaseBase', async () => {
+  const actual = await vi.importActual('../../../services/supabaseBase');
   return {
     ...actual,
     getDocs: vi.fn().mockImplementation(async () => ({

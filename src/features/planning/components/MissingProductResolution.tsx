@@ -4,7 +4,7 @@ import { checkDuplicateProductCode, createProductFromImport, CreateProductMaster
 import { AlertCircle, CheckCircle2, X, Plus, Trash2 } from 'lucide-react';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductCategory, UnitOfMeasure } from '../../../types/configuration';
-import { subscribeToCollection, where } from '../../../services/firestoreBase';
+import { subscribeToCollection, where } from '../../../services/supabaseBase';
 
 interface MissingProductResolutionProps {
   productCode: string;

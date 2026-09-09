@@ -5,7 +5,7 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { DataTable } from '../../../components/ui/DataTable';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { FileText, ChevronRight, X, Clock, CheckCircle2, AlertTriangle, Layers, Activity } from 'lucide-react';
-import { collection, db, getDocs, limit, orderBy, query, where } from '../../../services/firestoreBase';
+import { collection, db, getDocs, limit, orderBy, query, where } from '../../../services/supabaseBase';
 
 export const AuditLogPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

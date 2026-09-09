@@ -1,14 +1,52 @@
 import { supabase } from '../config/supabase';
 import { getTableName, toCamelCase, toSnakeCase } from '../utils/caseTransformers';
-import { BaseDocument } from '../types/common';
+import { BaseDocument, Timestamp as CommonTimestamp } from '../types/common';
 
 const DEV_USER = 'development-user';
+
+export type Timestamp = CommonTimestamp;
+export type QueryConstraint = any;
 
 export interface QueryFilter {
   field: string;
   op: '==' | '!=' | '>' | '>=' | '<' | '<=' | 'in' | 'array-contains';
   value: any;
 }
+
+export const db = 'supabase_db';
+
+export const where = (field: string, op: string, value: any): QueryFilter => {
+  return { field, op: op as any, value };
+};
+
+export const orderBy = (field: string, dir: string = 'asc') => ({ type: 'orderBy', field, dir });
+export const limit = (n: number) => ({ type: 'limit', n });
+
+export const collection = (dbOrName: any, collectionName?: string) => {
+  if (typeof dbOrName === 'string') {
+    return collectionName ? collectionName : dbOrName;
+  }
+  return collectionName || 'default_collection';
+};
+
+export const doc = (dbOrColl: any, collOrId?: string, id?: string) => {
+  if (id) {
+    return { collection: collOrId, id };
+  }
+  if (collOrId && typeof dbOrColl === 'string') {
+    if (dbOrColl === db) {
+      return { collection: collOrId, id: '' };
+    }
+    return { collection: dbOrColl, id: collOrId };
+  }
+  return { collection: typeof dbOrColl === 'string' ? dbOrColl : 'default', id: collOrId || '' };
+};
+
+export const query = (coll: any, ...constraints: any[]) => {
+  const collectionName = typeof coll === 'string' ? coll : (coll.collection || coll);
+  const filters = constraints.flat().filter(c => c && c.field && c.op);
+  return { collectionName, filters };
+};
 
 export const getDocument = async <T = any>(collectionName: string, id: string): Promise<T | null> => {
   const tableName = getTableName(collectionName);
@@ -32,41 +70,41 @@ export const getDocuments = async <T = any>(
   filters: QueryFilter[] = []
 ): Promise<T[]> => {
   const tableName = getTableName(collectionName);
-  let query = supabase.from(tableName).select('*');
+  let dbQuery = supabase.from(tableName).select('*');
 
   for (const f of filters) {
     const snakeField = f.field.replace(/([A-Z])/g, '_$1').toLowerCase();
     switch (f.op) {
       case '==':
-        query = query.eq(snakeField, f.value);
+        dbQuery = dbQuery.eq(snakeField, f.value);
         break;
       case '!=':
-        query = query.neq(snakeField, f.value);
+        dbQuery = dbQuery.neq(snakeField, f.value);
         break;
       case '>':
-        query = query.gt(snakeField, f.value);
+        dbQuery = dbQuery.gt(snakeField, f.value);
         break;
       case '>=':
-        query = query.gte(snakeField, f.value);
+        dbQuery = dbQuery.gte(snakeField, f.value);
         break;
       case '<':
-        query = query.lt(snakeField, f.value);
+        dbQuery = dbQuery.lt(snakeField, f.value);
         break;
       case '<=':
-        query = query.lte(snakeField, f.value);
+        dbQuery = dbQuery.lte(snakeField, f.value);
         break;
       case 'in':
-        query = query.in(snakeField, Array.isArray(f.value) ? f.value : [f.value]);
+        dbQuery = dbQuery.in(snakeField, Array.isArray(f.value) ? f.value : [f.value]);
         break;
       case 'array-contains':
-        query = query.contains(snakeField, [f.value]);
+        dbQuery = dbQuery.contains(snakeField, [f.value]);
         break;
       default:
-        query = query.eq(snakeField, f.value);
+        dbQuery = dbQuery.eq(snakeField, f.value);
     }
   }
 
-  const { data, error } = await query;
+  const { data, error } = await dbQuery;
 
   if (error) {
     console.error(`[Supabase getDocuments] Error querying ${tableName}:`, error);
@@ -74,6 +112,54 @@ export const getDocuments = async <T = any>(
   }
 
   return (data || []).map(row => toCamelCase<T>(row));
+};
+
+export const getDoc = async (docRef: any) => {
+  const collectionName = typeof docRef === 'string' ? docRef : docRef.collection;
+  const id = docRef.id || docRef;
+  const data = await getDocument(collectionName, id);
+  return {
+    exists: () => data !== null,
+    data: () => data,
+    id,
+    ref: { collection: collectionName, id }
+  };
+};
+
+export const getDocs = async (queryOrColl: any) => {
+  let collectionName = '';
+  let filters: QueryFilter[] = [];
+
+  if (typeof queryOrColl === 'string') {
+    collectionName = queryOrColl;
+  } else if (queryOrColl?.collectionName) {
+    collectionName = queryOrColl.collectionName;
+    filters = queryOrColl.filters || [];
+  } else if (queryOrColl?.collection) {
+    collectionName = queryOrColl.collection;
+  }
+
+  const items = await getDocuments(collectionName, filters);
+  const docs = items.map((item: any) => ({
+    id: item.id,
+    data: () => item,
+    exists: () => true,
+    ref: { collection: collectionName, id: item.id }
+  }));
+
+  return {
+    empty: docs.length === 0,
+    size: docs.length,
+    docs,
+    forEach: (callback: (doc: any) => void) => docs.forEach(callback)
+  };
+};
+
+export const getCountFromServer = async (queryOrColl: any) => {
+  const docsResult = await getDocs(queryOrColl);
+  return {
+    data: () => ({ count: docsResult.size })
+  };
 };
 
 export const createDocument = async <T extends BaseDocument>(
@@ -103,6 +189,22 @@ export const createDocument = async <T extends BaseDocument>(
   return inserted.id;
 };
 
+export const addDoc = async (collRef: any, data: any) => {
+  const collectionName = typeof collRef === 'string' ? collRef : (collRef.collection || collRef);
+  const id = await createDocument(collectionName, data);
+  return { id, collection: collectionName };
+};
+
+export const setDoc = async (docRef: any, data: any, options?: any) => {
+  const collectionName = docRef.collection;
+  const id = docRef.id;
+  if (options?.merge) {
+    await updateDocument(collectionName, id, data);
+  } else {
+    await createDocument(collectionName, { ...data, id });
+  }
+};
+
 export const updateDocument = async (
   collectionName: string,
   id: string,
@@ -126,6 +228,12 @@ export const updateDocument = async (
   }
 };
 
+export const updateDoc = async (docRef: any, data: any) => {
+  const collectionName = docRef.collection;
+  const id = docRef.id;
+  await updateDocument(collectionName, id, data);
+};
+
 export const deleteDocument = async (
   collectionName: string,
   id: string
@@ -142,11 +250,25 @@ export const deleteDocument = async (
   }
 };
 
+export const deleteDoc = async (docRef: any) => {
+  const collectionName = docRef.collection;
+  const id = docRef.id;
+  await deleteDocument(collectionName, id);
+};
+
 export const deactivateDocument = async (
   collectionName: string,
   id: string
 ): Promise<void> => {
   await updateDocument(collectionName, id, { status: 'inactive' });
+};
+
+export const serverTimestamp = () => new Date().toISOString();
+
+export const Timestamp = {
+  now: () => new Date().toISOString(),
+  fromDate: (d: Date) => d.toISOString(),
+  fromMillis: (m: number) => new Date(m).toISOString()
 };
 
 export const subscribeToDocument = <T = any>(
@@ -162,9 +284,9 @@ export const subscribeToDocument = <T = any>(
     .then(data => onUpdate(data))
     .catch(err => onError ? onError(err) : console.error(err));
 
-  // Realtime subscription
+  // Realtime subscription natively
   const channel = supabase
-    .channel(`sub_doc_${tableName}_${id}`)
+    .channel(`sub_doc_${tableName}_${id}_${Math.random().toString(36).substring(2, 8)}`)
     .on(
       'postgres_changes',
       {
@@ -180,12 +302,13 @@ export const subscribeToDocument = <T = any>(
           onUpdate(toCamelCase<T>(payload.new));
         }
       }
-    )
-    .subscribe((status) => {
-      if (status === 'CHANNEL_ERROR' && onError) {
-        onError(new Error(`Realtime channel error for ${tableName}/${id}`));
-      }
-    });
+    );
+
+  channel.subscribe((status) => {
+    if (status === 'CHANNEL_ERROR' && onError) {
+      onError(new Error(`Realtime channel error for ${tableName}/${id}`));
+    }
+  });
 
   return () => {
     supabase.removeChannel(channel);
@@ -208,8 +331,9 @@ export const subscribeToCollection = <T = any>(
 
   fetchAndNotify();
 
+  // Create unique native channel
   const channel = supabase
-    .channel(`sub_coll_${tableName}_${Math.random().toString(36).slice(2)}`)
+    .channel(`sub_coll_${tableName}_${Math.random().toString(36).slice(2, 8)}`)
     .on(
       'postgres_changes',
       {
@@ -220,14 +344,98 @@ export const subscribeToCollection = <T = any>(
       () => {
         fetchAndNotify();
       }
-    )
-    .subscribe((status) => {
-      if (status === 'CHANNEL_ERROR' && onError) {
-        onError(new Error(`Realtime channel error for table ${tableName}`));
-      }
-    });
+    );
+
+  channel.subscribe((status) => {
+    if (status === 'CHANNEL_ERROR' && onError) {
+      onError(new Error(`Realtime channel error for table ${tableName}`));
+    }
+  });
 
   return () => {
     supabase.removeChannel(channel);
   };
+};
+
+export const onSnapshot = (
+  queryOrRef: any,
+  onNext: (snapshot: any) => void,
+  onError?: (err: any) => void
+) => {
+  if (typeof queryOrRef === 'string' || queryOrRef?.collectionName) {
+    const collectionName = typeof queryOrRef === 'string' ? queryOrRef : queryOrRef.collectionName;
+    const filters = queryOrRef?.filters || [];
+    return subscribeToCollection(collectionName, filters, (items) => {
+      const docs = items.map((item: any) => ({
+        id: item.id,
+        data: () => item,
+        exists: () => true,
+        ref: { collection: collectionName, id: item.id }
+      }));
+      onNext({
+        empty: docs.length === 0,
+        size: docs.length,
+        docs,
+        forEach: (cb: any) => docs.forEach(cb)
+      });
+    }, onError);
+  } else if (queryOrRef?.collection && queryOrRef?.id) {
+    return subscribeToDocument(queryOrRef.collection, queryOrRef.id, (data) => {
+      onNext({
+        exists: () => data !== null,
+        data: () => data,
+        id: queryOrRef.id,
+      });
+    }, onError);
+  }
+  return () => {};
+};
+
+export const writeBatch = (_db?: any) => {
+  const operations: (() => Promise<void>)[] = [];
+  return {
+    set: (docRef: any, data: any) => {
+      operations.push(() => createDocument(docRef.collection, data).then(() => {}));
+    },
+    update: (docRef: any, data: any) => {
+      operations.push(() => updateDocument(docRef.collection, docRef.id, data));
+    },
+    delete: (docRef: any) => {
+      operations.push(() => deleteDocument(docRef.collection, docRef.id));
+    },
+    commit: async () => {
+      for (const op of operations) {
+        await op();
+      }
+    }
+  };
+};
+
+export const getBatch = writeBatch;
+
+export const runTransaction = async <T>(
+  _db: any,
+  updateFunction: (transaction: any) => Promise<T>
+): Promise<T> => {
+  const dummyTx = {
+    get: async (docRef: any) => {
+      const docData = await getDocument(docRef.collection, docRef.id);
+      return {
+        exists: () => docData !== null,
+        data: () => docData,
+        id: docRef.id,
+        ref: docRef
+      };
+    },
+    set: (docRef: any, data: any) => {
+      createDocument(docRef.collection, data);
+    },
+    update: (docRef: any, data: any) => {
+      updateDocument(docRef.collection, docRef.id, data);
+    },
+    delete: (docRef: any) => {
+      deleteDocument(docRef.collection, docRef.id);
+    }
+  };
+  return updateFunction(dummyTx);
 };

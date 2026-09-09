@@ -2,7 +2,7 @@ import { ProductionLinePlanNote } from '../../../types/production';
 import { toAppError } from '../../../types/error';
 import { logAuditEvent } from '../../../services/auditService';
 import { toEpochMillis } from '../../../utils/timeFormatters';
-import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where } from '../../../services/firestoreBase';
+import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where } from '../../../services/supabaseBase';
 
 export const productionNotesRepository = {
   /**
