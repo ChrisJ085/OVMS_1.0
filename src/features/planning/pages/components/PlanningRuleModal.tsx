@@ -7,7 +7,6 @@ import { createPlanningRule, updatePlanningRule } from '../../services/planningR
 import { generateRecommendationForProduct } from '../../services/recommendationService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { Timestamp } from '../../../../services/supabaseBase';
 
 interface PlanningRuleModalProps {
   isOpen: boolean;
@@ -104,8 +103,8 @@ export const PlanningRuleModal: React.FC<PlanningRuleModalProps> = ({
     
     const payload = {
       ...formData,
-      effectiveFrom: Timestamp.fromDate(fromDate),
-      effectiveTo: toDate ? Timestamp.fromDate(toDate) : null,
+      effectiveFrom: fromDate.toISOString(),
+      effectiveTo: toDate ? toDate.toISOString() : null,
       untilSwitchedOff: untilSwitchedOff,
     };
 

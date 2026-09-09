@@ -8,7 +8,7 @@ import { subscribeToMovements } from '../services/inventoryService';
 import { InventoryMovement } from '../../../types/inventory';
 import { Location } from '../../../types/inventory';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
 
 export const InventoryMovementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -39,7 +39,10 @@ export const InventoryMovementsPage: React.FC = () => {
 
     const unsubLocs = subscribeToCollection<Location>(
       'locations',
-      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: siteId }
+      ],
       setLocations,
       console.error
     );

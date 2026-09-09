@@ -1,17 +1,9 @@
 import { isUniqueCode, trimCode } from '../../../validation';
-import {
-  SiteConfig,
-  Destination,
-  UnitOfMeasure,
-  ProductCategory,
-  StorageArea,
-  ProductionLine,
-  ActionType,
-  PriorityLevel
-} from '../../../types/configuration';
 import { ServiceResult } from '../../../types/common';
-
-const DEV_USER = 'development-user';
+import { createAuditLog } from '../../administration/services/settingsService';
+import { createDocument, updateDocument, deactivateDocument, subscribeToCollection } from '../../../services/dbService';
+import { supabase } from '../../../config/supabase';
+import { toSnakeCase } from '../../../utils/caseTransformers';
 
 export const collections = {
   SITES: 'sites',
@@ -23,9 +15,6 @@ export const collections = {
   ACTION_TYPES: 'actionTypes',
   PRIORITY_LEVELS: 'priorityLevels'
 };
-
-import { createAuditLog } from '../../administration/services/settingsService';
-import { QueryConstraint, collection, createDocument, db, deactivateDocument, doc, getBatch, serverTimestamp, subscribeToCollection, updateDocument, where, writeBatch } from '../../../services/supabaseBase';
 
 const getUniqueConstraintParams = (
   tenantId: string,
@@ -57,7 +46,20 @@ export const createConfigItem = async <T extends { tenantId: string; siteId?: st
       ...data,
       status: 'active'
     });
-    await createAuditLog({ tenantId: data.tenantId, siteId: data.siteId || "", eventType: "CONFIG_CREATE", entityType: collectionName, entityId: id, summary: "Created config item " + codeValue, newValue: { ...data, status: "active" }, performedBy: "system", timestamp: serverTimestamp() }); return { success: true, data: id };
+    
+    await createAuditLog({
+      tenantId: data.tenantId,
+      siteId: data.siteId || "",
+      eventType: "CONFIG_CREATE",
+      entityType: collectionName,
+      entityId: id,
+      summary: "Created config item " + codeValue,
+      newValue: { ...data, status: "active" },
+      performedBy: (data as any).createdBy || "system",
+      timestamp: new Date().toISOString()
+    });
+    
+    return { success: true, data: id };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
@@ -118,63 +120,82 @@ export const reactivateConfigItem = async (
 };
 
 // Seed utility for development
-export const seedDevelopmentConfiguration = async (tenantId: string, siteId: string): Promise<ServiceResult<void>> => {
-  if (!db) return { success: false, error: 'Firestore not initialized' };
-  
-  try {
-    const batch = writeBatch(db);
-    
-    const addDocToBatch = (collName: string, data: any) => {
-      const newDocRef = doc(collection(db, collName));
-      const newDoc = {
-        ...data,
-        tenantId,
-        createdBy: DEV_USER,
-        modifiedBy: DEV_USER,
-        createdDate: serverTimestamp(),
-        modifiedDate: serverTimestamp(),
-        status: 'active'
-      };
-      if (data.siteId !== undefined) {
-         // Keep siteId if provided
-      } else if (collName === collections.STORAGE_AREAS || collName === collections.PRODUCTION_LINES) {
-         newDoc.siteId = siteId;
-      } else {
-         newDoc.siteId = '';
-      }
-      batch.set(newDocRef, newDoc);
-    };
+export const seedDevelopmentConfiguration = async (tenantId: string, siteId: string, userId: string): Promise<ServiceResult<void>> => {
+  if (!userId) {
+    return { success: false, error: 'User ID is required for database auditing.' };
+  }
 
-    // Barrow RDC Site
-    addDocToBatch(collections.SITES, {
+  try {
+    // 1. Seed Site
+    const siteData = toSnakeCase({
+      tenantId,
       siteCode: 'BARROW',
       siteName: 'Barrow RDC',
-      timezone: 'Europe/London'
+      timezone: 'Europe/London',
+      createdBy: userId,
+      modifiedBy: userId,
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString(),
+      status: 'active'
     });
+    
+    const { error: sitesErr } = await supabase.from('sites').insert(siteData);
+    if (sitesErr) throw sitesErr;
 
-    // Destinations NF and CH
-    addDocToBatch(collections.DESTINATIONS, {
-      destinationCode: 'NF',
-      destinationName: 'North Fleet',
-      destinationType: 'EXTERNAL_SITE',
-      sortOrder: 1
-    });
-    addDocToBatch(collections.DESTINATIONS, {
-      destinationCode: 'CH',
-      destinationName: 'Chester',
-      destinationType: 'EXTERNAL_SITE',
-      sortOrder: 2
-    });
+    // 2. Seed Destinations
+    const destinationsData = [
+      {
+        tenantId,
+        siteId: '',
+        destinationCode: 'NF',
+        destinationName: 'North Fleet',
+        destinationType: 'EXTERNAL_SITE',
+        sortOrder: 1,
+        createdBy: userId,
+        modifiedBy: userId,
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      },
+      {
+        tenantId,
+        siteId: '',
+        destinationCode: 'CH',
+        destinationName: 'Chester',
+        destinationType: 'EXTERNAL_SITE',
+        sortOrder: 2,
+        createdBy: userId,
+        modifiedBy: userId,
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      }
+    ].map(toSnakeCase);
 
-    // Storage Areas
-    addDocToBatch(collections.STORAGE_AREAS, {
-      areaCode: 'HB1',
-      areaName: 'High Bay 1',
-      areaType: 'HIGH_BAY',
-      sortOrder: 1
-    });
+    const { error: destErr } = await supabase.from('destinations').insert(destinationsData);
+    if (destErr) throw destErr;
 
-    // Product Categories
+    // 3. Seed Storage Areas
+    const storageAreasData = [
+      {
+        tenantId,
+        siteId,
+        areaCode: 'HB1',
+        areaName: 'High Bay 1',
+        areaType: 'HIGH_BAY',
+        sortOrder: 1,
+        createdBy: userId,
+        modifiedBy: userId,
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      }
+    ].map(toSnakeCase);
+
+    const { error: saErr } = await supabase.from('storage_areas').insert(storageAreasData);
+    if (saErr) throw saErr;
+
+    // 4. Seed Product Categories
     const initialCategories = [
       { code: 'FAMILY_SOFT', name: 'Family Soft' },
       { code: 'QUILTS', name: 'Quilts' },
@@ -184,32 +205,60 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
       { code: 'COMPLETE_CLEAN', name: 'Complete Clean' },
       { code: 'WATERMELON', name: 'Watermelon' },
     ];
-    for (const cat of initialCategories) {
-      addDocToBatch(collections.PRODUCT_CATEGORIES, cat);
-    }
+    const categoriesData = initialCategories.map(cat => toSnakeCase({
+      tenantId,
+      siteId: '',
+      code: cat.code,
+      name: cat.name,
+      createdBy: userId,
+      modifiedBy: userId,
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString(),
+      status: 'active'
+    }));
 
-    // Action Types
-    addDocToBatch(collections.ACTION_TYPES, {
-      code: 'HOLD',
-      label: 'Hold',
-      meaning: 'Do not pick or load',
-      colourToken: 'hold',
-      iconKey: 'Clock',
-      sortOrder: 1
-    });
-    
-    addDocToBatch(collections.ACTION_TYPES, {
-      code: 'SEND',
-      label: 'Send',
-      meaning: 'Release for picking',
-      colourToken: 'release',
-      iconKey: 'Send',
-      sortOrder: 2
-    });
+    const { error: catErr } = await supabase.from('product_categories').insert(categoriesData);
+    if (catErr) throw catErr;
 
-    await batch.commit();
+    // 5. Seed Action Types
+    const actionTypesData = [
+      {
+        tenantId,
+        siteId: '',
+        code: 'HOLD',
+        label: 'Hold',
+        meaning: 'Do not pick or load',
+        colourToken: 'hold',
+        iconKey: 'Clock',
+        sortOrder: 1,
+        createdBy: userId,
+        modifiedBy: userId,
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      },
+      {
+        tenantId,
+        siteId: '',
+        code: 'SEND',
+        label: 'Send',
+        meaning: 'Release for picking',
+        colourToken: 'release',
+        iconKey: 'Send',
+        sortOrder: 2,
+        createdBy: userId,
+        modifiedBy: userId,
+        createdDate: new Date().toISOString(),
+        modifiedDate: new Date().toISOString(),
+        status: 'active'
+      }
+    ].map(toSnakeCase);
+
+    const { error: actErr } = await supabase.from('action_types').insert(actionTypesData);
+    if (actErr) throw actErr;
+
     return { success: true };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Failed to seed' };
+    return { success: false, error: err instanceof Error ? err.message : 'Failed to seed development configuration' };
   }
 };

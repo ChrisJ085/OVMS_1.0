@@ -5,7 +5,8 @@ import { SectionCard } from '../../../components/ui/SectionCard';
 import { DataTable } from '../../../components/ui/DataTable';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { FileText, ChevronRight, X, Clock, CheckCircle2, AlertTriangle, Layers, Activity } from 'lucide-react';
-import { collection, db, getDocs, limit, orderBy, query, where } from '../../../services/supabaseBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase } from '../../../utils/caseTransformers';
 
 export const AuditLogPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -20,20 +21,16 @@ export const AuditLogPage: React.FC = () => {
       if (!tenantId || !siteId) return;
       setLoading(true);
       try {
-        const q = query(
-          collection(db, 'auditLogs'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId),
-          limit(100)
-        );
-        const snap = await getDocs(q);
-        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AuditEvent));
-        data.sort((a, b) => {
-          const tA = a.timestamp ? (typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : ((a.timestamp as any).toMillis ? (a.timestamp as any).toMillis() : new Date(a.timestamp as any).getTime())) : 0;
-          const tB = b.timestamp ? (typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : ((b.timestamp as any).toMillis ? (b.timestamp as any).toMillis() : new Date(b.timestamp as any).getTime())) : 0;
-          return tB - tA;
-        });
-        setLogs(data);
+        const { data, error } = await supabase
+          .from('audit_logs')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId)
+          .order('timestamp', { ascending: false })
+          .limit(100);
+
+        if (error) throw error;
+        setLogs((data || []).map(row => toCamelCase<AuditEvent>(row)));
       } catch (err: any) {
         setError(err.message);
       } finally {

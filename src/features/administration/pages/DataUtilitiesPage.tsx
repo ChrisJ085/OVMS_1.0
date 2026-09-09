@@ -7,7 +7,7 @@ import { ValidationResult } from '../../../types/importExport';
 import { validateImportData, commitImportData } from '../services/importExportService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { collection, db, getDocs, query, where } from '../../../services/supabaseBase';
+import { getDocuments, where } from '../../../services/dbService';
 
 type ImportType = 'PRODUCTS' | 'LOCATIONS' | 'INVENTORY' | 'PLANNING_RULES' | 'PRODUCTION_EVENTS' | 'PROMOTIONS';
 
@@ -51,9 +51,10 @@ export const DataUtilitiesPage: React.FC = () => {
       const collName = collMap[exportType];
       if (!collName) throw new Error("Unknown export type");
 
-      const q = query(collection(db, collName), where('tenantId', '==', tenantId)); // Ignoring siteId for some global exports or including it if needed
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const data = await getDocuments<any>(
+        collName,
+        [where('tenantId', '==', tenantId)]
+      );
 
       // Remove complex objects like Timestamps for CSV export
       const cleanData = data.map(item => {

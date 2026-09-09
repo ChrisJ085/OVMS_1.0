@@ -13,7 +13,7 @@ import { ProductCategory, UnitOfMeasure, Destination } from '../../../types/conf
 import { ProductModal } from './components/ProductModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
 
 export const ProductsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -51,21 +51,30 @@ export const ProductsPage: React.FC = () => {
 
     const unsubCategories = subscribeToCollection<ProductCategory>(
       collections.PRODUCT_CATEGORIES,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setCategories,
       console.error
     );
 
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setUnits,
       console.error
     );
 
     const unsubDestinations = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setDestinations,
       console.error
     );

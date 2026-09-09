@@ -4,7 +4,6 @@ import { FormField } from '../../../../components/ui/FormField';
 import { Promotion, PromotionImportance, PromotionStatus } from '../../../../types/promotion';
 import { createPromotion, updatePromotion } from '../../services/promotionService';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { Timestamp } from '../../../../services/supabaseBase';
 
 interface PromotionModalProps {
   isOpen: boolean;
@@ -84,10 +83,10 @@ export const PromotionModal: React.FC<PromotionModalProps> = ({
     
     const payload = {
       ...formData,
-      startDate: Timestamp.fromDate(start),
-      endDate: Timestamp.fromDate(end),
-      preBuildStartDate: preBuildInput ? Timestamp.fromDate(new Date(preBuildInput)) : null,
-      runDownEndDate: runDownInput ? Timestamp.fromDate(new Date(runDownInput)) : null,
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      preBuildStartDate: preBuildInput ? new Date(preBuildInput).toISOString() : null,
+      runDownEndDate: runDownInput ? new Date(runDownInput).toISOString() : null,
     };
     
     let result;

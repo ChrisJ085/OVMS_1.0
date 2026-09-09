@@ -19,7 +19,7 @@ import { useSiteContext } from '../contexts/SiteContext';
 import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { reopenSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { useAuth } from '../features/auth/context/AuthContext';
-import { getDocuments, subscribeToCollection } from '../services/supabaseBase';
+import { getDocuments, subscribeToCollection, where } from '../services/dbService';
 
 const TABS = [
   { id: 'sites', label: 'Sites', collection: collections.SITES, codeField: 'siteCode' },

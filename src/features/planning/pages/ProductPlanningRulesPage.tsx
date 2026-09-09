@@ -18,7 +18,7 @@ import { PlanningRuleModal } from './components/PlanningRuleModal';
 import { PlanningRuleDetailModal } from './components/PlanningRuleDetailModal';
 import { PlanningRuleImportModal } from './components/PlanningRuleImportModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection, where } from '../../../services/dbService';
 
 export const ProductPlanningRulesPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();

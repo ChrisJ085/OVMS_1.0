@@ -5,7 +5,6 @@ import { ProductionEvent } from '../../../../types/production';
 import { UnitOfMeasure } from '../../../../types/configuration';
 import { updateProductionEvent } from '../../services/productionService';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { Timestamp } from '../../../../services/supabaseBase';
 
 interface ProductionActionModalProps {
   isOpen: boolean;
@@ -49,7 +48,7 @@ export const ProductionActionModal: React.FC<ProductionActionModalProps> = ({
     switch (actionType) {
       case 'START':
         payload.productionStatus = 'RUNNING';
-        payload.actualStart = Timestamp.fromDate(time);
+        payload.actualStart = time.toISOString();
         payload.delayReason = null;
         break;
       case 'MARK_ENDING':
@@ -66,7 +65,7 @@ export const ProductionActionModal: React.FC<ProductionActionModalProps> = ({
         break;
       case 'COMPLETE':
         payload.productionStatus = 'COMPLETE';
-        payload.actualFinish = Timestamp.fromDate(time);
+        payload.actualFinish = time.toISOString();
         payload.actualQuantity = actualQuantity ? Number(actualQuantity) : null;
         payload.delayReason = null;
         break;

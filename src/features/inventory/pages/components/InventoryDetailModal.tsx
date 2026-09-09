@@ -7,7 +7,7 @@ import { StorageArea, UnitOfMeasure } from '../../../../types/configuration';
 import { Location } from '../../../../types/inventory';
 import { DataTable } from '../../../../components/ui/DataTable';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../../services/dbService';
 
 interface InventoryDetailModalProps {
   isOpen: boolean;
@@ -41,21 +41,30 @@ export const InventoryDetailModal: React.FC<InventoryDetailModalProps> = ({
 
     const unsubLocs = subscribeToCollection<Location>(
       'locations',
-      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: siteId }
+      ],
       setLocations,
       console.error
     );
 
     const unsubAreas = subscribeToCollection<StorageArea>(
       collections.STORAGE_AREAS,
-      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: siteId }
+      ],
       setAreas,
       console.error
     );
 
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setUnits,
       console.error
     );

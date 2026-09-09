@@ -3,7 +3,7 @@ import { subscribeToProducts } from '../services/productService';
 import { Product } from '../../../types/product';
 import { Search } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
 
 interface ProductLookupProps {
   value?: string; // productId
@@ -32,7 +32,9 @@ export const ProductLookup: React.FC<ProductLookupProps> = ({ value, onChange, d
 
     const unsubUnits = subscribeToCollection<any>(
       'unitsOfMeasure',
-      [where('tenantId', '==', tenantId)],
+      [
+        { field: 'tenantId', op: '==', value: tenantId }
+      ],
       (items) => {
         setUnits(items);
       },

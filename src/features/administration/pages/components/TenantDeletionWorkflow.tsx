@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert, Trash2, AlertTriangle, AlertOctagon, Info, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '../../../auth/context/AuthContext';
-import { collection, db, doc, getCountFromServer, getDocs, onSnapshot, query, updateDoc, where } from '../../../../services/supabaseBase';
+import { supabase } from '../../../../config/supabase';
+import { getTableName, toCamelCase } from '../../../../utils/caseTransformers';
 
 interface TenantDeletionWorkflowProps {
   tenant: any;
@@ -34,20 +35,48 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
 
   useEffect(() => {
     if (mode === 'JOB_STATUS' && jobId) {
-      const unsub = onSnapshot(doc(db, 'tenantDeletionJobs', jobId), (docSnap) => {
-        if (docSnap.exists()) {
-          setJobStatus(docSnap.data());
+      const fetchJobStatus = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('tenant_deletion_jobs')
+            .select('*')
+            .eq('id', jobId)
+            .maybeSingle();
+
+          if (error) throw error;
+          if (data) {
+            setJobStatus(toCamelCase(data));
+          }
+        } catch (err) {
+          console.error('Error fetching deletion job status:', err);
         }
-      });
-      return () => unsub();
+      };
+
+      fetchJobStatus();
+
+      const channel = supabase
+        .channel(`job_status_${jobId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'tenant_deletion_jobs', filter: `id=eq.${jobId}` },
+          () => fetchJobStatus()
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [mode, jobId]);
 
   const handleDeactivate = async () => {
     try {
-      await updateDoc(doc(db, 'tenants', tenant.id), {
-        status: tenant.status === 'inactive' ? 'active' : 'inactive'
-      });
+      const { error } = await supabase
+        .from('tenants')
+        .update({ status: tenant.status === 'inactive' ? 'active' : 'inactive' })
+        .eq('id', tenant.id);
+
+      if (error) throw error;
       onRefresh();
       onClose();
     } catch (err: any) {
@@ -70,8 +99,14 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
       const previewCounts: any = {};
       
       for (const coll of collections) {
-        const snap = await getCountFromServer(query(collection(db, coll), where('tenantId', '==', tenant.id)));
-        const c = snap.data().count;
+        const tableName = getTableName(coll);
+        const { count, error } = await supabase
+          .from(tableName)
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id);
+
+        if (error) throw error;
+        const c = count || 0;
         previewCounts[coll] = c;
         total += c;
       }

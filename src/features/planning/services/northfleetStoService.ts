@@ -2,7 +2,9 @@ import { NorthfleetStoRequirement, NorthfleetStoImport, NorthfleetStoStatus } fr
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
 import { generateRecommendationForProduct } from './recommendationService';
-import { Timestamp, addDoc, collection, db, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from '../../../services/supabaseBase';
+import { getDocument, getDocuments, where } from '../../../services/dbService';
+import { supabase } from '../../../config/supabase';
+import { toSnakeCase, toCamelCase } from '../../../utils/caseTransformers';
 
 const STO_REQUIREMENTS_COLLECTION = 'northfleetStoRequirements';
 const STO_IMPORTS_COLLECTION = 'northfleetStoImports';
@@ -234,54 +236,46 @@ export const validateNorthfleetStoRows = async (
   siteId: string
 ): Promise<ValidatedStoRow[]> => {
   // 1. Fetch Products
-  const productsQuery = query(
-    collection(db, PRODUCTS_COLLECTION),
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId)
+  const prodDocs = await getDocuments<any>(
+    PRODUCTS_COLLECTION,
+    [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
   );
-  const prodSnap = await getDocs(productsQuery);
   const productsByCode = new Map<string, { id: string; description: string; preferredDestinationId?: string }>();
 
-  prodSnap.docs.forEach(doc => {
-    const d = doc.data();
-    const code = d.code || d.productCode || doc.id;
+  prodDocs.forEach(d => {
+    const code = d.code || d.productCode || d.id;
     const desc = d.description || d.productName || d.name || code;
     productsByCode.set(code, {
-      id: doc.id,
+      id: d.id,
       description: desc,
       preferredDestinationId: d.preferredDestinationId
     });
   });
 
   // 2. Fetch Northfleet destination if configured
-  const destQuery = query(
-    collection(db, DESTINATIONS_COLLECTION),
-    where('tenantId', '==', tenantId)
+  const destDocs = await getDocuments<any>(
+    DESTINATIONS_COLLECTION,
+    [where('tenantId', '==', tenantId)]
   );
-  const destSnap = await getDocs(destQuery);
   let northfleetDestId = 'DEST_NORTHFLEET';
   let northfleetDestCode = 'NORTHFLEET';
 
-  destSnap.docs.forEach(doc => {
-    const d = doc.data();
+  destDocs.forEach(d => {
     if (d.destinationCode?.toUpperCase() === 'NORTHFLEET' || d.destinationName?.toLowerCase().includes('northfleet')) {
-      northfleetDestId = doc.id;
+      northfleetDestId = d.id;
       northfleetDestCode = d.destinationCode || 'NORTHFLEET';
     }
   });
 
   // 3. Fetch existing STO requirements from DB
-  const existingStoQuery = query(
-    collection(db, STO_REQUIREMENTS_COLLECTION),
-    where('tenantId', '==', tenantId),
-    where('siteId', '==', siteId)
+  const existingDocs = await getDocuments<NorthfleetStoRequirement>(
+    STO_REQUIREMENTS_COLLECTION,
+    [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
   );
-  const existingSnap = await getDocs(existingStoQuery);
   const existingByStoNumber = new Map<string, NorthfleetStoRequirement>();
 
-  existingSnap.docs.forEach(doc => {
-    const d = doc.data() as NorthfleetStoRequirement;
-    existingByStoNumber.set(d.stoNumber, { id: doc.id, ...d });
+  existingDocs.forEach(d => {
+    existingByStoNumber.set(d.stoNumber, d);
   });
 
   // Keep track of STO numbers seen in current paste batch
@@ -395,11 +389,8 @@ export const commitNorthfleetStoRequirements = async (
       return { success: false, error: 'No valid rows to commit.' };
     }
 
-    const batch = writeBatch(db);
-
     // 1. Create NorthfleetStoImport record
-    const importRef = doc(collection(db, STO_IMPORTS_COLLECTION));
-    const importId = importRef.id;
+    const importId = crypto.randomUUID();
 
     const minDate = validRowsToProcess.reduce((min, r) => (!min || r.northfleetDeliveryDate! < min ? r.northfleetDeliveryDate! : min), null as Date | null);
     const maxDate = validRowsToProcess.reduce((max, r) => (!max || r.northfleetDeliveryDate! > max ? r.northfleetDeliveryDate! : max), null as Date | null);
@@ -407,25 +398,29 @@ export const commitNorthfleetStoRequirements = async (
     const importDoc: Omit<NorthfleetStoImport, 'id'> = {
       tenantId,
       siteId,
-      importedAt: Timestamp.now(),
+      importedAt: new Date().toISOString(),
       importedBy: userId,
       rowCount: validatedRows.length,
       validRowCount: validRowsToProcess.length,
       warningCount: validatedRows.filter(r => r.validationStatus === 'WARNING').length,
       errorCount: validatedRows.filter(r => r.validationStatus === 'UNKNOWN_PRODUCT' || !r.northfleetDeliveryDate).length,
-      effectiveStartDate: minDate ? Timestamp.fromDate(minDate) : null,
-      effectiveEndDate: maxDate ? Timestamp.fromDate(maxDate) : null,
+      effectiveStartDate: minDate ? minDate.toISOString() : null,
+      effectiveEndDate: maxDate ? maxDate.toISOString() : null,
       status: 'COMMITTED',
       notes: notes || 'Pasted STO Requirements',
-      createdDate: Timestamp.now(),
-      modifiedDate: Timestamp.now()
+      createdDate: new Date().toISOString(),
+      modifiedDate: new Date().toISOString()
     };
 
-    batch.set(importRef, importDoc);
+    const { error: importErr } = await supabase
+      .from('northfleet_sto_imports')
+      .insert(toSnakeCase({ id: importId, ...importDoc }));
+    if (importErr) throw importErr;
 
     let committedCount = 0;
     let updatedCount = 0;
     const affectedProductIds = new Set<string>();
+    const inserts: any[] = [];
 
     for (const row of validRowsToProcess) {
       affectedProductIds.add(row.matchedProductId!);
@@ -435,28 +430,31 @@ export const commitNorthfleetStoRequirements = async (
 
       if (row.existingRequirementId && row.validationStatus === 'EXISTING_STO_CHANGED') {
         // Update existing STO record with updated product details, dates, and quantities
-        const stoRef = doc(db, STO_REQUIREMENTS_COLLECTION, row.existingRequirementId);
-        batch.update(stoRef, {
-          productId: row.matchedProductId!,
-          productCode: row.productCode,
-          productDescriptionSnapshot: row.matchedProductDescription || row.productCode,
-          destinationId: row.matchedDestinationId || 'DEST_NORTHFLEET',
-          destinationCode: row.matchedDestinationCode || 'NORTHFLEET',
-          northfleetDeliveryDate: Timestamp.fromDate(row.northfleetDeliveryDate!),
-          barrowCollectionDate: Timestamp.fromDate(row.barrowCollectionDate!),
-          pallets: row.pallets,
-          cases: row.cases,
-          casesPerPalletSnapshot: row.casesPerPallet,
-          importId,
-          status: row.derivedStatus,
-          modifiedBy: userId,
-          modifiedDate: Timestamp.now()
-        });
+        const { error: updateErr } = await supabase
+          .from('northfleet_sto_requirements')
+          .update(toSnakeCase({
+            productId: row.matchedProductId!,
+            productCode: row.productCode,
+            productDescriptionSnapshot: row.matchedProductDescription || row.productCode,
+            destinationId: row.matchedDestinationId || 'DEST_NORTHFLEET',
+            destinationCode: row.matchedDestinationCode || 'NORTHFLEET',
+            northfleetDeliveryDate: row.northfleetDeliveryDate!.toISOString(),
+            barrowCollectionDate: row.barrowCollectionDate!.toISOString(),
+            pallets: row.pallets,
+            cases: row.cases,
+            casesPerPalletSnapshot: row.casesPerPallet,
+            importId,
+            status: row.derivedStatus,
+            modifiedBy: userId,
+            modifiedDate: new Date().toISOString()
+          }))
+          .eq('id', row.existingRequirementId);
+        
+        if (updateErr) throw updateErr;
         updatedCount++;
       } else if (row.validationStatus !== 'DUPLICATE_STO') {
         // Create new STO record
-        const stoRef = doc(collection(db, STO_REQUIREMENTS_COLLECTION));
-        const stoDoc: Omit<NorthfleetStoRequirement, 'id'> = {
+        inserts.push({
           tenantId,
           siteId,
           stoNumber: row.stoNumber,
@@ -465,24 +463,28 @@ export const commitNorthfleetStoRequirements = async (
           productDescriptionSnapshot: row.matchedProductDescription || row.productCode,
           destinationId: row.matchedDestinationId || 'DEST_NORTHFLEET',
           destinationCode: row.matchedDestinationCode || 'NORTHFLEET',
-          northfleetDeliveryDate: Timestamp.fromDate(row.northfleetDeliveryDate!),
-          barrowCollectionDate: Timestamp.fromDate(row.barrowCollectionDate!),
+          northfleetDeliveryDate: row.northfleetDeliveryDate!.toISOString(),
+          barrowCollectionDate: row.barrowCollectionDate!.toISOString(),
           pallets: row.pallets,
           cases: row.cases,
           casesPerPalletSnapshot: row.casesPerPallet,
           importId,
           status: row.derivedStatus,
           createdBy: userId,
-          createdDate: Timestamp.now(),
+          createdDate: new Date().toISOString(),
           modifiedBy: userId,
-          modifiedDate: Timestamp.now()
-        };
-        batch.set(stoRef, stoDoc);
+          modifiedDate: new Date().toISOString()
+        });
         committedCount++;
       }
     }
 
-    await batch.commit();
+    if (inserts.length > 0) {
+      const { error: insertErr } = await supabase
+        .from('northfleet_sto_requirements')
+        .insert(inserts.map(item => toSnakeCase(item)));
+      if (insertErr) throw insertErr;
+    }
 
     // Log Audit Event
     await logAuditEvent({
@@ -530,25 +532,23 @@ export const getOutstandingStoCasesForProduct = async (
   productId: string
 ): Promise<number> => {
   try {
-    const q = query(
-      collection(db, STO_REQUIREMENTS_COLLECTION),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('productId', '==', productId)
+    const docs = await getDocuments<NorthfleetStoRequirement>(
+      STO_REQUIREMENTS_COLLECTION,
+      [
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId),
+        where('productId', '==', productId)
+      ]
     );
-    const snap = await getDocs(q);
 
     let totalCases = 0;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    snap.docs.forEach(docSnap => {
-      const data = docSnap.data() as NorthfleetStoRequirement;
+    docs.forEach(data => {
       if (data.status === 'CANCELLED') return;
 
-      const collDate = (data.barrowCollectionDate as any)?.toDate
-        ? (data.barrowCollectionDate as any).toDate()
-        : new Date(data.barrowCollectionDate as any);
+      const collDate = new Date(data.barrowCollectionDate as any);
       collDate.setHours(0, 0, 0, 0);
 
       // Status logic: UPCOMING (> today) or DUE_FOR_COLLECTION (== today)
@@ -572,25 +572,20 @@ export const getNorthfleetStoRequirements = async (
   siteId: string
 ): Promise<NorthfleetStoRequirement[]> => {
   try {
-    const q = query(
-      collection(db, STO_REQUIREMENTS_COLLECTION),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
+    const docs = await getDocuments<NorthfleetStoRequirement>(
+      STO_REQUIREMENTS_COLLECTION,
+      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
     );
-    const snap = await getDocs(q);
 
     const list: NorthfleetStoRequirement[] = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    snap.docs.forEach(docSnap => {
-      const data = docSnap.data() as NorthfleetStoRequirement;
+    docs.forEach(data => {
       let currentStatus = data.status;
 
       if (currentStatus !== 'CANCELLED') {
-        const collDate = (data.barrowCollectionDate as any)?.toDate
-          ? (data.barrowCollectionDate as any).toDate()
-          : new Date(data.barrowCollectionDate as any);
+        const collDate = new Date(data.barrowCollectionDate as any);
         collDate.setHours(0, 0, 0, 0);
 
         if (collDate.getTime() > today.getTime()) {
@@ -603,7 +598,6 @@ export const getNorthfleetStoRequirements = async (
       }
 
       list.push({
-        id: docSnap.id,
         ...data,
         status: currentStatus
       });
@@ -611,8 +605,8 @@ export const getNorthfleetStoRequirements = async (
 
     // Sort by Barrow Collection Date ascending
     list.sort((a, b) => {
-      const timeA = (a.barrowCollectionDate as any)?.seconds || 0;
-      const timeB = (b.barrowCollectionDate as any)?.seconds || 0;
+      const timeA = a.barrowCollectionDate ? new Date(a.barrowCollectionDate).getTime() : 0;
+      const timeB = b.barrowCollectionDate ? new Date(b.barrowCollectionDate).getTime() : 0;
       return timeA - timeB;
     });
 
@@ -633,17 +627,18 @@ export const cancelNorthfleetStoRequirement = async (
   userId: string = 'planner-user'
 ): Promise<ServiceResult<void>> => {
   try {
-    const ref = doc(db, STO_REQUIREMENTS_COLLECTION, stoId);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return { success: false, error: 'STO requirement not found' };
+    const data = await getDocument<NorthfleetStoRequirement>(STO_REQUIREMENTS_COLLECTION, stoId);
+    if (!data) return { success: false, error: 'STO requirement not found' };
 
-    const data = snap.data() as NorthfleetStoRequirement;
-
-    await updateDoc(ref, {
-      status: 'CANCELLED',
-      modifiedBy: userId,
-      modifiedDate: Timestamp.now()
-    });
+    const { error: updateErr } = await supabase
+      .from('northfleet_sto_requirements')
+      .update(toSnakeCase({
+        status: 'CANCELLED',
+        modifiedBy: userId,
+        modifiedDate: new Date().toISOString()
+      }))
+      .eq('id', stoId);
+    if (updateErr) throw updateErr;
 
     await logAuditEvent({
       tenantId,
@@ -681,17 +676,18 @@ export const updateNorthfleetStoRequirement = async (
   userId: string = 'planner-user'
 ): Promise<ServiceResult<void>> => {
   try {
-    const ref = doc(db, STO_REQUIREMENTS_COLLECTION, stoId);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return { success: false, error: 'STO requirement not found' };
+    const data = await getDocument<NorthfleetStoRequirement>(STO_REQUIREMENTS_COLLECTION, stoId);
+    if (!data) return { success: false, error: 'STO requirement not found' };
 
-    const data = snap.data() as NorthfleetStoRequirement;
-
-    await updateDoc(ref, {
-      ...updates,
-      modifiedBy: userId,
-      modifiedDate: Timestamp.now()
-    });
+    const { error: updateErr } = await supabase
+      .from('northfleet_sto_requirements')
+      .update(toSnakeCase({
+        ...updates,
+        modifiedBy: userId,
+        modifiedDate: new Date().toISOString()
+      }))
+      .eq('id', stoId);
+    if (updateErr) throw updateErr;
 
     await logAuditEvent({
       tenantId,

@@ -11,7 +11,9 @@ import { Destination, ActionType, PriorityLevel } from '../../../types/configura
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
-import { collection, db, onSnapshot, orderBy, query, subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase } from '../../../utils/caseTransformers';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -58,21 +60,21 @@ export const WarehouseExecutionPage: React.FC = () => {
 
     const unsubDest = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
-      [where('tenantId', '==', tenantId)],
+      [{ field: 'tenantId', op: '==', value: tenantId }],
       setDestinations,
       console.error
     );
 
     const unsubActions = subscribeToCollection<ActionType>(
       collections.ACTION_TYPES,
-      [where('tenantId', '==', tenantId)],
+      [{ field: 'tenantId', op: '==', value: tenantId }],
       setActionTypes,
       console.error
     );
 
     const unsubPriorities = subscribeToCollection<PriorityLevel>(
       collections.PRIORITY_LEVELS,
-      [where('tenantId', '==', tenantId)],
+      [{ field: 'tenantId', op: '==', value: tenantId }],
       setPriorityLevels,
       console.error
     );
@@ -87,48 +89,72 @@ export const WarehouseExecutionPage: React.FC = () => {
   useEffect(() => {
     if (!tenantId || !siteId) return;
 
-    // We fetch all non-archived priorities and filter client-side for simplicity in this dev preview
-    const q = query(
-      collection(db, 'priorities'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
+    const fetchPriorities = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('priorities')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId);
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Priority));
-      // Update expired status
-      const now = new Date();
-      const updated = fetched.map(p => {
-        if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt && !p.untilSwitchedOff) {
-          const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as unknown as string);
-          if (exp < now) {
-             return { ...p, priorityStatus: 'EXPIRED' as any };
+        if (error) throw error;
+
+        const fetched = (data || []).map(row => toCamelCase<Priority>(row));
+        
+        // Update expired status
+        const now = new Date();
+        const updated = fetched.map(p => {
+          if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt && !p.untilSwitchedOff) {
+            const exp = new Date(p.expireAt);
+            if (exp < now) {
+               return { ...p, priorityStatus: 'EXPIRED' as any };
+            }
           }
-        }
-        if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
-          const start = (p.startAt as any)?.toDate?.() || new Date(p.startAt as unknown as string);
-          if (start <= now) {
-             return { ...p, priorityStatus: 'ACTIVE' as any };
+          if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
+            const start = new Date(p.startAt);
+            if (start <= now) {
+               return { ...p, priorityStatus: 'ACTIVE' as any };
+            }
           }
+          return p;
+        });
+        
+        // Sort by creation date desc
+        updated.sort((a, b) => {
+          const da = new Date(a.createdDate);
+          const db = new Date(b.createdDate);
+          return db.getTime() - da.getTime();
+        });
+
+        setPriorities(updated);
+        setLoading(false);
+      } catch (err) {
+        console.error(err);
+        setLoading(false);
+      }
+    };
+
+    fetchPriorities();
+
+    const channel = supabase
+      .channel(`priorities_realtime_${siteId}_${Math.random().toString(36).substring(2, 8)}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'priorities',
+          filter: `tenant_id=eq.${tenantId}`
+        },
+        () => {
+          fetchPriorities();
         }
-        return p;
-      });
-      
-      // Sort by creation date desc
-      updated.sort((a, b) => {
-        const da = (a.createdDate as any)?.toDate?.() || new Date(a.createdDate as any);
-        const db = (b.createdDate as any)?.toDate?.() || new Date(b.createdDate as any);
-        return db.getTime() - da.getTime();
-      });
+      )
+      .subscribe();
 
-      setPriorities(updated);
-      setLoading(false);
-    }, (err) => {
-      console.error(err);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [tenantId, siteId]);
 
   const filteredPriorities = priorities.filter(p => {

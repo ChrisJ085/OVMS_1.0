@@ -13,7 +13,6 @@ import { useSiteContext } from '../../../../contexts/SiteContext';
 import { useAuth } from '../../../auth/context/AuthContext';
 import { productionNotesRepository } from '../../repositories/productionNotesRepository';
 import { toEpochMillis } from '../../../../utils/timeFormatters';
-import { Timestamp } from '../../../../services/supabaseBase';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -149,11 +148,11 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
     setLineNoteErrorMsg(null);
 
     try {
-      let expiryTimestamp: Timestamp | null = null;
+      let expiryTimestamp: string | null = null;
       if (newLineNoteExpiry) {
         const expiryDate = new Date(newLineNoteExpiry);
         expiryDate.setHours(23, 59, 59, 999);
-        expiryTimestamp = Timestamp.fromDate(expiryDate);
+        expiryTimestamp = expiryDate.toISOString();
       }
 
       if (editingNoteId) {
@@ -163,7 +162,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
           note: newLineNoteText.trim(),
           endAt: expiryTimestamp,
           modifiedBy: userFullName,
-          modifiedDate: Timestamp.now(),
+          modifiedDate: new Date().toISOString(),
         };
         await productionNotesRepository.updateNote(editingNoteId, updates);
         setEditingNoteId(null);
@@ -173,7 +172,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
           tenantId: tenantId || 'default-tenant',
           siteId: siteId || 'default-site',
           productionLineId: selectedLineForNotes.id,
-          noteDate: Timestamp.now(),
+          noteDate: new Date().toISOString(),
           noteType: 'LINE_NOTE',
           title: newLineNoteTitle.trim() || 'Line Note',
           note: newLineNoteText.trim(),
@@ -181,9 +180,9 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
           source: 'PLANNER',
           active: true,
           createdBy: userFullName,
-          createdDate: Timestamp.now(),
+          createdDate: new Date().toISOString(),
           modifiedBy: userFullName,
-          modifiedDate: Timestamp.now(),
+          modifiedDate: new Date().toISOString(),
           startAt: null,
           endAt: expiryTimestamp,
         };
@@ -256,7 +255,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
         tenantId: tenantId || 'default-tenant',
         siteId: siteId || 'default-site',
         productionLineId: selectedLine.id,
-        noteDate: Timestamp.fromDate(selectedDate),
+        noteDate: selectedDate.toISOString(),
         noteType: newEventType,
         title: titleMap[newEventType],
         note: newEventNote.trim(),
@@ -264,9 +263,9 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
         source: 'PLANNER',
         active: true,
         createdBy: userFullName,
-        createdDate: Timestamp.now(),
+        createdDate: new Date().toISOString(),
         modifiedBy: userFullName,
-        modifiedDate: Timestamp.now(),
+        modifiedDate: new Date().toISOString(),
         startAt: null,
         endAt: null,
       };

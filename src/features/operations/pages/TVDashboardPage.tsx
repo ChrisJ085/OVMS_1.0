@@ -16,7 +16,9 @@ import {
   formatQuantityInPallets, 
   isManualInstruction 
 } from '../utils/priorityFormatters';
-import { collection, db, onSnapshot, query, subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase } from '../../../utils/caseTransformers';
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play,
   LayoutGrid, AlertCircle, TrendingDown,
@@ -166,21 +168,21 @@ export const TVDashboardPage: React.FC = () => {
 
     const unsubDest = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
-      [where('tenantId', '==', tenantId)],
+      [{ field: 'tenantId', op: '==', value: tenantId }],
       setDestinations,
       console.error
     );
 
     const unsubActions = subscribeToCollection<ActionType>(
       collections.ACTION_TYPES,
-      [where('tenantId', '==', tenantId)],
+      [{ field: 'tenantId', op: '==', value: tenantId }],
       setActionTypes,
       console.error
     );
 
     const unsubPriorities = subscribeToCollection<PriorityLevel>(
       collections.PRIORITY_LEVELS,
-      [where('tenantId', '==', tenantId)],
+      [{ field: 'tenantId', op: '==', value: tenantId }],
       setPriorityLevels,
       console.error
     );
@@ -209,132 +211,172 @@ export const TVDashboardPage: React.FC = () => {
   useEffect(() => {
     if (!tenantId || !siteId) return;
 
-    const prioritiesQuery = query(
-      collection(db, 'displayPriorities'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
+    const fetchPriorities = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('display_priorities')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId);
 
-    const unsubPriorities = onSnapshot(prioritiesQuery, (snap) => {
-      const now = new Date();
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as DisplayPriority));
-      
-      const activePriorities = fetched.filter(p => {
-        if (['DRAFT', 'SCHEDULED', 'ARCHIVED', 'CANCELLED', 'EXPIRED'].includes(p.priorityStatus)) {
-          if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
-             try {
-               const start = (p.startAt as any)?.toDate?.() || new Date(p.startAt as any);
-               if (start && start.getTime && !isNaN(start.getTime()) && start <= now) return true;
-             } catch (e) {
-               console.warn('Failed to parse startAt for scheduled item', p.id);
-             }
-          }
-          return false;
-        }
+        if (error) throw error;
+
+        const now = new Date();
+        const fetched = (data || []).map(row => toCamelCase<DisplayPriority>(row));
         
-        if (p.priorityStatus === 'COMPLETED') {
-          try {
-            const compDate = p.completedAt 
-              ? ((p.completedAt as any)?.toDate?.() || new Date(p.completedAt as any)) 
-              : ((p as any).modifiedDate 
-                  ? ((p as any).modifiedDate as any)?.toDate?.() || new Date((p as any).modifiedDate as any)
-                  : new Date());
-            
-            if (compDate && compDate.getTime && !isNaN(compDate.getTime())) {
-              if (now.getTime() - compDate.getTime() > COMPLETED_RETENTION_MS) {
-                return false;
-              }
+        const activePriorities = fetched.filter(p => {
+          if (['DRAFT', 'SCHEDULED', 'ARCHIVED', 'CANCELLED', 'EXPIRED'].includes(p.priorityStatus)) {
+            if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
+               try {
+                 const start = new Date(p.startAt);
+                 if (start && start.getTime && !isNaN(start.getTime()) && start <= now) return true;
+               } catch (e) {
+                 console.warn('Failed to parse startAt for scheduled item', p.id);
+               }
             }
-          } catch (e) {
-            console.warn('Failed to parse completedAt for item', p.id);
+            return false;
           }
-        }
-        
-        if (p.expireAt && !p.untilSwitchedOff) {
+          
+          if (p.priorityStatus === 'COMPLETED') {
+            try {
+              const compDate = p.completedAt 
+                ? new Date(p.completedAt) 
+                : ((p as any).modifiedDate 
+                    ? new Date((p as any).modifiedDate)
+                    : new Date());
+              
+              if (compDate && compDate.getTime && !isNaN(compDate.getTime())) {
+                if (now.getTime() - compDate.getTime() > COMPLETED_RETENTION_MS) {
+                  return false;
+                }
+              }
+            } catch (e) {
+              console.warn('Failed to parse completedAt for item', p.id);
+            }
+          }
+          
+          if (p.expireAt && !p.untilSwitchedOff) {
+            try {
+              const exp = new Date(p.expireAt);
+              if (exp && exp.getTime && !isNaN(exp.getTime()) && exp < now) return false;
+            } catch (e) {
+              console.warn('Failed to parse expireAt for item', p.id);
+            }
+          }
+
+          return true;
+        });
+
+        // Sort
+        activePriorities.sort((a, b) => {
+          const weightA = PRIORITY_WEIGHTS[a.priorityLevelId] || 0;
+          const weightB = PRIORITY_WEIGHTS[b.priorityLevelId] || 0;
+          if (weightA !== weightB) return weightB - weightA;
+          
           try {
-            const exp = (p.expireAt as any)?.toDate?.() || new Date(p.expireAt as any);
-            if (exp && exp.getTime && !isNaN(exp.getTime()) && exp < now) return false;
+            const dateA = a.startAt ? new Date(a.startAt) : (a.createdDate ? new Date(a.createdDate) : new Date(0));
+            const dateB = b.startAt ? new Date(b.startAt) : (b.createdDate ? new Date(b.createdDate) : new Date(0));
+            
+            const timeA = dateA && dateA.getTime && !isNaN(dateA.getTime()) ? dateA.getTime() : 0;
+            const timeB = dateB && dateB.getTime && !isNaN(dateB.getTime()) ? dateB.getTime() : 0;
+            
+            return timeA - timeB;
           } catch (e) {
-            console.warn('Failed to parse expireAt for item', p.id);
+            return 0;
           }
-        }
+        });
 
-        return true;
-      });
+        setPriorities(activePriorities);
+        setLastUpdate(new Date());
+        setIsConnected(true);
+      } catch (err) {
+        console.error(err);
+        setIsConnected(false);
+      }
+    };
 
-      // Sort
-      activePriorities.sort((a, b) => {
-        const weightA = PRIORITY_WEIGHTS[a.priorityLevelId] || 0;
-        const weightB = PRIORITY_WEIGHTS[b.priorityLevelId] || 0;
-        if (weightA !== weightB) return weightB - weightA;
+    const fetchExceptions = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('exceptions')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId)
+          .in('exception_status', ['OPEN', 'ACKNOWLEDGED']);
+
+        if (error) throw error;
+        setExceptions((data || []).map(row => toCamelCase<OperationalException>(row)));
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    const fetchAnnouncements = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('announcements')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId)
+          .eq('active', true)
+          .eq('display_on_tv', true);
+
+        if (error) throw error;
+        const fetched = (data || []).map(row => toCamelCase<Announcement>(row));
         
-        try {
-          const dateA = (a.startAt as any)?.toDate?.() || (a.createdDate ? ((a.createdDate as any)?.toDate?.() || new Date(a.createdDate as any)) : new Date(0));
-          const dateB = (b.startAt as any)?.toDate?.() || (b.createdDate ? ((b.createdDate as any)?.toDate?.() || new Date(b.createdDate as any)) : new Date(0));
+        const now = new Date();
+        const activeAnnouncements = fetched.filter(a => {
+          const start = a.startAt ? new Date(a.startAt) : null;
+          if (start && start > now) return false;
           
-          const timeA = dateA && dateA.getTime && !isNaN(dateA.getTime()) ? dateA.getTime() : 0;
-          const timeB = dateB && dateB.getTime && !isNaN(dateB.getTime()) ? dateB.getTime() : 0;
-          
-          return timeA - timeB;
-        } catch (e) {
-          return 0;
-        }
-      });
-
-      setPriorities(activePriorities);
-      setLastUpdate(new Date());
-      setIsConnected(true);
-    }, (err) => {
-      console.error(err);
-      setIsConnected(false);
-    });
-
-    const exceptionsQuery = query(
-      collection(db, 'exceptions'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('exceptionStatus', 'in', ['OPEN', 'ACKNOWLEDGED'])
-    );
-
-    const unsubExceptions = onSnapshot(exceptionsQuery, (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as OperationalException));
-      setExceptions(fetched);
-    }, (err) => {
-      console.error(err);
-    });
-
-    const announcementsQuery = query(
-      collection(db, 'announcements'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId),
-      where('active', '==', true),
-      where('displayOnTv', '==', true)
-    );
-
-    const unsubAnnouncements = onSnapshot(announcementsQuery, (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Announcement));
-      
-      const now = new Date();
-      const activeAnnouncements = fetched.filter(a => {
-        const start = a.startAt ? ((a.startAt as any)?.toDate?.() || new Date(a.startAt as any)) : null;
-        if (start && start > now) return false;
+          if (a.expireAt) {
+            const exp = new Date(a.expireAt);
+            if (exp < now) return false;
+          }
+          return true;
+        });
         
-        if (a.expireAt) {
-          const exp = (a.expireAt as any)?.toDate?.() || new Date(a.expireAt as any);
-          if (exp < now) return false;
-        }
-        return true;
-      });
-      
-      setAnnouncements(activeAnnouncements);
-    }, (err) => {
-      console.error(err);
-    });
+        setAnnouncements(activeAnnouncements);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    fetchPriorities();
+    fetchExceptions();
+    fetchAnnouncements();
+
+    const prioritiesChannel = supabase
+      .channel(`tv_priorities_realtime_${siteId}_${Math.random().toString(36).substring(2, 8)}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'display_priorities', filter: `tenant_id=eq.${tenantId}` },
+        () => fetchPriorities()
+      )
+      .subscribe();
+
+    const exceptionsChannel = supabase
+      .channel(`tv_exceptions_realtime_${siteId}_${Math.random().toString(36).substring(2, 8)}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'exceptions', filter: `tenant_id=eq.${tenantId}` },
+        () => fetchExceptions()
+      )
+      .subscribe();
+
+    const announcementsChannel = supabase
+      .channel(`tv_announcements_realtime_${siteId}_${Math.random().toString(36).substring(2, 8)}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'announcements', filter: `tenant_id=eq.${tenantId}` },
+        () => fetchAnnouncements()
+      )
+      .subscribe();
 
     return () => {
-      unsubPriorities();
-      unsubExceptions();
-      unsubAnnouncements();
+      supabase.removeChannel(prioritiesChannel);
+      supabase.removeChannel(exceptionsChannel);
+      supabase.removeChannel(announcementsChannel);
     };
   }, [tenantId, siteId]);
 

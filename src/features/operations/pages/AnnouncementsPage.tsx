@@ -6,7 +6,6 @@ import { Megaphone, AlertTriangle, Clock, Activity, CheckCircle, Ban, Edit, Plus
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
-import { Timestamp, collection, onSnapshot, orderBy, query, where } from '../../../services/supabaseBase';
 
 export const AnnouncementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -44,8 +43,8 @@ export const AnnouncementsPage: React.FC = () => {
     };
 
     try {
-      const startAtDate = startAt ? Timestamp.fromDate(new Date(startAt)) : Timestamp.now();
-      const expireAtDate = expireAt ? Timestamp.fromDate(new Date(expireAt)) : null;
+      const startAtDate = startAt ? new Date(startAt).toISOString() : new Date().toISOString();
+      const expireAtDate = expireAt ? new Date(expireAt).toISOString() : null;
 
       if (editingId) {
         await updateAnnouncement(editingId, {

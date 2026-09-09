@@ -11,7 +11,7 @@ import { useAuth } from '../../../auth/context/AuthContext';
 import { parsePastedInventoryText, ParseResult } from '../../utils/pasteInventoryParser';
 import { batchUpdateInventoryFromPastedData } from '../../services/inventoryService';
 import { refreshSiteRecommendations } from '../../../planning/services/recommendationService';
-import { subscribeToCollection, where } from '../../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../../services/dbService';
 
 interface PasteInventoryModalProps {
   isOpen: boolean;
@@ -91,21 +91,29 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
 
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setUnits,
       console.error
     );
 
     const unsubCategories = subscribeToCollection<ProductCategory>(
       collections.PRODUCT_CATEGORIES,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setCategories,
       console.error
     );
 
     const unsubDestinations = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
-      [where('tenantId', '==', tenantId)],
+      [
+        { field: 'tenantId', op: '==', value: tenantId }
+      ],
       (items) => {
         const filtered = items
           .filter(d => !d.siteId || d.siteId === '' || d.siteId === siteId)

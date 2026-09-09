@@ -8,7 +8,8 @@ import { SiteRecommendationRun } from '../../../types/recommendation';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { formatRecLastGenerated, formatRelativeTime } from '../../../utils/timeFormatters';
-import { Timestamp, onSnapshot } from '../../../services/supabaseBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase } from '../../../utils/caseTransformers';
 
 export interface GenerationProgress {
   total: number;
@@ -77,57 +78,78 @@ export const RecommendationGenerationProvider: React.FC<{ children: ReactNode }>
     return () => clearInterval(interval);
   }, []);
 
-  // Listen to site recommendation run document in Firestore
+  // Listen to site recommendation run document natively
   useEffect(() => {
     if (!activeTenantId || !activeSiteId) {
       setSiteRunData(null);
       return;
     }
 
-    try {
-      const docRef = getSiteRecommendationRunRef(activeTenantId, activeSiteId);
-      const unsubscribe = onSnapshot(
-        docRef,
-        (snap) => {
-          if (snap.exists()) {
-            const data = snap.data() as SiteRecommendationRun;
-            setSiteRunData(data);
-            setLastRefreshTimestamp(Date.now());
+    const fetchRunData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('site_recommendation_runs')
+          .select('*')
+          .eq('id', `${activeTenantId}_${activeSiteId}`)
+          .maybeSingle();
 
-            const prevStatus = prevRunStatusRef.current;
-            prevRunStatusRef.current = data.status;
+        if (error) throw error;
 
-            // If another user completed a run recently (transitioned to COMPLETED), show feedback
-            if (prevStatus === 'IN_PROGRESS' && data.status === 'COMPLETED' && !isLocallyGenerating) {
-              setCompletionInfo({
-                timestamp: Date.now(),
-                generatedCount: data.generatedCount || 0,
-                conflictsCount: data.conflictsCount || 0,
-                siteId: activeSiteId,
-                completedByName: data.completedByName || data.startedByName
-              });
-              setIsCompletedRecently(true);
+        if (data) {
+          const runData = toCamelCase<SiteRecommendationRun>(data);
+          setSiteRunData(runData);
+          setLastRefreshTimestamp(Date.now());
 
-              if (autoDismissTimerRef.current) {
-                clearTimeout(autoDismissTimerRef.current);
-              }
-              autoDismissTimerRef.current = setTimeout(() => {
-                setIsCompletedRecently(false);
-              }, 10000);
+          const prevStatus = prevRunStatusRef.current;
+          prevRunStatusRef.current = runData.status;
+
+          // If another user completed a run recently (transitioned to COMPLETED), show feedback
+          if (prevStatus === 'IN_PROGRESS' && runData.status === 'COMPLETED' && !isLocallyGenerating) {
+            setCompletionInfo({
+              timestamp: Date.now(),
+              generatedCount: runData.generatedCount || 0,
+              conflictsCount: runData.conflictsCount || 0,
+              siteId: activeSiteId,
+              completedByName: runData.completedByName || runData.startedByName
+            });
+            setIsCompletedRecently(true);
+
+            if (autoDismissTimerRef.current) {
+              clearTimeout(autoDismissTimerRef.current);
             }
-          } else {
-            setSiteRunData(null);
+            autoDismissTimerRef.current = setTimeout(() => {
+              setIsCompletedRecently(false);
+            }, 10000);
           }
-        },
-        (err) => {
-          console.warn('Recommendation run listener notice:', err);
+        } else {
+          setSiteRunData(null);
         }
-      );
+      } catch (err) {
+        console.warn('Error fetching site recommendation run:', err);
+      }
+    };
 
-      return () => unsubscribe();
-    } catch (e) {
-      console.warn('Failed to attach recommendation run snapshot listener:', e);
-    }
+    fetchRunData();
+
+    const channel = supabase
+      .channel(`site_run_realtime_${activeSiteId}_${Math.random().toString(36).substring(2, 8)}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'site_recommendation_runs',
+          filter: `id=eq.${activeTenantId}_${activeSiteId}`
+        },
+        () => {
+          fetchRunData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [activeTenantId, activeSiteId, isLocallyGenerating]);
 
   // Determine whether a run is currently in progress
@@ -135,8 +157,8 @@ export const RecommendationGenerationProvider: React.FC<{ children: ReactNode }>
     if (!siteRunData || siteRunData.status !== 'IN_PROGRESS') return false;
     
     // Check for stale runs (older than 15 minutes)
-    const startedMs = siteRunData.startedAt?.toMillis ? siteRunData.startedAt.toMillis() : 0;
-    const lastUpdatedMs = siteRunData.lastUpdatedAt?.toMillis ? siteRunData.lastUpdatedAt.toMillis() : startedMs;
+    const startedMs = siteRunData.startedAt ? new Date(siteRunData.startedAt).getTime() : 0;
+    const lastUpdatedMs = siteRunData.lastUpdatedAt ? new Date(siteRunData.lastUpdatedAt).getTime() : startedMs;
     if (Date.now() - (lastUpdatedMs || startedMs) > 15 * 60 * 1000) {
       return false; // Stale run
     }

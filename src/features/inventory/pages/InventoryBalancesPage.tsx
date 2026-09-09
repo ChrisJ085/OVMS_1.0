@@ -14,7 +14,7 @@ import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { collections } from '../../configuration/services/configurationService';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
 
 export const InventoryBalancesPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -64,7 +64,10 @@ export const InventoryBalancesPage: React.FC = () => {
 
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: '' }
+      ],
       setUnits,
       console.error
     );

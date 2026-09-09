@@ -14,7 +14,7 @@ import { PromotionRuleModal } from './components/PromotionRuleModal';
 import { PromotionModal } from './components/PromotionModal';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection, where } from '../../../services/dbService';
 
 export const PromotionDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();

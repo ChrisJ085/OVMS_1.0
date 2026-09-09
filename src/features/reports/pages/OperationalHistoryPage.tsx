@@ -6,7 +6,7 @@ import { Recommendation } from '../../../types/recommendation';
 import { OperationalException } from '../../../types/exception';
 import { Announcement } from '../../../types/announcement';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, collection, db, getDocs, orderBy, query, where } from '../../../services/supabaseBase';
+import { getDocuments, where } from '../../../services/dbService';
 
 // Normalised history item
 interface HistoryEvent {
@@ -54,19 +54,16 @@ export const OperationalHistoryPage: React.FC = () => {
 
         // Fetch Priorities
         if (eventTypeFilter === 'ALL' || eventTypeFilter === 'PRIORITY') {
-          const qPriorities = query(
-            collection(db, 'priorities'),
-            where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId)
+          const priorities = await getDocuments<Priority>(
+            'priorities',
+            [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
           );
-          const pSnap = await getDocs(qPriorities);
-          pSnap.docs.forEach(doc => {
-            const data = doc.data() as Priority;
-            const ts = (data.createdDate as any)?.toDate ? (data.createdDate as any).toDate() : new Date(data.createdDate as any);
+          priorities.forEach(data => {
+            const ts = new Date(data.createdDate as any);
             if (isBetween(ts)) {
               history.push({
-                id: `p-${doc.id}`,
-                sourceId: doc.id,
+                id: `p-${data.id}`,
+                sourceId: data.id,
                 type: 'PRIORITY',
                 timestamp: ts,
                 title: `Priority: ${data.priorityLevelId}`,
@@ -81,20 +78,17 @@ export const OperationalHistoryPage: React.FC = () => {
 
         // Fetch Recommendations
         if (eventTypeFilter === 'ALL' || eventTypeFilter === 'RECOMMENDATION') {
-          const qRecs = query(
-            collection(db, 'recommendations'),
-            where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId)
+          const recommendations = await getDocuments<Recommendation>(
+            'recommendations',
+            [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
           );
-          const rSnap = await getDocs(qRecs);
-          rSnap.docs.forEach(doc => {
-            const data = doc.data() as Recommendation;
+          recommendations.forEach(data => {
             const rawTs = data.createdDate || data.generatedAt;
-            const ts = (rawTs as any)?.toDate ? (rawTs as any).toDate() : new Date(rawTs as any);
+            const ts = new Date(rawTs as any);
             if (isBetween(ts)) {
               history.push({
-                id: `r-${doc.id}`,
-                sourceId: doc.id,
+                id: `r-${data.id}`,
+                sourceId: data.id,
                 type: 'RECOMMENDATION',
                 timestamp: ts,
                 title: `Recommendation: ${data.decisionOutput?.recommendedActionTypeId || 'System'}`,
@@ -109,19 +103,16 @@ export const OperationalHistoryPage: React.FC = () => {
 
         // Fetch Exceptions
         if (eventTypeFilter === 'ALL' || eventTypeFilter === 'EXCEPTION') {
-          const qExceptions = query(
-            collection(db, 'exceptions'),
-            where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId)
+          const exceptions = await getDocuments<OperationalException>(
+            'exceptions',
+            [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
           );
-          const eSnap = await getDocs(qExceptions);
-          eSnap.docs.forEach(doc => {
-            const data = doc.data() as OperationalException;
-            const ts = (data.createdDate as any)?.toDate ? (data.createdDate as any).toDate() : new Date(data.createdDate as any);
+          exceptions.forEach(data => {
+            const ts = new Date(data.createdDate as any);
             if (isBetween(ts)) {
               history.push({
-                id: `e-${doc.id}`,
-                sourceId: doc.id,
+                id: `e-${data.id}`,
+                sourceId: data.id,
                 type: 'EXCEPTION',
                 timestamp: ts,
                 title: `Exception: ${data.title}`,
@@ -136,19 +127,16 @@ export const OperationalHistoryPage: React.FC = () => {
 
         // Fetch Announcements
         if (eventTypeFilter === 'ALL' || eventTypeFilter === 'ANNOUNCEMENT') {
-          const qAnn = query(
-            collection(db, 'announcements'),
-            where('tenantId', '==', tenantId),
-            where('siteId', '==', siteId)
+          const announcements = await getDocuments<Announcement>(
+            'announcements',
+            [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
           );
-          const aSnap = await getDocs(qAnn);
-          aSnap.docs.forEach(doc => {
-            const data = doc.data() as Announcement;
-            const ts = (data.createdDate as any)?.toDate ? (data.createdDate as any).toDate() : new Date(data.createdDate as any);
+          announcements.forEach(data => {
+            const ts = new Date(data.createdDate as any);
             if (isBetween(ts)) {
               history.push({
-                id: `a-${doc.id}`,
-                sourceId: doc.id,
+                id: `a-${data.id}`,
+                sourceId: data.id,
                 type: 'ANNOUNCEMENT',
                 timestamp: ts,
                 title: `Announcement: ${data.title}`,

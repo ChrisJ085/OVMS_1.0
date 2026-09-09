@@ -5,7 +5,8 @@ import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { updateExceptionStatus, runExceptionEvaluation } from '../services/exceptionService';
 import { AlertTriangle, Clock, CheckCircle, Search, Filter, MessageSquare, Ban, Play } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { collection, db, onSnapshot, orderBy, query, where } from '../../../services/supabaseBase';
+import { supabase } from '../../../config/supabase';
+import { toCamelCase } from '../../../utils/caseTransformers';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -31,30 +32,54 @@ export const ExceptionCentrePage: React.FC = () => {
   useEffect(() => {
     if (!tenantId || !siteId) return;
 
-    const q = query(
-      collection(db, 'exceptions'),
-      where('tenantId', '==', tenantId),
-      where('siteId', '==', siteId)
-    );
+    const fetchExceptions = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('exceptions')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('site_id', siteId);
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as OperationalException));
-      
-      // Sort by firstDetected desc
-      fetched.sort((a, b) => {
-        const da = (a.firstDetectedAt as any)?.toDate?.() || new Date(a.createdDate as any);
-        const db = (b.firstDetectedAt as any)?.toDate?.() || new Date(b.createdDate as any);
-        return db.getTime() - da.getTime();
-      });
+        if (error) throw error;
 
-      setExceptions(fetched);
-      setLoading(false);
-    }, (err) => {
-      console.error(err);
-      setLoading(false);
-    });
+        const fetched = (data || []).map(row => toCamelCase<OperationalException>(row));
+        
+        // Sort by firstDetected desc
+        fetched.sort((a, b) => {
+          const da = new Date(a.firstDetectedAt || a.createdDate);
+          const db = new Date(b.firstDetectedAt || b.createdDate);
+          return db.getTime() - da.getTime();
+        });
 
-    return () => unsubscribe();
+        setExceptions(fetched);
+        setLoading(false);
+      } catch (err) {
+        console.error(err);
+        setLoading(false);
+      }
+    };
+
+    fetchExceptions();
+
+    const channel = supabase
+      .channel(`exceptions_realtime_${siteId}_${Math.random().toString(36).substring(2, 8)}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'exceptions',
+          filter: `tenant_id=eq.${tenantId}`
+        },
+        () => {
+          fetchExceptions();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [tenantId, siteId]);
 
   const stats = useMemo(() => {

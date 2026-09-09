@@ -3,7 +3,7 @@ import {
   updateDocument,
   deactivateDocument,
   subscribeToCollection
-} from '../../../services/supabaseBase';
+} from '../../../services/dbService';
 import { isUniqueCode, trimCode } from '../../../validation';
 import { Location } from '../../../types/inventory';
 import { ServiceResult } from '../../../types/common';

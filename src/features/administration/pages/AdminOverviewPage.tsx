@@ -35,7 +35,9 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { useEnvironmentMode } from '../../../contexts/EnvironmentModeContext';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { seedTestDataForTesting } from '../../planning/services/testDataSeeder';
-import { Timestamp, addDoc, collection, db, doc, getCountFromServer, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../../services/supabaseBase';
+import { getDocument, getDocuments, where } from '../../../services/dbService';
+import { supabase } from '../../../config/supabase';
+import { toSnakeCase } from '../../../utils/caseTransformers';
 
 export const AdminOverviewPage: React.FC = () => {
   const { userProfile, currentUser, user } = useAuth();
@@ -68,14 +70,14 @@ export const AdminOverviewPage: React.FC = () => {
       const siteSettings = await getSiteSettings(tenantId, siteId);
       setSettings(siteSettings);
 
-      const destSnap = await getCountFromServer(query(collection(db!, 'destinations'), where('tenantId', '==', tenantId)));
-      const lineSnap = await getCountFromServer(query(collection(db!, 'productionLines'), where('tenantId', '==', tenantId), where('siteId', '==', siteId)));
+      const destDocs = await getDocuments('destinations', [where('tenantId', '==', tenantId)]);
+      const lineDocs = await getDocuments('productionLines', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
       
       setStats({
         productsWithoutRules: 0,
         productsWithoutInventory: 0,
-        destinationsCount: destSnap.data().count,
-        productionLinesCount: lineSnap.data().count,
+        destinationsCount: destDocs.length,
+        productionLinesCount: lineDocs.length,
         staleInventoryCount: 0,
         invalidRulesCount: 0
       });
@@ -95,7 +97,7 @@ export const AdminOverviewPage: React.FC = () => {
     setSeedingConfig(true);
     setSeedFeedback(null);
     try {
-      const result = await seedDevelopmentConfiguration(tenantId, siteId);
+      const result = await seedDevelopmentConfiguration(tenantId, siteId, userProfile?.uid || 'ADMIN');
       if (result.success) {
         setSeedFeedback({ type: 'success', message: 'Development configuration loaded successfully (sites, storage areas, production lines, and categories).' });
         await fetchOverviewStats();
@@ -118,7 +120,7 @@ export const AdminOverviewPage: React.FC = () => {
     setSeedFeedback(null);
     try {
       // Ensure baseline configuration first
-      await seedDevelopmentConfiguration(tenantId, siteId);
+      await seedDevelopmentConfiguration(tenantId, siteId, userProfile?.uid || 'ADMIN');
       const result = await seedTestDataForTesting(tenantId, siteId);
       if (result.success) {
         setSeedFeedback({ type: 'success', message: result.message || 'UAT example data loaded successfully.' });
@@ -211,24 +213,22 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Fetch Users Directory
   const fetchUsers = async () => {
-    if (!db || !userProfile) return;
+    if (!userProfile) return;
     setLoadingUsers(true);
     setUsersError(null);
     try {
-      let q;
+      let usersDocs: UserProfile[];
       if (userProfile.role === 'PLATFORM_SUPERUSER') {
-        q = collection(db, 'users');
+        usersDocs = await getDocuments<UserProfile>('users');
       } else {
-        q = query(collection(db, 'users'), where('tenantId', '==', userProfile.tenantId));
+        usersDocs = await getDocuments<UserProfile>('users', [where('tenantId', '==', userProfile.tenantId)]);
       }
       
-      const snap = await getDocs(q);
       let list: UserProfile[] = [];
-      snap.forEach(docSnap => {
-        const data = docSnap.data() as UserProfile;
+      usersDocs.forEach(data => {
         // Filter out platform superusers for non-superusers locally to avoid composite index requirement
         if (userProfile.role === 'PLATFORM_SUPERUSER' || data.role !== 'PLATFORM_SUPERUSER') {
-          list.push({ uid: docSnap.id, ...data } as UserProfile);
+          list.push({ uid: data.id, ...data } as UserProfile);
         }
       });
       setUsersList(list);
@@ -242,20 +242,19 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Fetch Tenants (Superuser & Tenant Admin)
   const fetchTenants = async () => {
-    if (!db || !userProfile) return;
+    if (!userProfile) return;
     try {
       if (userProfile.role === 'PLATFORM_SUPERUSER') {
-        const snap = await getDocs(collection(db, 'tenants'));
+        const tenantsDocs = await getDocuments<any>('tenants');
         const list: Tenant[] = [];
-        snap.forEach(docSnap => {
-          list.push({ id: docSnap.id, ...(docSnap.data() as any) } as Tenant);
+        tenantsDocs.forEach(data => {
+          list.push({ id: data.id, ...data } as Tenant);
         });
         setTenantsList(list);
       } else if (userProfile.tenantId) {
-        const tenantSnap = await getDoc(doc(db, 'tenants', userProfile.tenantId));
-        if (tenantSnap.exists()) {
-          const tData = tenantSnap.data();
-          setTenantsList([{ id: tenantSnap.id, name: tData?.tenantName || tData?.name || tenantSnap.id, ...(tData as any) } as Tenant]);
+        const tData = await getDocument<any>('tenants', userProfile.tenantId);
+        if (tData) {
+          setTenantsList([{ id: userProfile.tenantId, name: tData?.tenantName || tData?.name || userProfile.tenantId, ...(tData as any) } as Tenant]);
         } else {
           setTenantsList([{ id: userProfile.tenantId, tenantName: userProfile.tenantId, tenantCode: userProfile.tenantId } as Tenant]);
         }
@@ -282,19 +281,17 @@ export const AdminOverviewPage: React.FC = () => {
   useEffect(() => {
     const fetchSitesForProvisioning = async () => {
       const targetTenantId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId : userProfile?.tenantId;
-      if (!targetTenantId || !db) {
+      if (!targetTenantId) {
         setAvailableSites([]);
         setSelectedSites([]);
         return;
       }
       try {
-        const q = query(collection(db, 'sites'), where('tenantId', '==', targetTenantId));
-        const snap = await getDocs(q);
+        const sitesDocs = await getDocuments<any>('sites', [where('tenantId', '==', targetTenantId)]);
         const sites: any[] = [];
-        snap.forEach(doc => {
-          const data = doc.data();
-          const sId = data.siteId || data.siteCode || doc.id;
-          sites.push({ id: doc.id, siteId: sId, ...data });
+        sitesDocs.forEach(data => {
+          const sId = data.siteId || data.siteCode || data.id;
+          sites.push({ id: data.id, siteId: sId, ...data });
         });
         setAvailableSites(sites);
       } catch (err) {
@@ -306,16 +303,20 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Handle Account Unlock
   const handleUnlockUser = async (targetUid: string) => {
-    if (!db) return;
     try {
-      await updateDoc(doc(db, 'users', targetUid), {
-        accountStatus: 'ACTIVE',
-        failedLoginAttempts: 0,
-        failedAttemptWindowStartedAt: null,
-        lockedAt: null,
-        modifiedBy: userProfile?.uid || 'ADMIN',
-        modifiedDate: serverTimestamp()
-      });
+      const { error: updateErr } = await supabase
+        .from('users')
+        .update(toSnakeCase({
+          accountStatus: 'ACTIVE',
+          failedLoginAttempts: 0,
+          failedAttemptWindowStartedAt: null,
+          lockedAt: null,
+          modifiedBy: userProfile?.uid || 'ADMIN',
+          modifiedDate: new Date().toISOString()
+        }))
+        .eq('id', targetUid);
+      if (updateErr) throw updateErr;
+
       alert('User account unlocked successfully.');
     } catch (directErr: any) {
       alert(`Unlock failed: ${directErr.message}`);
@@ -325,14 +326,18 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Handle Enable/Disable Account Toggle
   const handleToggleStatus = async (targetUid: string, currentStatus: AccountStatus) => {
-    if (!db) return;
     const newStatus: AccountStatus = currentStatus === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
     try {
-      await updateDoc(doc(db, 'users', targetUid), {
-        accountStatus: newStatus,
-        modifiedBy: userProfile?.uid || 'ADMIN',
-        modifiedDate: serverTimestamp()
-      });
+      const { error: updateErr } = await supabase
+        .from('users')
+        .update(toSnakeCase({
+          accountStatus: newStatus,
+          modifiedBy: userProfile?.uid || 'ADMIN',
+          modifiedDate: new Date().toISOString()
+        }))
+        .eq('id', targetUid);
+      if (updateErr) throw updateErr;
+
       alert(`User status changed to ${newStatus}.`);
     } catch (err: any) {
       alert(`Failed to update status: ${err.message}`);
@@ -342,7 +347,6 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Handle Password Reset to Temp Pass
   const handleResetPassword = async (targetUid: string) => {
-    if (!db) return;
     const tempPass = prompt('Enter new temporary password for user (minimum 8 characters):', 'TempPass123!');
     if (!tempPass) return;
     if (tempPass.length < 8) {
@@ -351,15 +355,20 @@ export const AdminOverviewPage: React.FC = () => {
     }
 
     try {
-      await updateDoc(doc(db, 'users', targetUid), {
-        requiresPasswordChange: true,
-        accountStatus: 'ACTIVE',
-        failedLoginAttempts: 0,
-        failedAttemptWindowStartedAt: null,
-        lockedAt: null,
-        modifiedBy: userProfile?.uid || 'ADMIN',
-        modifiedDate: serverTimestamp()
-      });
+      const { error: updateErr } = await supabase
+        .from('users')
+        .update(toSnakeCase({
+          requiresPasswordChange: true,
+          accountStatus: 'ACTIVE',
+          failedLoginAttempts: 0,
+          failedAttemptWindowStartedAt: null,
+          lockedAt: null,
+          modifiedBy: userProfile?.uid || 'ADMIN',
+          modifiedDate: new Date().toISOString()
+        }))
+        .eq('id', targetUid);
+      if (updateErr) throw updateErr;
+
       alert(`User profile updated. Please instruct user to log in and change their password. Temporary password configured in profile reset: ${tempPass}`);
     } catch (directErr: any) {
       alert(`Reset failed: ${directErr.message}`);
@@ -464,18 +473,22 @@ export const AdminOverviewPage: React.FC = () => {
     setTenantMsg(null);
     try {
       const code = newTenantCode.toUpperCase().trim();
-      const tenantDocRef = doc(db!, 'tenants', code);
       const payload: Tenant = {
         id: code,
         tenantName: newTenantName.trim(),
         tenantCode: code,
         active: true,
         createdBy: userProfile?.uid || 'ADMIN',
-        createdDate: Timestamp.now(),
+        createdDate: new Date().toISOString(),
         modifiedBy: userProfile?.uid || 'ADMIN',
-        modifiedDate: Timestamp.now()
-      };
-      await setDoc(tenantDocRef, payload);
+        modifiedDate: new Date().toISOString()
+      } as any;
+      
+      const { error: insertErr } = await supabase
+        .from('tenants')
+        .insert(toSnakeCase(payload));
+      if (insertErr) throw insertErr;
+
       setTenantMsg(`Tenant ${newTenantName} (${code}) successfully created.`);
       setNewTenantName('');
       setNewTenantCode('');

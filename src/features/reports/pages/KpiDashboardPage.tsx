@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Activity, Clock, CheckCircle, AlertTriangle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, collection, db, getDocs, query, where } from '../../../services/supabaseBase';
+import { getDocuments, where } from '../../../services/dbService';
 
 export const KpiDashboardPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -35,16 +35,12 @@ export const KpiDashboardPage: React.FC = () => {
     try {
       const now = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const startOfDayTs = Timestamp.fromDate(startOfDay);
 
       // 1. Priorities
-      const qPriorities = query(
-        collection(db, 'priorities'),
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId)
+      const priorities = await getDocuments<any>(
+        'priorities',
+        [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
       );
-      const pSnap = await getDocs(qPriorities);
-      const priorities = pSnap.docs.map(d => d.data() as any);
       
       let activePriorities = 0;
       let createdToday = 0;

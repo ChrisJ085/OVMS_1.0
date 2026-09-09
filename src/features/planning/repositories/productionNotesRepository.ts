@@ -69,11 +69,14 @@ export const productionNotesRepository = {
    */
   async addNote(noteData: Omit<ProductionLinePlanNote, 'id'>): Promise<string> {
     try {
+      if (!noteData.createdBy) {
+        throw new Error('Audit field error: createdBy is required but not provided.');
+      }
       const snakeData = toSnakeCase({
         ...noteData,
-        createdBy: noteData.createdBy || 'development-user',
+        createdBy: noteData.createdBy,
         createdDate: new Date().toISOString(),
-        modifiedBy: noteData.modifiedBy || 'development-user',
+        modifiedBy: noteData.modifiedBy || noteData.createdBy,
         modifiedDate: new Date().toISOString(),
       });
 

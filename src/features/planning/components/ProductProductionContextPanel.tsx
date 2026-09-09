@@ -7,7 +7,7 @@ import { LoadingState } from '../../../components/ui/States';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductionLine } from '../../../types/configuration';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection, where } from '../../../services/dbService';
 
 interface ProductProductionContextPanelProps {
   productId: string;

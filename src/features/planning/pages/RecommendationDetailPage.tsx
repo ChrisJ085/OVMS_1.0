@@ -13,7 +13,7 @@ import { collections } from '../../configuration/services/configurationService';
 import { Location } from '../../../types/inventory';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
-import { db, doc, getDoc, subscribeToCollection, where } from '../../../services/supabaseBase';
+import { getDocument, subscribeToCollection, where } from '../../../services/dbService';
 
 export const RecommendationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -89,10 +89,8 @@ export const RecommendationDetailPage: React.FC = () => {
     if (!id) return;
     setLoading(true);
     try {
-      const docRef = doc(db, 'recommendations', id);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const data = { id: snap.id, ...snap.data() } as Recommendation;
+      const data = await getDocument<Recommendation>('recommendations', id);
+      if (data) {
         setRec(data);
         if (data.decisionOutput.recommendedActionTypeId) {
           setOverrideActionType(data.decisionOutput.recommendedActionTypeId);

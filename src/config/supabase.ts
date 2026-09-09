@@ -18,9 +18,17 @@ const normalizeSupabaseUrl = (url: string): string => {
   return cleaned;
 };
 
-const rawUrl = getEnvVar('VITE_SUPABASE_URL', 'SUPABASE_URL') || 'https://izcavwwhjgnjrzfhwfwf.supabase.co';
+const rawUrl = getEnvVar('VITE_SUPABASE_URL', 'SUPABASE_URL');
+if (!rawUrl) {
+  throw new Error('Configuration error: VITE_SUPABASE_URL environment variable is required but not set.');
+}
 export const supabaseUrl = normalizeSupabaseUrl(rawUrl);
-export const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY') || 'sb_publishable_ZdGk0rOzqovmSURMaHwlZg_UQ5EpC4d';
+
+const anonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+if (!anonKey) {
+  throw new Error('Configuration error: VITE_SUPABASE_ANON_KEY environment variable is required but not set.');
+}
+export const supabaseAnonKey = anonKey;
 
 export const isSupabaseConfigured = (): boolean => {
   return (

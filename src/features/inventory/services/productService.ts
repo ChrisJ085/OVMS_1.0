@@ -1,7 +1,7 @@
 import { isUniqueCode, trimCode, trimDescription } from '../../../validation';
 import { Product } from '../../../types/product';
 import { ServiceResult } from '../../../types/common';
-import { getDocument, getDocuments, createDocument, updateDocument, deactivateDocument, subscribeToCollection } from '../../../services/supabaseBase';
+import { getDocument, getDocuments, createDocument, updateDocument, deactivateDocument, subscribeToCollection } from '../../../services/dbService';
 
 const COLLECTION_NAME = 'products';
 

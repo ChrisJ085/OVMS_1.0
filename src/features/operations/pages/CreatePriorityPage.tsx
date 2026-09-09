@@ -13,7 +13,7 @@ import { collections } from '../../configuration/services/configurationService';
 import { ProductLookup } from '../../inventory/components/ProductLookup';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
-import { Timestamp, db, doc, getDoc, subscribeToCollection, where } from '../../../services/supabaseBase';
+import { getDocument, subscribeToCollection, where } from '../../../services/dbService';
 
 export const CreatePriorityPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -62,9 +62,8 @@ export const CreatePriorityPage: React.FC = () => {
     const fetchExistingPriority = async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, 'priorities', editPriorityId));
-        if (snap.exists()) {
-          const p = { id: snap.id, ...snap.data() } as Priority;
+        const p = await getDocument<Priority>('priorities', editPriorityId);
+        if (p) {
           setProductId(p.productId || '');
           setActionTypeId(p.actionTypeId || 'RELEASE_TO_DESPATCH');
           setRequestedQuantity(p.requestedQuantity ?? '');
@@ -185,9 +184,8 @@ export const CreatePriorityPage: React.FC = () => {
     
     const fetchRec = async () => {
       try {
-        const d = await getDoc(doc(db, 'recommendations', recommendationId));
-        if (d.exists()) {
-          const rec = { id: d.id, ...d.data() } as Recommendation;
+        const rec = await getDocument<Recommendation>('recommendations', recommendationId);
+        if (rec) {
           setRecommendation(rec);
           
           if (rec.linkedPriorityId) {
@@ -272,8 +270,8 @@ export const CreatePriorityPage: React.FC = () => {
           priorityLevelLabel: levelLabel,
           instruction: instruction || '',
           plannerReason: plannerReason || '',
-          startAt: Timestamp.fromDate(startAtDate),
-          expireAt: (!untilSwitchedOff && expireAt) ? Timestamp.fromDate(new Date(expireAt)) : null,
+          startAt: startAtDate.toISOString(),
+          expireAt: (!untilSwitchedOff && expireAt) ? new Date(expireAt).toISOString() : null,
           untilSwitchedOff: untilSwitchedOff,
           priorityStatus: calculatedStatus as any,
         };
@@ -319,8 +317,8 @@ export const CreatePriorityPage: React.FC = () => {
           plannerReason: plannerReason || '',
           supportingReasons: recommendation ? recommendation.decisionOutput.explanationLines : [],
           planningContextSnapshot: recommendation ? recommendation.sourceSnapshot : null,
-          startAt: Timestamp.fromDate(startAtDate),
-          expireAt: (!untilSwitchedOff && expireAt) ? Timestamp.fromDate(new Date(expireAt)) : null,
+          startAt: startAtDate.toISOString(),
+          expireAt: (!untilSwitchedOff && expireAt) ? new Date(expireAt).toISOString() : null,
           untilSwitchedOff: untilSwitchedOff,
           priorityStatus: calculatedStatus as any,
         };

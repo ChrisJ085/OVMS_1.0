@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Download, FileText, Calendar, Filter } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { Timestamp, collection, db, getDocs, query, where } from '../../../services/supabaseBase';
+import { getDocuments, where } from '../../../services/dbService';
 
 type ReportType = 'PRIORITY_PERFORMANCE' | 'DDXM_STOCK' | 'RECOMMENDATION_OVERRIDE' | 'INVENTORY_MOVEMENT' | 'EXCEPTION_REPORT' | 'PRODUCTION_CONTEXT';
 
@@ -36,31 +36,28 @@ export const ReportsListPage: React.FC = () => {
       let cols: string[] = [];
       
       if (selectedReport === 'PRIORITY_PERFORMANCE') {
-        const q = query(
-          collection(db, 'priorities'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId)
+        const priorities = await getDocuments<any>(
+          'priorities',
+          [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
         );
-        const snap = await getDocs(q);
         
         cols = ['ID', 'Level', 'Status', 'Product', 'Assigned To', 'Created', 'Completed', 'Cycle Time (hrs)'];
-        data = snap.docs.map(doc => {
-          const d = doc.data();
-          const created = (d.createdDate as any)?.toDate ? (d.createdDate as any).toDate() : new Date(d.createdDate as any);
+        data = priorities.map(d => {
+          const created = new Date(d.createdDate as any);
           const cMs = created.getTime();
           if (isNaN(cMs) || cMs < startMs || cMs > endMs) return null;
 
           const pCode = d.productCodeSnapshot || '-';
           if (productCode && !pCode.toLowerCase().includes(productCode.toLowerCase())) return null;
           
-          const comp = (d.completedAt as any)?.toDate?.();
+          const comp = d.completedAt ? new Date(d.completedAt) : null;
           let cycleTime = '-';
           if (comp) {
             cycleTime = ((comp.getTime() - created.getTime()) / (1000 * 60 * 60)).toFixed(2);
           }
           
           return {
-            ID: doc.id,
+            ID: d.id,
             Level: d.priorityLevelId,
             Status: d.priorityStatus,
             Product: pCode,
@@ -71,27 +68,24 @@ export const ReportsListPage: React.FC = () => {
           };
         }).filter(Boolean);
       } else if (selectedReport === 'EXCEPTION_REPORT') {
-        const q = query(
-          collection(db, 'exceptions'),
-          where('tenantId', '==', tenantId),
-          where('siteId', '==', siteId)
+        const exceptions = await getDocuments<any>(
+          'exceptions',
+          [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
         );
-        const snap = await getDocs(q);
         
         cols = ['ID', 'Type', 'Severity', 'Status', 'Entity', 'Message', 'Created'];
-        data = snap.docs.map(doc => {
-          const d = doc.data();
-          const created = (d.createdDate as any)?.toDate ? (d.createdDate as any).toDate() : new Date(d.createdDate as any);
+        data = exceptions.map(d => {
+          const created = new Date(d.createdDate as any);
           const cMs = created.getTime();
           if (isNaN(cMs) || cMs < startMs || cMs > endMs) return null;
           return {
-            ID: doc.id,
+            ID: d.id,
             Type: d.exceptionType,
             Severity: d.severity,
             Status: d.exceptionStatus,
             Entity: `${d.entityType}:${d.entityId}`,
             Message: d.message,
-            Created: ((d.createdDate as any)?.toDate?.() || new Date()).toLocaleString()
+            Created: created.toLocaleString()
           };
         });
       } else {

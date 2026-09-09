@@ -15,7 +15,7 @@ import {
   getDecisionConfiguration 
 } from '../../features/planning/services/decisionConfigurationService';
 import { getSiteSettings, updateSiteSettings } from '../../features/administration/services/settingsService';
-import { addDoc, collection, db, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../services/supabaseBase';
+import { getDocument, getDocuments, createDocument, updateDocument, deleteDocument, where } from '../../services/dbService';
 import { 
   CheckCircle,
   Circle, 

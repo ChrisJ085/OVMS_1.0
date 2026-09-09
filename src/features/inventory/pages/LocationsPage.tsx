@@ -13,7 +13,7 @@ import { StorageArea } from '../../../types/configuration';
 import { LocationModal } from './components/LocationModal';
 import { PasteInventoryModal } from './components/PasteInventoryModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
 
 export const LocationsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -48,7 +48,10 @@ export const LocationsPage: React.FC = () => {
 
     const unsubAreas = subscribeToCollection<StorageArea>(
       collections.STORAGE_AREAS,
-      [where('tenantId', '==', tenantId), where('siteId', '==', siteId)],
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: siteId }
+      ],
       setStorageAreas,
       console.error
     );

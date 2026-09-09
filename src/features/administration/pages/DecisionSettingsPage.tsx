@@ -14,7 +14,7 @@ import {
 } from '../../planning/services/decisionConfigurationService';
 import { DecisionConfiguration } from '../../../types/decision';
 import { logAuditEvent } from '../../../services/auditService';
-import { collection, db, getDocs, query, where } from '../../../services/supabaseBase';
+import { getDocuments, where } from '../../../services/dbService';
 
 export const DecisionSettingsPage: React.FC = () => {
   const { currentUser, userProfile } = useAuth();
@@ -91,15 +91,15 @@ export const DecisionSettingsPage: React.FC = () => {
       }
 
       // 2. Fetch options (all status, to detect inactive references)
-      const [actionsSnap, prioritiesSnap, destsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'actionTypes'), where('tenantId', '==', tenantId))),
-        getDocs(query(collection(db, 'priorityLevels'), where('tenantId', '==', tenantId))),
-        getDocs(query(collection(db, 'destinations'), where('tenantId', '==', tenantId)))
+      const [actionsDocs, prioritiesDocs, destsDocs] = await Promise.all([
+        getDocuments<any>('actionTypes', [where('tenantId', '==', tenantId)]),
+        getDocuments<any>('priorityLevels', [where('tenantId', '==', tenantId)]),
+        getDocuments<any>('destinations', [where('tenantId', '==', tenantId)])
       ]);
 
-      const actionsList = actionsSnap.docs.map(d => ({ id: d.id, label: d.data().label || d.data().code, code: d.data().code, status: d.data().status }));
-      const prioritiesList = prioritiesSnap.docs.map(d => ({ id: d.id, label: d.data().label || d.data().code, code: d.data().code, status: d.data().status }));
-      const destsList = destsSnap.docs.map(d => ({ id: d.id, name: d.data().destinationName || d.data().destinationCode || d.id, code: d.data().destinationCode, status: d.data().status, siteId: d.data().siteId }));
+      const actionsList = actionsDocs.map(d => ({ id: d.id, label: d.label || d.code, code: d.code, status: d.status }));
+      const prioritiesList = prioritiesDocs.map(d => ({ id: d.id, label: d.label || d.code, code: d.code, status: d.status }));
+      const destsList = destsDocs.map(d => ({ id: d.id, name: d.destinationName || d.destinationCode || d.id, code: d.destinationCode, status: d.status, siteId: d.siteId }));
 
       setAllActions(actionsList);
       setAllPriorities(prioritiesList);

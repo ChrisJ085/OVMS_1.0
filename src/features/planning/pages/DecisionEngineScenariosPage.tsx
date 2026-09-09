@@ -12,7 +12,7 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { collections } from '../../configuration/services/configurationService';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../../operations/utils/priorityFormatters';
-import { Timestamp, subscribeToCollection, where } from '../../../services/supabaseBase';
+import { subscribeToCollection, where } from '../../../services/dbService';
 
 export const DecisionEngineScenariosPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -78,12 +78,12 @@ export const DecisionEngineScenariosPage: React.FC = () => {
     allowQuantityOverride: true,
     allowDestinationOverride: true,
     overrideRequiresReason: true,
-    effectiveFrom: Timestamp.now(),
+    effectiveFrom: new Date().toISOString(),
     effectiveTo: null,
     notes: '',
     status: 'active',
-    createdDate: Timestamp.now(),
-    modifiedDate: Timestamp.now(),
+    createdDate: new Date().toISOString(),
+    modifiedDate: new Date().toISOString(),
     createdBy: 'system',
     modifiedBy: 'system'
   };

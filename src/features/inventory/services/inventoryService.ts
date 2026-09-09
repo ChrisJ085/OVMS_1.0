@@ -5,7 +5,7 @@ import { getProduct } from './productService';
 import { generateRecommendationForProduct } from '../../planning/services/recommendationService';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
-import { subscribeToCollection } from '../../../services/supabaseBase';
+import { subscribeToCollection } from '../../../services/dbService';
 
 export const COLLECTIONS = {
   BALANCES: 'inventoryBalances',

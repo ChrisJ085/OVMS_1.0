@@ -6,7 +6,6 @@ import { ProductionLine, UnitOfMeasure } from '../../../../types/configuration';
 import { createProductionEvent, updateProductionEvent } from '../../services/productionService';
 import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { useSiteContext } from '../../../../contexts/SiteContext';
-import { Timestamp } from '../../../../services/supabaseBase';
 
 interface ProductionEventModalProps {
   isOpen: boolean;
@@ -76,8 +75,8 @@ export const ProductionEventModal: React.FC<ProductionEventModalProps> = ({
     
     const payload = {
       ...formData,
-      plannedStart: Timestamp.fromDate(start),
-      plannedFinish: Timestamp.fromDate(finish),
+      plannedStart: start.toISOString(),
+      plannedFinish: finish.toISOString(),
     };
 
     if (payload.plannedQuantity !== null && payload.plannedQuantity !== undefined && payload.plannedQuantity !== '') {
