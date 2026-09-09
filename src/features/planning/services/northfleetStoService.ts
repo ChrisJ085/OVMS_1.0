@@ -395,26 +395,19 @@ export const commitNorthfleetStoRequirements = async (
     const minDate = validRowsToProcess.reduce((min, r) => (!min || r.northfleetDeliveryDate! < min ? r.northfleetDeliveryDate! : min), null as Date | null);
     const maxDate = validRowsToProcess.reduce((max, r) => (!max || r.northfleetDeliveryDate! > max ? r.northfleetDeliveryDate! : max), null as Date | null);
 
-    const importDoc: Omit<NorthfleetStoImport, 'id'> = {
+    const importDoc = {
+      id: importId,
       tenantId,
       siteId,
-      importedAt: new Date().toISOString(),
       importedBy: userId,
       rowCount: validatedRows.length,
       validRowCount: validRowsToProcess.length,
-      warningCount: validatedRows.filter(r => r.validationStatus === 'WARNING').length,
-      errorCount: validatedRows.filter(r => r.validationStatus === 'UNKNOWN_PRODUCT' || !r.northfleetDeliveryDate).length,
-      effectiveStartDate: minDate ? minDate.toISOString() : null,
-      effectiveEndDate: maxDate ? maxDate.toISOString() : null,
-      status: 'COMMITTED',
-      notes: notes || 'Pasted STO Requirements',
-      createdDate: new Date().toISOString(),
-      modifiedDate: new Date().toISOString()
+      status: 'COMMITTED'
     };
 
     const { error: importErr } = await supabase
       .from('northfleet_sto_imports')
-      .insert(toSnakeCase({ id: importId, ...importDoc }));
+      .insert(toSnakeCase(importDoc));
     if (importErr) throw importErr;
 
     let committedCount = 0;

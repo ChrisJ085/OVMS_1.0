@@ -7,7 +7,11 @@ import {
   logPriorityEvent
 } from './priorityService';
 
-const mockInsert = vi.fn().mockResolvedValue({ error: null });
+const mockInsert = vi.fn().mockImplementation(() => ({
+  select: vi.fn().mockImplementation(() => ({
+    single: vi.fn().mockResolvedValue({ data: { id: 'prio_123' }, error: null })
+  }))
+}));
 const mockUpdate = vi.fn().mockImplementation(() => ({
   eq: vi.fn().mockImplementation(() => ({
     eq: vi.fn().mockResolvedValue({ error: null })
@@ -18,10 +22,13 @@ const mockSelect = vi.fn().mockImplementation(() => ({
     eq: vi.fn().mockImplementation(() => ({
       eq: vi.fn().mockImplementation(() => ({
         in: vi.fn().mockResolvedValue({ data: [], error: null }),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        single: vi.fn().mockResolvedValue({ data: { id: 'priority_123', priority_status: 'ACTIVE' }, error: null })
       })),
-      in: vi.fn().mockResolvedValue({ data: [], error: null })
-    }))
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+      single: vi.fn().mockResolvedValue({ data: { id: 'priority_123', priority_status: 'ACTIVE' }, error: null })
+    })),
+    single: vi.fn().mockResolvedValue({ data: { id: 'priority_123', priority_status: 'ACTIVE' }, error: null })
   }))
 }));
 
@@ -42,8 +49,6 @@ describe('Operational Priorities Collection Audit Test Suite', () => {
   });
 
   it('Verify canonical table: Priority creation writes to "priorities" table', async () => {
-    mockInsert.mockResolvedValueOnce({ error: null });
-
     const priorityInput = {
       tenantId: 'tenant_test',
       siteId: 'site_test',

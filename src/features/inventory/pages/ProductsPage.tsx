@@ -52,8 +52,7 @@ export const ProductsPage: React.FC = () => {
     const unsubCategories = subscribeToCollection<ProductCategory>(
       collections.PRODUCT_CATEGORIES,
       [
-        { field: 'tenantId', op: '==', value: tenantId },
-        { field: 'siteId', op: '==', value: '' }
+        { field: 'tenantId', op: '==', value: tenantId }
       ],
       setCategories,
       console.error
@@ -62,8 +61,7 @@ export const ProductsPage: React.FC = () => {
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
       [
-        { field: 'tenantId', op: '==', value: tenantId },
-        { field: 'siteId', op: '==', value: '' }
+        { field: 'tenantId', op: '==', value: tenantId }
       ],
       setUnits,
       console.error
@@ -72,8 +70,7 @@ export const ProductsPage: React.FC = () => {
     const unsubDestinations = subscribeToCollection<Destination>(
       collections.DESTINATIONS,
       [
-        { field: 'tenantId', op: '==', value: tenantId },
-        { field: 'siteId', op: '==', value: '' }
+        { field: 'tenantId', op: '==', value: tenantId }
       ],
       setDestinations,
       console.error

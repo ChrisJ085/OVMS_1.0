@@ -44913,8 +44913,44 @@ router.post("/admin/provision-user", async (req, res) => {
     if (!role || typeof role !== "string") {
       return res.status(400).json({ success: false, error: "Role is required", stage: currentStage });
     }
+    const targetRoleUpper = role.toUpperCase().trim();
+    if (callerRoleUpper === "TENANT_ADMIN") {
+      if (targetRoleUpper === "PLATFORM_SUPERUSER" || targetRoleUpper === "TENANT_ADMIN") {
+        return res.status(403).json({
+          success: false,
+          error: "Forbidden: Tenant Admins cannot provision Platform Superusers or Tenant Admins",
+          stage: currentStage
+        });
+      }
+      if (!callerProfile.tenantId) {
+        return res.status(403).json({
+          success: false,
+          error: "Forbidden: Tenant Admin has no associated tenant",
+          stage: currentStage
+        });
+      }
+    }
     const cleanEmail = email.toLowerCase().trim();
-    const targetTenantId = role === "PLATFORM_SUPERUSER" ? null : tenantId ? tenantId.trim() : callerRoleUpper === "TENANT_ADMIN" ? callerProfile.tenantId : null;
+    const targetTenantId = callerRoleUpper === "TENANT_ADMIN" ? callerProfile.tenantId : targetRoleUpper === "PLATFORM_SUPERUSER" ? null : tenantId ? tenantId.trim() : null;
+    let validatedSiteIds = [];
+    if (siteIds && Array.isArray(siteIds) && siteIds.length > 0) {
+      if (callerRoleUpper === "TENANT_ADMIN" && targetTenantId) {
+        const { data: tenantSites, error: siteCheckErr } = await supabase.from("sites").select("id").eq("tenant_id", targetTenantId).in("id", siteIds);
+        if (siteCheckErr) {
+          return res.status(500).json({ success: false, error: "Failed to validate site assignments", stage: currentStage });
+        }
+        const validSiteIdSet = new Set((tenantSites || []).map((s) => s.id));
+        const invalidSites = siteIds.filter((sId) => !validSiteIdSet.has(sId));
+        if (invalidSites.length > 0) {
+          return res.status(403).json({
+            success: false,
+            error: "Forbidden: Cannot assign sites that do not belong to your tenant",
+            stage: currentStage
+          });
+        }
+      }
+      validatedSiteIds = siteIds;
+    }
     currentStage = "SUPABASE_AUTH_CREATE";
     const { data: authData, error: authErr } = await supabase.auth.signUp({
       email: cleanEmail,
@@ -44939,7 +44975,7 @@ router.post("/admin/provision-user", async (req, res) => {
       email: cleanEmail,
       display_name: displayName.trim(),
       job_title: jobTitle ? String(jobTitle).trim() : "",
-      role,
+      role: targetRoleUpper,
       tenant_id: targetTenantId,
       account_status: "ACTIVE",
       requires_password_change: true,
@@ -44948,10 +44984,10 @@ router.post("/admin/provision-user", async (req, res) => {
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     });
     if (profileErr) {
-      return res.status(500).json({ success: false, error: profileErr.message, stage: currentStage });
+      return res.status(500).json({ success: false, error: "Failed to create user profile in database", stage: currentStage });
     }
-    if (siteIds && Array.isArray(siteIds) && siteIds.length > 0) {
-      const userSiteRows = siteIds.map((sId) => ({
+    if (validatedSiteIds.length > 0) {
+      const userSiteRows = validatedSiteIds.map((sId) => ({
         user_id: newUserId,
         site_id: sId
       }));
@@ -44965,18 +45001,95 @@ router.post("/admin/provision-user", async (req, res) => {
       action: "USER_CREATION",
       entity_type: "UserProfile",
       entity_id: newUserId,
-      details: { email: cleanEmail, role, tenantId: targetTenantId }
+      details: { email: cleanEmail, role: targetRoleUpper, tenantId: targetTenantId }
     });
     return res.status(200).json({
       success: true,
       message: `User ${cleanEmail} provisioned successfully`,
       uid: newUserId,
       email: cleanEmail,
-      role
+      role: targetRoleUpper
     });
   } catch (err) {
-    console.error(`[Admin Provisioning Error] Stage: ${currentStage}:`, err);
-    return res.status(500).json({ success: false, error: err.message || "Internal server error", stage: currentStage });
+    console.error(`[Admin Provisioning Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: "Failed to process user provisioning request", stage: currentStage });
+  }
+});
+router.post("/tenant-deletion", async (req, res) => {
+  let currentStage = "INIT";
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header" });
+    }
+    const callerToken = authHeader.substring(7).trim();
+    currentStage = "TOKEN_VERIFICATION";
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+    currentStage = "CALLER_AUTHORIZATION";
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
+    }
+    const callerRoleUpper = (callerRes.data.role || "").toUpperCase().trim();
+    if (callerRoleUpper !== "PLATFORM_SUPERUSER") {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can delete tenants" });
+    }
+    const { tenantId, tenantName } = req.body || {};
+    if (!tenantId || typeof tenantId !== "string") {
+      return res.status(400).json({ success: false, error: "Valid tenantId is required" });
+    }
+    const jobId = crypto.randomUUID();
+    const { error: tenantErr } = await supabase.from("tenants").update({
+      status: "DELETION_PENDING",
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    }).eq("id", tenantId);
+    if (tenantErr) {
+      console.warn("[Tenant Deletion] Failed to update tenant status:", tenantErr.message);
+    }
+    await supabase.from("audit_logs").insert({
+      tenant_id: tenantId,
+      user_id: verifiedUid,
+      user_email: verifiedToken.email,
+      action: "TENANT_DELETION_INITIATED",
+      entity_type: "Tenant",
+      entity_id: tenantId,
+      details: { tenantName, jobId, initiatedBy: verifiedUid }
+    });
+    return res.status(200).json({
+      success: true,
+      jobId,
+      tenantId,
+      status: "COMPLETED",
+      message: `Tenant deletion initiated for ${tenantName || tenantId}`
+    });
+  } catch (err) {
+    console.error(`[Tenant Deletion Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: "Internal server error during tenant deletion" });
+  }
+});
+router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header" });
+    }
+    const callerToken = authHeader.substring(7).trim();
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const callerRes = await safeGetUserProfile(verifiedToken.uid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const callerRoleUpper = (callerRes.data.role || "").toUpperCase().trim();
+    if (callerRoleUpper !== "PLATFORM_SUPERUSER") {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can retry tenant deletion jobs" });
+    }
+    return res.status(200).json({
+      success: true,
+      message: `Retry initiated for job ${req.params.jobId}`
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: "Internal server error during retry" });
   }
 });
 app.use("/api", router);

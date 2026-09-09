@@ -1,7 +1,7 @@
 const fs = require('fs');
 
 const sql = `-- OVMS Supabase Row Level Security (RLS) Hardening Script
--- Apply this file to your Supabase instance to enforce Phase 1 Security Requirements.
+-- Apply this file to your Supabase instance to enforce Phase 1 & Phase 2 Security Requirements.
 
 -- 1. Create Internal Schema for Security Functions
 CREATE SCHEMA IF NOT EXISTS ovms_internal;
@@ -204,6 +204,41 @@ CREATE POLICY "ActionTypes: Insert" ON public.action_types FOR INSERT WITH CHECK
 CREATE POLICY "ActionTypes: Update" ON public.action_types FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "ActionTypes: Delete" ON public.action_types FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
+-- Table: products
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Products: Select" ON public.products FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
+CREATE POLICY "Products: Insert" ON public.products FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Products: Update" ON public.products FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Products: Delete" ON public.products FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: production_lines
+ALTER TABLE public.production_lines ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "ProductionLines: Select" ON public.production_lines FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "ProductionLines: Insert" ON public.production_lines FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductionLines: Update" ON public.production_lines FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductionLines: Delete" ON public.production_lines FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: locations
+ALTER TABLE public.locations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Locations: Select" ON public.locations FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "Locations: Insert" ON public.locations FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Locations: Update" ON public.locations FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Locations: Delete" ON public.locations FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: destinations
+ALTER TABLE public.destinations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Destinations: Select" ON public.destinations FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
+CREATE POLICY "Destinations: Insert" ON public.destinations FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Destinations: Update" ON public.destinations FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Destinations: Delete" ON public.destinations FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: priority_levels
+ALTER TABLE public.priority_levels ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "PriorityLevels: Select" ON public.priority_levels FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
+CREATE POLICY "PriorityLevels: Insert" ON public.priority_levels FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "PriorityLevels: Update" ON public.priority_levels FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "PriorityLevels: Delete" ON public.priority_levels FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
 -- Table: audit_logs
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "AuditLogs: Select" ON public.audit_logs FOR SELECT USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
@@ -252,6 +287,91 @@ CREATE POLICY "Recommendations: Insert" ON public.recommendations FOR INSERT WIT
 CREATE POLICY "Recommendations: Update" ON public.recommendations FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "Recommendations: Delete" ON public.recommendations FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
+-- Table: planning_rules
+ALTER TABLE public.planning_rules ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "PlanningRules: Select" ON public.planning_rules FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "PlanningRules: Insert" ON public.planning_rules FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "PlanningRules: Update" ON public.planning_rules FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "PlanningRules: Delete" ON public.planning_rules FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: promotions
+ALTER TABLE public.promotions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Promotions: Select" ON public.promotions FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "Promotions: Insert" ON public.promotions FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Promotions: Update" ON public.promotions FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Promotions: Delete" ON public.promotions FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: announcements
+ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Announcements: Select" ON public.announcements FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
+CREATE POLICY "Announcements: Insert" ON public.announcements FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Announcements: Update" ON public.announcements FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Announcements: Delete" ON public.announcements FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: exceptions
+ALTER TABLE public.exceptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Exceptions: Select" ON public.exceptions FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "Exceptions: Insert" ON public.exceptions FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "Exceptions: Update" ON public.exceptions FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "Exceptions: Delete" ON public.exceptions FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: production_plan_imports
+ALTER TABLE public.production_plan_imports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "ProductionPlanImports: Select" ON public.production_plan_imports FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "ProductionPlanImports: Insert" ON public.production_plan_imports FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductionPlanImports: Update" ON public.production_plan_imports FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductionPlanImports: Delete" ON public.production_plan_imports FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: production_plan_entries
+ALTER TABLE public.production_plan_entries ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "ProductionPlanEntries: Select" ON public.production_plan_entries FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "ProductionPlanEntries: Insert" ON public.production_plan_entries FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductionPlanEntries: Update" ON public.production_plan_entries FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductionPlanEntries: Delete" ON public.production_plan_entries FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: site_settings
+ALTER TABLE public.site_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "SiteSettings: Select" ON public.site_settings FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "SiteSettings: Insert" ON public.site_settings FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "SiteSettings: Update" ON public.site_settings FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "SiteSettings: Delete" ON public.site_settings FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: site_onboarding
+ALTER TABLE public.site_onboarding ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "SiteOnboarding: Select" ON public.site_onboarding FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "SiteOnboarding: Insert" ON public.site_onboarding FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "SiteOnboarding: Update" ON public.site_onboarding FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "SiteOnboarding: Delete" ON public.site_onboarding FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: site_recommendation_runs
+ALTER TABLE public.site_recommendation_runs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "SiteRecommendationRuns: Select" ON public.site_recommendation_runs FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "SiteRecommendationRuns: Insert" ON public.site_recommendation_runs FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "SiteRecommendationRuns: Update" ON public.site_recommendation_runs FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "SiteRecommendationRuns: Delete" ON public.site_recommendation_runs FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: sessions
+ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Sessions: Select" ON public.sessions FOR SELECT USING (user_id = auth.uid() OR ovms_internal.is_platform_superuser());
+CREATE POLICY "Sessions: Insert" ON public.sessions FOR INSERT WITH CHECK (user_id = auth.uid() OR ovms_internal.is_platform_superuser());
+CREATE POLICY "Sessions: Update" ON public.sessions FOR UPDATE USING (user_id = auth.uid() OR ovms_internal.is_platform_superuser());
+CREATE POLICY "Sessions: Delete" ON public.sessions FOR DELETE USING (user_id = auth.uid() OR ovms_internal.is_platform_superuser());
+
+-- Table: tenant_deletion_jobs
+ALTER TABLE public.tenant_deletion_jobs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "TenantDeletionJobs: Select" ON public.tenant_deletion_jobs FOR SELECT USING (ovms_internal.is_platform_superuser());
+CREATE POLICY "TenantDeletionJobs: Insert" ON public.tenant_deletion_jobs FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser());
+CREATE POLICY "TenantDeletionJobs: Update" ON public.tenant_deletion_jobs FOR UPDATE USING (ovms_internal.is_platform_superuser());
+CREATE POLICY "TenantDeletionJobs: Delete" ON public.tenant_deletion_jobs FOR DELETE USING (ovms_internal.is_platform_superuser());
+
+-- Table: platform_deletion_receipts
+ALTER TABLE public.platform_deletion_receipts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "PlatformDeletionReceipts: Select" ON public.platform_deletion_receipts FOR SELECT USING (ovms_internal.is_platform_superuser());
+CREATE POLICY "PlatformDeletionReceipts: Insert" ON public.platform_deletion_receipts FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser());
+CREATE POLICY "PlatformDeletionReceipts: Update" ON public.platform_deletion_receipts FOR UPDATE USING (ovms_internal.is_platform_superuser());
+CREATE POLICY "PlatformDeletionReceipts: Delete" ON public.platform_deletion_receipts FOR DELETE USING (ovms_internal.is_platform_superuser());
+
 `;
 
 fs.writeFileSync('docs/supabase_rls.sql', sql);
+console.log('docs/supabase_rls.sql successfully regenerated.');

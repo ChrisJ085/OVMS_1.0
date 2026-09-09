@@ -1,7 +1,7 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { OperationalOverviewPage } from './OperationalOverviewPage';
 
 // Mocks
@@ -46,7 +46,7 @@ vi.mock('../services/dbService', () => ({
   where: vi.fn(),
   orderBy: vi.fn(),
   limit: vi.fn(),
-  subscribeToCollection: (col: string, constraints: any[], cb: any, errCb?: any) => {
+  subscribeToCollection: (col: string, _constraints: any[], cb: any, errCb?: any) => {
     if (mockQueryError && errCb) {
       errCb(mockQueryError);
       return () => {};
@@ -96,11 +96,13 @@ describe('OperationalOverviewPage Test Suite', () => {
   });
 
   it('renders Planner overview with quick actions and summary cards', async () => {
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getByText('Operational Overview')).toBeInTheDocument();
     expect(screen.getAllByText(/Milton Keynes/i)[0]).toBeInTheDocument();
@@ -110,45 +112,51 @@ describe('OperationalOverviewPage Test Suite', () => {
     expect(screen.getByRole('button', { name: /Announcement/i })).toBeInTheDocument();
   });
 
-  it('renders Warehouse Operator overview with execution shortcut', () => {
+  it('renders Warehouse Operator overview with execution shortcut', async () => {
     mockAuthContext = {
       ...mockAuthContext,
       userProfile: { role: 'WAREHOUSE_OPERATOR', tenantId: 'tenant-1', siteId: 'site-1' },
     };
 
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getByRole('button', { name: /Open Warehouse Execution/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Import SAP Plan/i })).not.toBeInTheDocument();
   });
 
-  it('renders Viewer overview in read-only mode', () => {
+  it('renders Viewer overview in read-only mode', async () => {
     mockAuthContext = {
       ...mockAuthContext,
       userProfile: { role: 'VIEWER', tenantId: 'tenant-1', siteId: 'site-1' },
     };
 
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getByText('Operational Overview')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Review Recs/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open Warehouse Execution/i })).not.toBeInTheDocument();
   });
 
-  it('renders empty states when no data exists', () => {
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+  it('renders empty states when no data exists', async () => {
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getByText(/No active or blocked priorities for this site/i)).toBeInTheDocument();
     expect(screen.getByText(/No recommendations awaiting review/i)).toBeInTheDocument();
@@ -156,17 +164,19 @@ describe('OperationalOverviewPage Test Suite', () => {
     expect(screen.getByText(/No open operational exceptions/i)).toBeInTheDocument();
   });
 
-  it('renders stale/missing SAP plan warning banner', () => {
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+  it('renders stale/missing SAP plan warning banner', async () => {
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getByText(/SAP production plan has not been imported for this site/i)).toBeInTheDocument();
   });
 
-  it('handles cross-site switch by displaying updated site name', () => {
+  it('handles cross-site switch by displaying updated site name', async () => {
     mockSiteContext = {
       ...mockSiteContext,
       site: { siteId: 'site-2', tenantId: 'tenant-1', siteName: 'Northampton Hub' },
@@ -174,11 +184,13 @@ describe('OperationalOverviewPage Test Suite', () => {
       siteName: 'Northampton Hub',
     };
 
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getAllByText(/Northampton Hub/i)[0]).toBeInTheDocument();
   });
@@ -186,21 +198,25 @@ describe('OperationalOverviewPage Test Suite', () => {
   it('displays error state when queries fail', async () => {
     mockQueryError = new Error('Database query permission denied');
 
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     expect(screen.getByText(/Failed to load operational priorities/i)).toBeInTheDocument();
   });
 
-  it('navigates with correct filters when summary cards are clicked', () => {
-    render(
-      <MemoryRouter>
-        <OperationalOverviewPage />
-      </MemoryRouter>
-    );
+  it('navigates with correct filters when summary cards are clicked', async () => {
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <OperationalOverviewPage />
+        </MemoryRouter>
+      );
+    });
 
     const recsCard = screen.getByText('Recommendations').closest('div');
     if (recsCard) {

@@ -133,7 +133,8 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
     setErrorMsg('');
     
     try {
-      const token = await user?.getIdToken();
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
       const response = await fetch('/api/tenant-deletion', {
         method: 'POST',
         headers: { 
@@ -164,7 +165,8 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
   const retryJob = async () => {
     if (!jobId) return;
     try {
-      const token = await user?.getIdToken();
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
       const response = await fetch(`/api/tenant-deletion/${jobId}/retry`, {
         method: 'POST',
         headers: { 

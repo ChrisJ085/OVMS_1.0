@@ -401,7 +401,8 @@ export const AdminOverviewPage: React.FC = () => {
     }
 
     try {
-      const token = await user?.getIdToken();
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
 
       const apiRes = await fetch('/api/admin/provision-user', {
         method: 'POST',
