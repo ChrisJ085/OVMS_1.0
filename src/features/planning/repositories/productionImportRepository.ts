@@ -21,8 +21,8 @@ export const productionImportRepository = {
       const imports = (data || []).map(row => toCamelCase<ProductionPlanImport>(row));
 
       imports.sort((a, b) => {
-        const tA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
-        const tB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
+        const tA = a.uploadedAt ? new Date(a.uploadedAt as any).getTime() : 0;
+        const tB = b.uploadedAt ? new Date(b.uploadedAt as any).getTime() : 0;
         return tB - tA;
       });
       return imports;

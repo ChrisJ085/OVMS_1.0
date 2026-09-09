@@ -46,8 +46,8 @@ export const ExceptionCentrePage: React.FC = () => {
         
         // Sort by firstDetected desc
         fetched.sort((a, b) => {
-          const da = new Date(a.firstDetectedAt || a.createdDate);
-          const db = new Date(b.firstDetectedAt || b.createdDate);
+          const da = new Date((a.firstDetectedAt || a.createdDate) as any);
+          const db = new Date((b.firstDetectedAt || b.createdDate) as any);
           return db.getTime() - da.getTime();
         });
 

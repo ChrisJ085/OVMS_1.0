@@ -315,7 +315,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await createDocument('productionLines', payload);
+      await createDocument('productionLines', payload as any);
       setNewLineForm({ lineCode: '', lineName: '', sapResourceCode: '', sortOrder: '1' });
       await loadStepData(1);
     } catch (err: any) {
@@ -355,7 +355,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await createDocument('destinations', payload);
+      await createDocument('destinations', payload as any);
       setNewDestForm({ destinationCode: '', destinationName: '', destinationType: 'EXTERNAL_SITE', sortOrder: '1' });
       await loadStepData(2);
     } catch (err: any) {
@@ -397,7 +397,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await createDocument('actionTypes', payload);
+      await createDocument('actionTypes', payload as any);
       setNewActionForm({ code: '', label: '', meaning: '', colourToken: 'hold', iconKey: 'Clock', sortOrder: '1' });
       await loadStepData(3);
     } catch (err: any) {
@@ -439,7 +439,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await createDocument('priorityLevels', payload);
+      await createDocument('priorityLevels', payload as any);
       setNewPriorityForm({ code: '', label: '', level: '1', description: '', severity: 'MEDIUM', colourToken: 'normal' });
       await loadStepData(4);
     } catch (err: any) {
@@ -534,7 +534,7 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
         modifiedBy: userProfile?.uid || 'system',
         modifiedDate: new Date()
       };
-      await createDocument('products', payload);
+      await createDocument('products', payload as any);
       setNewProductForm({ productCode: '', description: '', categoryId: '', unitOfMeasureId: 'KG', casesPerPallet: '100', unitsPerCase: '1' });
       await loadStepData(7);
     } catch (err: any) {

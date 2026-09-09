@@ -20,23 +20,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
       - name: Install Dependencies
         run: npm ci
 
-      - name: Type Check
-        run: npm run typecheck
-
-      - name: Run Unit Tests
-        run: npm run test
-
-      - name: Run Firestore Security Rule Tests
-        run: npm run test:rules
-
-      - name: Build Application
-        run: npm run build
+      - name: Validate (Type Check, Test, Build)
+        run: npm run validate

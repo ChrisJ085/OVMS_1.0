@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useMemo } from 'react';
 import { 
-  refreshSiteRecommendations, 
-  getSiteRecommendationRunRef 
+  refreshSiteRecommendations
 } from '../services/recommendationService';
 import { PriorityConflict } from '../../../types/priority';
 import { SiteRecommendationRun } from '../../../types/recommendation';

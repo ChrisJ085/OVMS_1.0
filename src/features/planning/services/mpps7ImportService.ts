@@ -1045,7 +1045,7 @@ export const createImportPreview = async (
         sourceProductDescription: descVal,
         matchedProductId: productObj ? (productObj.id || null) : null,
         matchedProductDescription: productObj ? productObj.description : null,
-        productionDate: Timestamp.fromDate(dateCol.date),
+        productionDate: dateCol.date.toISOString(),
         plannedQuantity: qty,
         sourceUnitOfMeasure: uomVal || cleanUom || 'CS',
         casesPerPallet: casesPerPalletVal,
@@ -1208,12 +1208,12 @@ export const createImportPreview = async (
       fileSize,
       fileHash,
       sourceType: 'MPPS7_SAP',
-      sourceWorkbookDate: Timestamp.fromDate(new Date()),
-      periodStart: Timestamp.fromDate(periodStart),
-      periodEnd: Timestamp.fromDate(periodEnd),
+      sourceWorkbookDate: new Date().toISOString(),
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
       detectedWorksheetNames: inspection.detectedWorksheetNames,
       uploadedBy,
-      uploadedAt: Timestamp.fromDate(new Date()),
+      uploadedAt: new Date().toISOString(),
       status: previewStatus,
       totalSourceRows,
       recognisedRows,
@@ -1259,9 +1259,8 @@ export const commitProductionPlanImport = async (
   for (const row of preview.rows) {
     await createDocument(`productionPlanImports/${importId}/rows`, {
       ...row,
-      importId,
-      createdDate: new Date().toISOString()
-    });
+      importId
+    } as any);
   }
 
   await supersedePreviousProductionPlan(
@@ -1275,7 +1274,7 @@ export const commitProductionPlanImport = async (
   for (const row of preview.rows) {
     if (row.rowStatus === 'ERROR' || !row.matchedProductId || !row.productionLineCode) continue;
 
-    const entryDoc: Omit<ProductionPlanEntry, 'createdDate' | 'modifiedDate'> = {
+    const entryDoc: any = {
       tenantId: row.tenantId,
       siteId: row.siteId,
       activeImportId: importId,
@@ -1296,11 +1295,7 @@ export const commitProductionPlanImport = async (
       status: 'PLANNED'
     };
 
-    await createDocument('productionPlanEntries', {
-      ...entryDoc,
-      createdDate: new Date().toISOString(),
-      modifiedDate: new Date().toISOString()
-    });
+    await createDocument('productionPlanEntries', entryDoc);
   }
 
   // Log Audit Event for MPPS/SAP Ingestion

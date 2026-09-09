@@ -90,8 +90,8 @@ export const subscribeToLocations = (
   onError: (error: Error) => void
 ) => {
   const constraints = [
-    { field: 'tenantId', op: '==', value: tenantId },
-    { field: 'siteId', op: '==', value: siteId }
+    { field: 'tenantId', op: '==' as const, value: tenantId },
+    { field: 'siteId', op: '==' as const, value: siteId }
   ];
   
   return subscribeToCollection<Location>(

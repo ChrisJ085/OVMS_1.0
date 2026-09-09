@@ -1,4 +1,4 @@
-export type Timestamp = Date | string | number | { seconds?: number; toMillis?: () => number; toDate?: () => Date };
+export type Timestamp = Date | string | number;
 export type FieldValue = Date | string | number;
 
 export interface TenantScopedDocument {

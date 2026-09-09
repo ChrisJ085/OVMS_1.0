@@ -274,8 +274,8 @@ export const TVDashboardPage: React.FC = () => {
           if (weightA !== weightB) return weightB - weightA;
           
           try {
-            const dateA = a.startAt ? new Date(a.startAt) : (a.createdDate ? new Date(a.createdDate) : new Date(0));
-            const dateB = b.startAt ? new Date(b.startAt) : (b.createdDate ? new Date(b.createdDate) : new Date(0));
+            const dateA = a.startAt ? new Date(a.startAt as any) : (a.createdDate ? new Date(a.createdDate as any) : new Date(0));
+            const dateB = b.startAt ? new Date(b.startAt as any) : (b.createdDate ? new Date(b.createdDate as any) : new Date(0));
             
             const timeA = dateA && dateA.getTime && !isNaN(dateA.getTime()) ? dateA.getTime() : 0;
             const timeB = dateB && dateB.getTime && !isNaN(dateB.getTime()) ? dateB.getTime() : 0;
@@ -326,11 +326,11 @@ export const TVDashboardPage: React.FC = () => {
         
         const now = new Date();
         const activeAnnouncements = fetched.filter(a => {
-          const start = a.startAt ? new Date(a.startAt) : null;
+          const start = a.startAt ? new Date(a.startAt as any) : null;
           if (start && start > now) return false;
           
           if (a.expireAt) {
-            const exp = new Date(a.expireAt);
+            const exp = new Date(a.expireAt as any);
             if (exp < now) return false;
           }
           return true;

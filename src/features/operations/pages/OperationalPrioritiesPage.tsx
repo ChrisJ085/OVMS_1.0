@@ -126,8 +126,8 @@ export const OperationalPrioritiesPage: React.FC = () => {
         
         // Sort client-side by createdDate desc
         fetched.sort((a, b) => {
-          const tA = a.createdDate ? new Date(a.createdDate).getTime() : 0;
-          const tB = b.createdDate ? new Date(b.createdDate).getTime() : 0;
+          const tA = a.createdDate ? new Date(a.createdDate as any).getTime() : 0;
+          const tB = b.createdDate ? new Date(b.createdDate as any).getTime() : 0;
           return tB - tA;
         });
 
@@ -135,13 +135,13 @@ export const OperationalPrioritiesPage: React.FC = () => {
         const now = new Date();
         const updated = fetched.map(p => {
           if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt && !p.untilSwitchedOff) {
-            const exp = new Date(p.expireAt);
+            const exp = new Date(p.expireAt as any);
             if (exp < now) {
                return { ...p, priorityStatus: 'EXPIRED' as any };
             }
           }
           if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
-            const start = new Date(p.startAt);
+            const start = new Date(p.startAt as any);
             if (start <= now) {
                return { ...p, priorityStatus: 'ACTIVE' as any };
             }

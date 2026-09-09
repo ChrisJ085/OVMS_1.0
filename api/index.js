@@ -924,9 +924,9 @@ var require_http_errors = __commonJS({
   }
 });
 
-// node_modules/debug/node_modules/ms/index.js
+// node_modules/ms/index.js
 var require_ms = __commonJS({
-  "node_modules/debug/node_modules/ms/index.js"(exports, module) {
+  "node_modules/ms/index.js"(exports, module) {
     var s = 1e3;
     var m = s * 60;
     var h = m * 60;
@@ -4901,9 +4901,9 @@ var require_unpipe = __commonJS({
   }
 });
 
-// node_modules/body-parser/node_modules/raw-body/index.js
+// node_modules/raw-body/index.js
 var require_raw_body = __commonJS({
-  "node_modules/body-parser/node_modules/raw-body/index.js"(exports, module) {
+  "node_modules/raw-body/index.js"(exports, module) {
     "use strict";
     var asyncHooks = tryRequireAsyncHooks();
     var bytes = require_bytes();
@@ -18970,9 +18970,9 @@ var require_mime = __commonJS({
   }
 });
 
-// node_modules/ms/index.js
+// node_modules/send/node_modules/ms/index.js
 var require_ms2 = __commonJS({
-  "node_modules/ms/index.js"(exports, module) {
+  "node_modules/send/node_modules/ms/index.js"(exports, module) {
     var s = 1e3;
     var m = s * 60;
     var h = m * 60;
@@ -44723,9 +44723,16 @@ var normalizeSupabaseUrl = (url) => {
   cleaned = cleaned.replace(/\/$/, "");
   return cleaned;
 };
-var rawUrl = getEnvVar("VITE_SUPABASE_URL", "SUPABASE_URL") || "https://izcavwwhjgnjrzfhwfwf.supabase.co";
+var rawUrl = getEnvVar("VITE_SUPABASE_URL", "SUPABASE_URL");
+if (!rawUrl) {
+  throw new Error("Configuration error: VITE_SUPABASE_URL environment variable is required but not set.");
+}
 var supabaseUrl = normalizeSupabaseUrl(rawUrl);
-var supabaseAnonKey = getEnvVar("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY") || "sb_publishable_ZdGk0rOzqovmSURMaHwlZg_UQ5EpC4d";
+var anonKey = getEnvVar("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
+if (!anonKey) {
+  throw new Error("Configuration error: VITE_SUPABASE_ANON_KEY environment variable is required but not set.");
+}
+var supabaseAnonKey = anonKey;
 var supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,

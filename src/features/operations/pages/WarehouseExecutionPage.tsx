@@ -105,13 +105,13 @@ export const WarehouseExecutionPage: React.FC = () => {
         const now = new Date();
         const updated = fetched.map(p => {
           if ((p.priorityStatus === 'ACTIVE' || p.priorityStatus === 'SCHEDULED' || p.priorityStatus === 'DRAFT') && p.expireAt && !p.untilSwitchedOff) {
-            const exp = new Date(p.expireAt);
+            const exp = new Date(p.expireAt as any);
             if (exp < now) {
                return { ...p, priorityStatus: 'EXPIRED' as any };
             }
           }
           if (p.priorityStatus === 'SCHEDULED' && p.startAt) {
-            const start = new Date(p.startAt);
+            const start = new Date(p.startAt as any);
             if (start <= now) {
                return { ...p, priorityStatus: 'ACTIVE' as any };
             }
@@ -121,8 +121,8 @@ export const WarehouseExecutionPage: React.FC = () => {
         
         // Sort by creation date desc
         updated.sort((a, b) => {
-          const da = new Date(a.createdDate);
-          const db = new Date(b.createdDate);
+          const da = new Date(a.createdDate as any);
+          const db = new Date(b.createdDate as any);
           return db.getTime() - da.getTime();
         });
 
