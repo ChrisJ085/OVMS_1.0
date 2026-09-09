@@ -8,6 +8,7 @@ export const runExceptionEvaluation = async (
   siteId: string,
   userId: string
 ): Promise<ServiceResult<void>> => {
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return { success: true };
   try {
     const { data: priorities, error } = await supabase
       .from('priorities')
@@ -59,6 +60,7 @@ export const evaluateAndLogException = async (
   reasonCodes: string[],
   userId: string
 ): Promise<void> => {
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
   try {
     const { data: existing, error } = await supabase
       .from('exceptions')
@@ -132,6 +134,7 @@ export const autoResolveExceptions = async (
   userId: string,
   resolutionNote: string = 'Automatically resolved by system'
 ) => {
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
   try {
     const { data: existing, error } = await supabase
       .from('exceptions')

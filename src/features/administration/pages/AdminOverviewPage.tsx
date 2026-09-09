@@ -192,7 +192,7 @@ export const AdminOverviewPage: React.FC = () => {
   const [newUserJobTitle, setNewUserJobTitle] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('VIEWER');
   const [newUserTenantId, setNewUserTenantId] = useState('');
-  const [newUserTempPass, setNewUserTempPass] = useState('TempPass123!');
+  const [newUserTempPass, setNewUserTempPass] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
   const [creatingUserMsg, setCreatingUserMsg] = useState<string | null>(null);
 
@@ -346,7 +346,7 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Handle Password Reset to Temp Pass
   const handleResetPassword = async (targetUid: string) => {
-    const tempPass = prompt('Enter new temporary password for user (minimum 8 characters):', 'TempPass123!');
+    const tempPass = prompt('Enter new temporary password for user (minimum 8 characters):', '');
     if (!tempPass) return;
     if (tempPass.length < 8) {
       alert('Password must be at least 8 characters long.');
@@ -446,7 +446,7 @@ export const AdminOverviewPage: React.FC = () => {
       setNewUserDisplayName('');
       setNewUserJobTitle('');
       setSelectedSites([]);
-      setNewUserTempPass('TempPass123!');
+      setNewUserTempPass('');
     } catch (apiErr: any) {
       console.error('Provisioning user failed:', apiErr);
       let errorText = apiErr.message || 'Failed to create user account.';
@@ -1071,13 +1071,15 @@ export const AdminOverviewPage: React.FC = () => {
                   </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Temporary Password</label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Temporary Password</label>
+                    <span className="text-[10px] text-slate-500">Optional (auto-generates if blank)</span>
+                  </div>
                   <input
                     type="text"
-                    required
                     value={newUserTempPass}
                     onChange={e => setNewUserTempPass(e.target.value)}
-                    placeholder="TempPass123!"
+                    placeholder="Auto-generate secure password or enter min 8 chars"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"
                   />
                 </div>

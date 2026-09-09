@@ -42,7 +42,8 @@ import {
   XCircle,
   AlertOctagon,
   Info,
-  Tv
+  Tv,
+  Globe
 } from 'lucide-react';
 
 // Timezone-aware start of today and start of following day calculation
@@ -207,7 +208,7 @@ export const OperationalOverviewPage: React.FC = () => {
     setPriorityLevels([]);
     setPanelErrors({});
 
-    if (!tenantId || !siteId) {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
       setLoading(false);
       return;
     }
@@ -727,6 +728,27 @@ export const OperationalOverviewPage: React.FC = () => {
           </div>
         }
       />
+
+      {/* Global View Banner for Platform Superuser */}
+      {siteId === 'GLOBAL' && (
+        <div className="bg-blue-950/40 border border-blue-800/60 rounded-xl p-5 text-blue-200 flex items-start gap-4 shadow-sm">
+          <Globe className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-white">Platform Superuser Global Mode</h3>
+            <p className="text-xs text-blue-300 leading-relaxed max-w-3xl">
+              You are currently viewing the system in platform-wide Global mode. Live operational metrics, warehouse priorities, and automated recommendation runs are tied to individual site operations. Select an operational site from the site selector above, or open Administration to manage tenants, sites, and platform master data.
+            </p>
+            <div className="pt-1">
+              <button
+                onClick={() => navigate('/admin')}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors"
+              >
+                Go to Administration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error state alert */}
       {error && (

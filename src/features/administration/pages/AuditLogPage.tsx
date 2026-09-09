@@ -21,11 +21,14 @@ export const AuditLogPage: React.FC = () => {
       if (!tenantId || !siteId) return;
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('audit_logs')
-          .select('*')
-          .eq('tenant_id', tenantId)
-          .eq('site_id', siteId)
+        let query = supabase.from('audit_logs').select('*');
+        if (tenantId !== 'GLOBAL') {
+          query = query.eq('tenant_id', tenantId);
+        }
+        if (siteId !== 'GLOBAL') {
+          query = query.eq('site_id', siteId);
+        }
+        const { data, error } = await query
           .order('timestamp', { ascending: false })
           .limit(100);
 

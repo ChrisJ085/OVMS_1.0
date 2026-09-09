@@ -33,6 +33,15 @@ vi.mock('../contexts/SiteContext', () => ({
   useSiteContext: () => mockSiteContext,
 }));
 
+vi.mock('../hooks/useSiteOnboarding', () => ({
+  useSiteOnboarding: () => ({
+    status: null,
+    loading: false,
+    needsOnboarding: false,
+    reload: vi.fn(),
+  }),
+}));
+
 // Mock Firestore functions
 let mockPrioritiesDocs: any[] = [];
 let mockExceptionsDocs: any[] = [];

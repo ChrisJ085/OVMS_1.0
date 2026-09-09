@@ -235,6 +235,39 @@ CREATE TABLE IF NOT EXISTS public.priorities (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Operational Sanitized Projection for Display/TV Views
+CREATE TABLE IF NOT EXISTS public.display_priorities (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    site_id UUID NOT NULL REFERENCES public.sites(id) ON DELETE CASCADE,
+    source_priority_id TEXT,
+    priority_code TEXT,
+    product_code_snapshot TEXT,
+    description_snapshot TEXT,
+    title TEXT,
+    instruction TEXT,
+    priority_status TEXT NOT NULL DEFAULT 'ACTIVE',
+    priority_level_id TEXT,
+    priority_level_label TEXT,
+    action_type_id TEXT,
+    action_type_label TEXT,
+    requested_quantity NUMERIC,
+    progress_quantity NUMERIC DEFAULT 0,
+    progress_percent NUMERIC DEFAULT 0,
+    destination_id TEXT,
+    destination_label TEXT,
+    overflow_destination_id TEXT,
+    overflow_destination_label TEXT,
+    start_at TIMESTAMPTZ,
+    created_date TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    expire_at TIMESTAMPTZ,
+    until_switched_off BOOLEAN DEFAULT FALSE,
+    modified_date TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.exceptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,

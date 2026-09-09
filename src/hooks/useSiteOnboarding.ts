@@ -24,7 +24,8 @@ export function useSiteOnboarding() {
   const canModifyConfig = isSuperUser || isTenantAdmin;
 
   useEffect(() => {
-    if (!tenantId || !siteId) {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setOnboarding(null);
       setLoading(false);
       return;
     }

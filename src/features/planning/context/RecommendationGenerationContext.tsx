@@ -79,7 +79,7 @@ export const RecommendationGenerationProvider: React.FC<{ children: ReactNode }>
 
   // Listen to site recommendation run document natively
   useEffect(() => {
-    if (!activeTenantId || !activeSiteId) {
+    if (!activeTenantId || !activeSiteId || activeTenantId === 'GLOBAL' || activeSiteId === 'GLOBAL') {
       setSiteRunData(null);
       return;
     }
@@ -87,9 +87,10 @@ export const RecommendationGenerationProvider: React.FC<{ children: ReactNode }>
     const fetchRunData = async () => {
       try {
         const { data, error } = await supabase
-          .from('site_recommendation_runs')
+          .from('recommendation_runs')
           .select('*')
-          .eq('id', `${activeTenantId}_${activeSiteId}`)
+          .eq('tenant_id', activeTenantId)
+          .eq('site_id', activeSiteId)
           .maybeSingle();
 
         if (error) throw error;
@@ -137,8 +138,8 @@ export const RecommendationGenerationProvider: React.FC<{ children: ReactNode }>
         {
           event: '*',
           schema: 'public',
-          table: 'site_recommendation_runs',
-          filter: `id=eq.${activeTenantId}_${activeSiteId}`
+          table: 'recommendation_runs',
+          filter: `site_id=eq.${activeSiteId}`
         },
         () => {
           fetchRunData();
@@ -228,7 +229,7 @@ export const RecommendationGenerationProvider: React.FC<{ children: ReactNode }>
       return false;
     }
 
-    if (!tId || !sId) {
+    if (!tId || !sId || tId === 'GLOBAL' || sId === 'GLOBAL') {
       console.error('Cannot generate recommendations without valid tenantId and siteId');
       return false;
     }

@@ -30,7 +30,10 @@ export const ExceptionCentrePage: React.FC = () => {
   }, [operatorName]);
 
   useEffect(() => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setLoading(false);
+      return;
+    }
 
     const fetchExceptions = async () => {
       try {

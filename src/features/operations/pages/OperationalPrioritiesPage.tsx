@@ -109,7 +109,10 @@ export const OperationalPrioritiesPage: React.FC = () => {
   }, [tenantId]);
 
   useEffect(() => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setLoading(false);
+      return;
+    }
 
     const fetchPriorities = async () => {
       setLoading(true);

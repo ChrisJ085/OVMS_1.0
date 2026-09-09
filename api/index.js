@@ -18799,14 +18799,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports, module) {
     "use strict";
     module.exports = etag;
-    var crypto2 = __require("crypto");
+    var crypto3 = __require("crypto");
     var Stats = __require("fs").Stats;
     var toString = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto2.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto3.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -21699,11 +21699,11 @@ var require_request = __commonJS({
 // node_modules/express/node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/express/node_modules/cookie-signature/index.js"(exports) {
-    var crypto2 = __require("crypto");
+    var crypto3 = __require("crypto");
     exports.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto2.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto3.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -21712,7 +21712,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto2.createHash("sha1").update(str).digest("hex");
+      return crypto3.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -44775,6 +44775,7 @@ var init_supabase = __esm({
 // src/server/apiApp.ts
 var import_express = __toESM(require_express2(), 1);
 init_supabase();
+import crypto2 from "crypto";
 
 // src/utils/caseTransformers.ts
 function snakeToCamelKey(key) {
@@ -44803,6 +44804,10 @@ var app = (0, import_express.default)();
 var router = import_express.default.Router();
 router.use(import_express.default.json());
 router.use(import_express.default.urlencoded({ extended: true }));
+var AUTHORIZED_BOOTSTRAP_EMAILS = [
+  "chris.jeal@gxo.com",
+  "cjeal85@gmail.com"
+];
 async function safeVerifyCallerToken(callerToken) {
   try {
     const { data, error } = await supabase.auth.getUser(callerToken);
@@ -44815,54 +44820,20 @@ async function safeVerifyCallerToken(callerToken) {
     throw new Error("Invalid or expired authorization token.");
   }
 }
-async function safeGetUserProfile(uid, callerEmail) {
-  const normalizedEmail = callerEmail ? callerEmail.toLowerCase().trim() : void 0;
+async function safeGetUserProfile(uid) {
+  if (!uid || typeof uid !== "string") {
+    return { exists: false };
+  }
   try {
     const { data: userRow, error } = await supabase.from("users").select("*, user_sites(site_id)").eq("id", uid).maybeSingle();
-    if (userRow) {
+    if (error) {
+      console.warn("[Server Supabase] safeGetUserProfile query error:", error.message);
+      return { exists: false };
+    }
+    if (userRow && userRow.id === uid) {
       const siteIds = Array.isArray(userRow.user_sites) ? userRow.user_sites.map((us) => us.site_id) : [];
       const camel = toCamelCase(userRow);
       return { exists: true, data: { ...camel, siteIds } };
-    }
-    if (normalizedEmail) {
-      const { data: emailRow } = await supabase.from("users").select("*, user_sites(site_id)").eq("email", normalizedEmail).maybeSingle();
-      if (emailRow) {
-        const siteIds = Array.isArray(emailRow.user_sites) ? emailRow.user_sites.map((us) => us.site_id) : [];
-        const camel = toCamelCase(emailRow);
-        return { exists: true, data: { ...camel, siteIds } };
-      }
-    }
-    if (normalizedEmail === "chris.jeal@gxo.com" || normalizedEmail === "cjeal85@gmail.com") {
-      console.info(`[Server Supabase] Bootstrapping superuser profile doc for administrator: ${normalizedEmail}`);
-      const superProfile = {
-        id: uid,
-        uid,
-        email: normalizedEmail,
-        displayName: "Platform Superuser",
-        role: "PLATFORM_SUPERUSER",
-        accountStatus: "ACTIVE",
-        tenantId: null,
-        siteIds: [],
-        requiresPasswordChange: false,
-        failedLoginAttempts: 0,
-        jobTitle: "Platform Administrator"
-      };
-      try {
-        await supabase.from("users").upsert({
-          id: uid,
-          email: normalizedEmail,
-          display_name: "Platform Superuser",
-          role: "PLATFORM_SUPERUSER",
-          account_status: "ACTIVE",
-          requires_password_change: false,
-          created_by: "SYSTEM_BOOTSTRAP",
-          created_at: (/* @__PURE__ */ new Date()).toISOString(),
-          updated_at: (/* @__PURE__ */ new Date()).toISOString()
-        });
-      } catch (setErr) {
-        console.warn("[Server Supabase] Failed to save bootstrapped superuser profile:", setErr);
-      }
-      return { exists: true, data: superProfile };
     }
     return { exists: false };
   } catch (err) {
@@ -44880,8 +44851,78 @@ router.get("/admin/diagnostics", async (req, res) => {
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   });
 });
+router.post("/admin/bootstrap-superuser", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header" });
+    }
+    const callerToken = authHeader.substring(7).trim();
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+    const callerEmail = (verifiedToken.email || "").toLowerCase().trim();
+    const envBootstrapEmail = process.env.INITIAL_SUPERUSER_EMAIL?.toLowerCase().trim();
+    const isAuthorizedEmail = AUTHORIZED_BOOTSTRAP_EMAILS.includes(callerEmail) || envBootstrapEmail && callerEmail === envBootstrapEmail;
+    if (!isAuthorizedEmail) {
+      return res.status(403).json({
+        success: false,
+        error: "Forbidden: Caller email is not designated for platform administrator bootstrap"
+      });
+    }
+    const existing = await safeGetUserProfile(verifiedUid);
+    if (existing.exists && existing.data?.role === "PLATFORM_SUPERUSER") {
+      return res.status(200).json({
+        success: true,
+        message: "Platform superuser profile already active",
+        uid: verifiedUid,
+        email: callerEmail,
+        role: "PLATFORM_SUPERUSER"
+      });
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const { error: upsertErr } = await supabase.from("users").upsert({
+      id: verifiedUid,
+      email: callerEmail,
+      display_name: "Platform Superuser",
+      job_title: "Platform Administrator",
+      role: "PLATFORM_SUPERUSER",
+      tenant_id: null,
+      account_status: "ACTIVE",
+      requires_password_change: false,
+      failed_login_attempts: 0,
+      created_by: "SYSTEM_EXPLICIT_BOOTSTRAP",
+      created_at: nowIso,
+      updated_at: nowIso
+    });
+    if (upsertErr) {
+      return res.status(500).json({ success: false, error: "Failed to persist bootstrap profile: " + upsertErr.message });
+    }
+    await supabase.from("audit_logs").insert({
+      tenant_id: null,
+      user_id: verifiedUid,
+      user_email: callerEmail,
+      action: "SYSTEM_BOOTSTRAP_SUPERUSER",
+      entity_type: "UserProfile",
+      entity_id: verifiedUid,
+      details: { email: callerEmail, role: "PLATFORM_SUPERUSER" },
+      timestamp: nowIso
+    });
+    return res.status(200).json({
+      success: true,
+      message: "Platform superuser successfully bootstrapped",
+      uid: verifiedUid,
+      email: callerEmail,
+      role: "PLATFORM_SUPERUSER"
+    });
+  } catch (err) {
+    console.error("[Bootstrap Superuser Error]:", err?.message || err);
+    return res.status(500).json({ success: false, error: "Internal server error during bootstrap" });
+  }
+});
 router.post("/admin/provision-user", async (req, res) => {
   let currentStage = "INIT";
+  let createdAuthUid = null;
+  let createdProfileInDb = false;
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -44892,7 +44933,7 @@ router.post("/admin/provision-user", async (req, res) => {
     const verifiedToken = await safeVerifyCallerToken(callerToken);
     const verifiedUid = verifiedToken.uid;
     currentStage = "CALLER_PROFILE_LOOKUP";
-    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    const callerRes = await safeGetUserProfile(verifiedUid);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller user profile not found", stage: currentStage });
     }
@@ -44929,6 +44970,13 @@ router.post("/admin/provision-user", async (req, res) => {
           stage: currentStage
         });
       }
+      if (tenantId && tenantId.trim() !== callerProfile.tenantId) {
+        return res.status(403).json({
+          success: false,
+          error: "Forbidden: Tenant Admins cannot provision users into other tenants",
+          stage: currentStage
+        });
+      }
     }
     const cleanEmail = email.toLowerCase().trim();
     const targetTenantId = callerRoleUpper === "TENANT_ADMIN" ? callerProfile.tenantId : targetRoleUpper === "PLATFORM_SUPERUSER" ? null : tenantId ? tenantId.trim() : null;
@@ -44951,10 +44999,12 @@ router.post("/admin/provision-user", async (req, res) => {
       }
       validatedSiteIds = siteIds;
     }
+    const secureRandomPassword = crypto2.randomBytes(18).toString("base64url") + "A1!";
+    const initialPassword = temporaryPassword && typeof temporaryPassword === "string" && temporaryPassword.trim().length >= 8 ? temporaryPassword.trim() : secureRandomPassword;
     currentStage = "SUPABASE_AUTH_CREATE";
     const { data: authData, error: authErr } = await supabase.auth.signUp({
       email: cleanEmail,
-      password: temporaryPassword || "TempPass123!",
+      password: initialPassword,
       options: {
         data: { display_name: displayName.trim() }
       }
@@ -44962,7 +45012,8 @@ router.post("/admin/provision-user", async (req, res) => {
     if (authErr && !authData?.user) {
       return res.status(400).json({ success: false, error: authErr.message, stage: currentStage });
     }
-    const newUserId = authData.user?.id || crypto.randomUUID();
+    const newUserId = authData.user?.id || crypto2.randomUUID();
+    createdAuthUid = authData.user ? authData.user.id : null;
     const { createClient: createClient2 } = await Promise.resolve().then(() => (init_dist4(), dist_exports));
     const { supabaseUrl: supabaseUrl2, supabaseAnonKey: supabaseAnonKey2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
     const adminClient = createClient2(supabaseUrl2, supabaseAnonKey2, {
@@ -44979,19 +45030,48 @@ router.post("/admin/provision-user", async (req, res) => {
       tenant_id: targetTenantId,
       account_status: "ACTIVE",
       requires_password_change: true,
+      failed_login_attempts: 0,
       created_by: verifiedUid,
       created_at: (/* @__PURE__ */ new Date()).toISOString(),
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     });
     if (profileErr) {
-      return res.status(500).json({ success: false, error: "Failed to create user profile in database", stage: currentStage });
+      if (createdAuthUid) {
+        try {
+          await supabase.auth.admin.deleteUser(createdAuthUid);
+        } catch (rollbackErr) {
+          console.warn("[Provisioning Rollback] Could not delete Auth user during rollback:", rollbackErr);
+        }
+      }
+      return res.status(500).json({
+        success: false,
+        error: "Failed to create user profile in database",
+        stage: currentStage
+      });
     }
+    createdProfileInDb = true;
     if (validatedSiteIds.length > 0) {
+      currentStage = "USER_SITES_ASSIGN";
       const userSiteRows = validatedSiteIds.map((sId) => ({
         user_id: newUserId,
         site_id: sId
       }));
-      await adminClient.from("user_sites").insert(userSiteRows);
+      const { error: sitesErr } = await adminClient.from("user_sites").insert(userSiteRows);
+      if (sitesErr) {
+        try {
+          await adminClient.from("users").delete().eq("id", newUserId);
+          if (createdAuthUid) {
+            await supabase.auth.admin.deleteUser(createdAuthUid);
+          }
+        } catch (rollbackErr) {
+          console.warn("[Provisioning Rollback] Error during sites assignment rollback:", rollbackErr);
+        }
+        return res.status(500).json({
+          success: false,
+          error: "Failed to assign sites to newly provisioned user",
+          stage: currentStage
+        });
+      }
     }
     currentStage = "AUDIT_LOG_CREATE";
     await adminClient.from("audit_logs").insert({
@@ -45012,6 +45092,14 @@ router.post("/admin/provision-user", async (req, res) => {
     });
   } catch (err) {
     console.error(`[Admin Provisioning Error] Stage: ${currentStage}:`, err?.message || err);
+    if (createdProfileInDb && createdAuthUid) {
+      try {
+        await supabase.from("users").delete().eq("id", createdAuthUid);
+        await supabase.auth.admin.deleteUser(createdAuthUid);
+      } catch (e) {
+        console.warn("[Provisioning Rollback Error]:", e);
+      }
+    }
     return res.status(500).json({ success: false, error: "Failed to process user provisioning request", stage: currentStage });
   }
 });
@@ -45027,7 +45115,7 @@ router.post("/tenant-deletion", async (req, res) => {
     const verifiedToken = await safeVerifyCallerToken(callerToken);
     const verifiedUid = verifiedToken.uid;
     currentStage = "CALLER_AUTHORIZATION";
-    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    const callerRes = await safeGetUserProfile(verifiedUid);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
     }
@@ -45039,13 +45127,29 @@ router.post("/tenant-deletion", async (req, res) => {
     if (!tenantId || typeof tenantId !== "string") {
       return res.status(400).json({ success: false, error: "Valid tenantId is required" });
     }
-    const jobId = crypto.randomUUID();
+    const jobId = crypto2.randomUUID();
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const { error: tenantErr } = await supabase.from("tenants").update({
       status: "DELETION_PENDING",
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      updated_at: nowIso
     }).eq("id", tenantId);
     if (tenantErr) {
       console.warn("[Tenant Deletion] Failed to update tenant status:", tenantErr.message);
+      return res.status(500).json({ success: false, error: "Failed to update tenant status" });
+    }
+    const { error: jobErr } = await supabase.from("tenant_deletion_jobs").insert({
+      id: jobId,
+      tenant_id: tenantId,
+      tenant_name: tenantName || tenantId,
+      requested_by: verifiedUid,
+      requested_by_email: verifiedToken.email || "unknown",
+      requested_at: nowIso,
+      status: "DELETION_PENDING",
+      current_stage: "INITIATED",
+      retry_count: 0
+    });
+    if (jobErr) {
+      console.warn("[Tenant Deletion] Failed to record deletion job:", jobErr.message);
     }
     await supabase.from("audit_logs").insert({
       tenant_id: tenantId,
@@ -45054,14 +45158,15 @@ router.post("/tenant-deletion", async (req, res) => {
       action: "TENANT_DELETION_INITIATED",
       entity_type: "Tenant",
       entity_id: tenantId,
-      details: { tenantName, jobId, initiatedBy: verifiedUid }
+      details: { tenantName, jobId, initiatedBy: verifiedUid },
+      timestamp: nowIso
     });
     return res.status(200).json({
       success: true,
       jobId,
       tenantId,
-      status: "COMPLETED",
-      message: `Tenant deletion initiated for ${tenantName || tenantId}`
+      status: "DELETION_PENDING",
+      message: `Tenant deletion initiated and pending for ${tenantName || tenantId}`
     });
   } catch (err) {
     console.error(`[Tenant Deletion Error] Stage: ${currentStage}:`, err?.message || err);
@@ -45076,19 +45181,57 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     }
     const callerToken = authHeader.substring(7).trim();
     const verifiedToken = await safeVerifyCallerToken(callerToken);
-    const callerRes = await safeGetUserProfile(verifiedToken.uid, verifiedToken.email);
+    const verifiedUid = verifiedToken.uid;
+    const callerRes = await safeGetUserProfile(verifiedUid);
     if (!callerRes.exists || !callerRes.data) {
-      return res.status(403).json({ success: false, error: "Forbidden" });
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
     }
     const callerRoleUpper = (callerRes.data.role || "").toUpperCase().trim();
     if (callerRoleUpper !== "PLATFORM_SUPERUSER") {
       return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can retry tenant deletion jobs" });
     }
+    const jobId = req.params.jobId;
+    if (!jobId) {
+      return res.status(400).json({ success: false, error: "jobId is required" });
+    }
+    const { data: jobRow, error: jobFetchErr } = await supabase.from("tenant_deletion_jobs").select("*").eq("id", jobId).maybeSingle();
+    if (jobFetchErr) {
+      return res.status(500).json({ success: false, error: "Failed to query deletion job" });
+    }
+    if (!jobRow) {
+      return res.status(404).json({ success: false, error: "Tenant deletion job not found" });
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const newRetryCount = (jobRow.retry_count || 0) + 1;
+    const { error: updateErr } = await supabase.from("tenant_deletion_jobs").update({
+      status: "DELETION_PENDING",
+      current_stage: "RETRY_INITIATED",
+      retry_count: newRetryCount,
+      updated_at: nowIso
+    }).eq("id", jobId);
+    if (updateErr) {
+      return res.status(500).json({ success: false, error: "Failed to update deletion job status" });
+    }
+    await supabase.from("audit_logs").insert({
+      tenant_id: jobRow.tenant_id,
+      user_id: verifiedUid,
+      user_email: verifiedToken.email,
+      action: "TENANT_DELETION_RETRY_REQUESTED",
+      entity_type: "TenantDeletionJob",
+      entity_id: jobId,
+      details: { retryCount: newRetryCount },
+      timestamp: nowIso
+    });
     return res.status(200).json({
       success: true,
-      message: `Retry initiated for job ${req.params.jobId}`
+      jobId,
+      tenantId: jobRow.tenant_id,
+      status: "DELETION_PENDING",
+      retryCount: newRetryCount,
+      message: `Tenant deletion retry recorded for job ${jobId}`
     });
   } catch (err) {
+    console.error("[Tenant Deletion Retry Error]:", err?.message || err);
     return res.status(500).json({ success: false, error: "Internal server error during retry" });
   }
 });

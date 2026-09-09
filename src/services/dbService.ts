@@ -2,6 +2,17 @@ import { supabase } from '../config/supabase';
 import { getTableName, toCamelCase, toSnakeCase } from '../utils/caseTransformers';
 import { BaseDocument } from '../types/common';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const isValidUuid = (val: any): boolean => {
+  return typeof val === 'string' && UUID_REGEX.test(val.trim());
+};
+
+export const isUuidField = (fieldName: string): boolean => {
+  const f = fieldName.toLowerCase();
+  return f === 'id' || f.endsWith('_id') || f.endsWith('id');
+};
+
 export interface QueryFilter {
   field: string;
   op: '==' | '!=' | '>' | '>=' | '<' | '<=' | 'in' | 'array-contains';
@@ -9,7 +20,36 @@ export interface QueryFilter {
 }
 
 export const getDocument = async <T = any>(collectionName: string, id: string): Promise<T | null> => {
+  if (!id || id === 'GLOBAL' || id.includes('GLOBAL')) {
+    return null;
+  }
+
   const tableName = getTableName(collectionName);
+
+  // Handle composite IDs like `${tenantId}_${siteId}`
+  if (id.includes('_')) {
+    const parts = id.split('_');
+    if (parts.length === 2 && isValidUuid(parts[0]) && isValidUuid(parts[1])) {
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('tenant_id', parts[0])
+        .eq('site_id', parts[1])
+        .maybeSingle();
+
+      if (error) {
+        console.warn(`[Supabase getDocument] Error fetching composite ${tableName}/${id}:`, error);
+        return null;
+      }
+      return data ? toCamelCase<T>(data) : null;
+    }
+    return null;
+  }
+
+  if (!isValidUuid(id)) {
+    return null;
+  }
+
   const { data, error } = await supabase
     .from(tableName)
     .select('*')
@@ -30,6 +70,27 @@ export const getDocuments = async <T = any>(
   filters: QueryFilter[] = []
 ): Promise<T[]> => {
   const tableName = getTableName(collectionName);
+
+  // Check for impossible filters (e.g. querying a UUID column with 'GLOBAL' or invalid UUID on ==)
+  for (const f of filters) {
+    const snakeField = f.field.replace(/([A-Z])/g, '_$1').toLowerCase();
+    if (f.op === '==' || f.op === undefined) {
+      if (f.value === 'GLOBAL' || (isUuidField(snakeField) && !isValidUuid(f.value))) {
+        return [];
+      }
+    } else if (f.op === 'in') {
+      if (!Array.isArray(f.value) || f.value.length === 0) {
+        return [];
+      }
+      if (isUuidField(snakeField)) {
+        const validValues = f.value.filter(v => v !== 'GLOBAL' && isValidUuid(v));
+        if (validValues.length === 0) {
+          return [];
+        }
+      }
+    }
+  }
+
   let dbQuery = supabase.from(tableName).select('*');
 
   for (const f of filters) {
@@ -53,9 +114,14 @@ export const getDocuments = async <T = any>(
       case '<=':
         dbQuery = dbQuery.lte(snakeField, f.value);
         break;
-      case 'in':
-        dbQuery = dbQuery.in(snakeField, Array.isArray(f.value) ? f.value : [f.value]);
+      case 'in': {
+        let values = Array.isArray(f.value) ? f.value : [f.value];
+        if (isUuidField(snakeField)) {
+          values = values.filter(v => v !== 'GLOBAL' && isValidUuid(v));
+        }
+        dbQuery = dbQuery.in(snakeField, values);
         break;
+      }
       case 'array-contains':
         dbQuery = dbQuery.contains(snakeField, [f.value]);
         break;
@@ -111,15 +177,27 @@ export const setDocument = async (
   data: Record<string, any>
 ): Promise<void> => {
   const tableName = getTableName(collectionName);
-  const snakeData = toSnakeCase({
-    ...data,
-    id,
-    modifiedDate: new Date().toISOString()
-  });
+  const payload: Record<string, any> = { ...data };
 
-  const { error } = await supabase
-    .from(tableName)
-    .upsert(snakeData);
+  if (isValidUuid(id)) {
+    payload.id = id;
+  }
+  payload.modifiedDate = new Date().toISOString();
+
+  const snakeData = toSnakeCase(payload);
+
+  let error;
+  if (!isValidUuid(id) && snakeData.tenant_id && snakeData.site_id) {
+    const res = await supabase
+      .from(tableName)
+      .upsert(snakeData, { onConflict: 'tenant_id,site_id' });
+    error = res.error;
+  } else {
+    const res = await supabase
+      .from(tableName)
+      .upsert(snakeData);
+    error = res.error;
+  }
 
   if (error) {
     console.error(`[Supabase setDocument] Error upserting ${tableName}/${id}:`, error);
@@ -140,6 +218,27 @@ export const updateDocument = async (
     modifiedDate: new Date().toISOString(),
   });
 
+  if (id.includes('_')) {
+    const parts = id.split('_');
+    if (parts.length === 2 && isValidUuid(parts[0]) && isValidUuid(parts[1])) {
+      const { error } = await supabase
+        .from(tableName)
+        .update(snakeData)
+        .eq('tenant_id', parts[0])
+        .eq('site_id', parts[1]);
+
+      if (error) {
+        console.error(`[Supabase updateDocument] Error updating composite ${tableName}/${id}:`, error);
+        throw new Error(`Failed to update document ${id} in ${tableName}: ${error.message}`);
+      }
+      return;
+    }
+  }
+
+  if (!isValidUuid(id)) {
+    return;
+  }
+
   const { error } = await supabase
     .from(tableName)
     .update(snakeData)
@@ -156,6 +255,28 @@ export const deleteDocument = async (
   id: string
 ): Promise<void> => {
   const tableName = getTableName(collectionName);
+
+  if (id.includes('_')) {
+    const parts = id.split('_');
+    if (parts.length === 2 && isValidUuid(parts[0]) && isValidUuid(parts[1])) {
+      const { error } = await supabase
+        .from(tableName)
+        .delete()
+        .eq('tenant_id', parts[0])
+        .eq('site_id', parts[1]);
+
+      if (error) {
+        console.error(`[Supabase deleteDocument] Error deleting composite ${tableName}/${id}:`, error);
+        throw new Error(`Failed to delete document ${id} from ${tableName}: ${error.message}`);
+      }
+      return;
+    }
+  }
+
+  if (!isValidUuid(id)) {
+    return;
+  }
+
   const { error } = await supabase
     .from(tableName)
     .delete()
@@ -180,12 +301,25 @@ export const subscribeToDocument = <T = any>(
   onUpdate: (data: T | null) => void,
   onError?: (error: Error) => void
 ) => {
+  if (!id || id === 'GLOBAL' || id.includes('GLOBAL')) {
+    onUpdate(null);
+    return () => {};
+  }
+  if (!isValidUuid(id) && !id.includes('_')) {
+    onUpdate(null);
+    return () => {};
+  }
+
   const tableName = getTableName(collectionName);
   
   // Initial fetch
   getDocument<T>(collectionName, id)
     .then(data => onUpdate(data))
     .catch(err => onError ? onError(err) : console.error(err));
+
+  if (!isValidUuid(id)) {
+    return () => {};
+  }
 
   // Realtime subscription natively with unique channel name
   const channel = supabase
@@ -224,6 +358,29 @@ export const subscribeToCollection = <T = any>(
   onUpdate: (data: T[]) => void,
   onError?: (error: Error) => void
 ) => {
+  // Check for impossible filters (e.g. querying a UUID column with 'GLOBAL' or invalid UUID on ==)
+  for (const f of filters) {
+    const snakeField = f.field.replace(/([A-Z])/g, '_$1').toLowerCase();
+    if (f.op === '==' || f.op === undefined) {
+      if (f.value === 'GLOBAL' || (isUuidField(snakeField) && !isValidUuid(f.value))) {
+        onUpdate([]);
+        return () => {};
+      }
+    } else if (f.op === 'in') {
+      if (!Array.isArray(f.value) || f.value.length === 0) {
+        onUpdate([]);
+        return () => {};
+      }
+      if (isUuidField(snakeField)) {
+        const validValues = f.value.filter(v => v !== 'GLOBAL' && isValidUuid(v));
+        if (validValues.length === 0) {
+          onUpdate([]);
+          return () => {};
+        }
+      }
+    }
+  }
+
   const tableName = getTableName(collectionName);
 
   const fetchAndNotify = () => {

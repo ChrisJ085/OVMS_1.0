@@ -59,6 +59,27 @@ describe('Application Auth, Authorization & Privilege Escalation Audit', () => {
       expect(response.body.success).toBe(false);
     });
 
+    it('Reject unauthenticated calls to /api/admin/bootstrap-superuser with 401', async () => {
+      const response = await request(app)
+        .post('/api/admin/bootstrap-superuser')
+        .send({});
+
+      expect(response.status).toBe(401);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error).toMatch(/Authorization/i);
+    });
+
+    it('Reject unauthorized caller emails for /api/admin/bootstrap-superuser', async () => {
+      const response = await request(app)
+        .post('/api/admin/bootstrap-superuser')
+        .set('Authorization', 'Bearer invalid-token')
+        .send({});
+
+      // Should fail token verification with error
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.body.success).toBe(false);
+    });
+
     it('Health endpoint is accessible without sensitive leaks', async () => {
       const response = await request(app).get('/api/health');
       expect(response.status).toBe(200);

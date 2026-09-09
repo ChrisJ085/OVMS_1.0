@@ -196,7 +196,7 @@ export const TVDashboardPage: React.FC = () => {
 
   // Subscribe to Products for pallet calculation
   useEffect(() => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
     const unsubProd = subscribeToProducts(tenantId, siteId, setProducts, console.error);
     return () => unsubProd();
   }, [tenantId, siteId]);
@@ -209,7 +209,7 @@ export const TVDashboardPage: React.FC = () => {
 
   // Data Fetching for displayPriorities
   useEffect(() => {
-    if (!tenantId || !siteId) return;
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
 
     const fetchPriorities = async () => {
       try {

@@ -410,6 +410,7 @@ export const getProductInventory = async (
   siteId: string,
   productId: string
 ): Promise<{ totalQuantity: number, balances: InventoryBalance[] } | null> => {
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return null;
   try {
     const balancesMap = new Map<string, InventoryBalance>();
 

@@ -47,7 +47,7 @@ export interface ReadinessCheckResult {
 }
 
 export const getSiteOnboarding = async (tenantId: string, siteId: string): Promise<SiteOnboarding | null> => {
-  if (!tenantId || !siteId) return null;
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return null;
   try {
     const { data, error } = await supabase
       .from('site_onboarding')
@@ -294,6 +294,34 @@ export const runSiteReadinessChecks = async (
   tenantId: string,
   siteId: string
 ): Promise<ReadinessCheckResult> => {
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+    return {
+      blockers: {
+        noActiveDestination: false,
+        decisionSettingsIncomplete: false,
+        noProducts: false,
+        siteInactive: false
+      },
+      recommendations: {
+        noDisplayAccount: false,
+        noWarehouseOperator: false,
+        noPromotions: false,
+        noMppsImports: false,
+        noPlanningRules: false
+      },
+      counts: {
+        productionLines: 0,
+        destinations: 0,
+        actionTypes: 0,
+        priorityLevels: 0,
+        products: 0,
+        planningRules: 0,
+        promotions: 0,
+        mppsImports: 0
+      }
+    };
+  }
+
   // 1. Production lines count
   const { count: productionLinesCount } = await supabase
     .from('production_lines')
