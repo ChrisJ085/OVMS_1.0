@@ -477,7 +477,7 @@ export const AdminOverviewPage: React.FC = () => {
     try {
       const code = newTenantCode.toUpperCase().trim();
       const payload: Tenant = {
-        id: code,
+        id: crypto.randomUUID(),
         tenantName: newTenantName.trim(),
         tenantCode: code,
         active: true,
