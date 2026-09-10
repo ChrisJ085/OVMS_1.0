@@ -45035,26 +45035,34 @@ router.post("/admin/provision-user", async (req, res) => {
     const secureRandomPassword = crypto2.randomBytes(18).toString("base64url") + "A1!";
     const initialPassword = temporaryPassword && typeof temporaryPassword === "string" && temporaryPassword.trim().length >= 8 ? temporaryPassword.trim() : secureRandomPassword;
     currentStage = "SUPABASE_AUTH_CREATE";
-    const { data: authData, error: authErr } = await supabase.auth.signUp({
+    const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
       email: cleanEmail,
       password: initialPassword,
-      options: {
-        data: { display_name: displayName.trim() }
+      email_confirm: true,
+      user_metadata: {
+        display_name: displayName.trim()
       }
     });
-    if (authErr && !authData?.user) {
-      return res.status(400).json({ success: false, error: authErr.message, stage: currentStage });
+    if (authErr || !authData?.user?.id) {
+      const errMsg = authErr?.message || "Failed to create Supabase Auth user";
+      const isDuplicate = errMsg.toLowerCase().includes("already") || errMsg.toLowerCase().includes("registered") || errMsg.toLowerCase().includes("exists");
+      const status = isDuplicate ? 409 : 400;
+      return res.status(status).json({
+        success: false,
+        error: isDuplicate ? "An account with this email address already exists in Supabase Auth." : errMsg,
+        stage: currentStage
+      });
     }
-    const newUserId = authData.user?.id || crypto2.randomUUID();
-    createdAuthUid = authData.user ? authData.user.id : null;
+    const newUserId = authData.user.id;
+    createdAuthUid = authData.user.id;
     const { createClient: createClient2 } = await Promise.resolve().then(() => (init_dist4(), dist_exports));
     const { supabaseUrl: supabaseUrl2, supabasePublishableKey: supabasePublishableKey2 } = await Promise.resolve().then(() => (init_supabase(), supabase_exports));
-    const adminClient = createClient2(supabaseUrl2, supabasePublishableKey2, {
+    const callerClient = createClient2(supabaseUrl2, supabasePublishableKey2, {
       global: { headers: { Authorization: `Bearer ${callerToken}` } },
       auth: { persistSession: false }
     });
     currentStage = "USER_PROFILE_CREATE";
-    const { error: profileErr } = await adminClient.from("users").upsert({
+    const { error: profileErr } = await callerClient.from("users").upsert({
       id: newUserId,
       email: cleanEmail,
       display_name: displayName.trim(),
@@ -45078,7 +45086,7 @@ router.post("/admin/provision-user", async (req, res) => {
       }
       return res.status(500).json({
         success: false,
-        error: "Failed to create user profile in database",
+        error: `Failed to create user profile in database: ${profileErr.message}`,
         stage: currentStage
       });
     }
@@ -45089,10 +45097,10 @@ router.post("/admin/provision-user", async (req, res) => {
         user_id: newUserId,
         site_id: sId
       }));
-      const { error: sitesErr } = await adminClient.from("user_sites").insert(userSiteRows);
+      const { error: sitesErr } = await callerClient.from("user_sites").insert(userSiteRows);
       if (sitesErr) {
         try {
-          await adminClient.from("users").delete().eq("id", newUserId);
+          await callerClient.from("users").delete().eq("id", newUserId);
           if (createdAuthUid) {
             await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
           }
@@ -45101,13 +45109,13 @@ router.post("/admin/provision-user", async (req, res) => {
         }
         return res.status(500).json({
           success: false,
-          error: "Failed to assign sites to newly provisioned user",
+          error: `Failed to assign sites to newly provisioned user: ${sitesErr.message}`,
           stage: currentStage
         });
       }
     }
     currentStage = "AUDIT_LOG_CREATE";
-    await adminClient.from("audit_logs").insert({
+    await callerClient.from("audit_logs").insert({
       tenant_id: targetTenantId,
       user_id: verifiedUid,
       user_email: verifiedToken.email,
@@ -45127,13 +45135,12 @@ router.post("/admin/provision-user", async (req, res) => {
     console.error(`[Admin Provisioning Error] Stage: ${currentStage}:`, err?.message || err);
     if (createdProfileInDb && createdAuthUid) {
       try {
-        await supabase.from("users").delete().eq("id", createdAuthUid);
         await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
       } catch (e) {
         console.warn("[Provisioning Rollback Error]:", e);
       }
     }
-    return res.status(500).json({ success: false, error: "Failed to process user provisioning request", stage: currentStage });
+    return res.status(500).json({ success: false, error: err?.message || "Failed to process user provisioning request", stage: currentStage });
   }
 });
 router.post("/tenant-deletion", async (req, res) => {
