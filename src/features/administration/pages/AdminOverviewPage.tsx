@@ -1026,7 +1026,7 @@ export const AdminOverviewPage: React.FC = () => {
                   <div className="space-y-1.5 animate-fade-in">
                     <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Tenant</label>
                     <select
-                      required
+                      required={newUserRole !== 'PLATFORM_SUPERUSER'}
                       value={newUserTenantId}
                       onChange={e => setNewUserTenantId(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"

@@ -1,6 +1,6 @@
 import express from "express";
 import crypto from "crypto";
-import { supabase } from "../config/supabase";
+import { supabaseNoPersist as supabase } from "../config/supabaseNoPersist";
 import { supabaseAdmin } from "../config/supabaseAdmin";
 import { toCamelCase, toSnakeCase } from "../utils/caseTransformers";
 
