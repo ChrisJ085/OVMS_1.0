@@ -1,6 +1,5 @@
 import express from "express";
 import crypto from "crypto";
-import { supabaseNoPersist as supabase } from "../config/supabaseNoPersist";
 import { supabaseAdmin } from "../config/supabaseAdmin";
 import { toCamelCase, toSnakeCase } from "../utils/caseTransformers";
 
@@ -17,7 +16,7 @@ const AUTHORIZED_BOOTSTRAP_EMAILS = [
 
 async function safeVerifyCallerToken(callerToken: string): Promise<{ uid: string; email?: string }> {
   try {
-    const { data, error } = await supabase.auth.getUser(callerToken);
+    const { data, error } = await supabaseAdmin.auth.getUser(callerToken);
     if (error || !data.user) {
       throw error || new Error('Invalid token');
     }
@@ -33,14 +32,14 @@ async function safeVerifyCallerToken(callerToken: string): Promise<{ uid: string
  * A profile must only be treated as the caller's profile when users.id = authenticated Supabase user ID.
  * Email must NEVER substitute for the authenticated UID during authorization.
  */
-async function safeGetUserProfile(uid: string): Promise<{ exists: boolean; data?: any }> {
+async function safeGetUserProfile(uid: string, callerEmail?: string): Promise<{ exists: boolean; data?: any }> {
   if (!uid || typeof uid !== 'string') {
     return { exists: false };
   }
 
   try {
     // Direct document lookup strictly by authoritative authenticated UID
-    const { data: userRow, error } = await supabase
+    const { data: userRow, error } = await supabaseAdmin
       .from('users')
       .select('*, user_sites(site_id)')
       .eq('id', uid)
@@ -48,7 +47,6 @@ async function safeGetUserProfile(uid: string): Promise<{ exists: boolean; data?
 
     if (error) {
       console.warn('[Server Supabase] safeGetUserProfile query error:', error.message);
-      return { exists: false };
     }
 
     if (userRow && userRow.id === uid) {
@@ -57,6 +55,41 @@ async function safeGetUserProfile(uid: string): Promise<{ exists: boolean; data?
         : [];
       const camel = toCamelCase<any>(userRow);
       return { exists: true, data: { ...camel, siteIds } };
+    }
+
+    // Auto-bootstrap fallback if the caller email is an authorized platform superuser
+    const normalizedEmail = (callerEmail || userRow?.email || '').toLowerCase().trim();
+    const envBootstrapEmail = process.env.INITIAL_SUPERUSER_EMAIL?.toLowerCase().trim();
+    const isAuthorizedSuperuser = AUTHORIZED_BOOTSTRAP_EMAILS.includes(normalizedEmail) ||
+      (envBootstrapEmail && normalizedEmail === envBootstrapEmail);
+
+    if (isAuthorizedSuperuser) {
+      const nowIso = new Date().toISOString();
+      const newSuperuser = {
+        id: uid,
+        email: normalizedEmail,
+        display_name: 'Platform Superuser',
+        job_title: 'Platform Administrator',
+        role: 'PLATFORM_SUPERUSER',
+        tenant_id: null,
+        account_status: 'ACTIVE',
+        requires_password_change: false,
+        failed_login_attempts: 0,
+        created_by: 'SYSTEM_AUTHORITATIVE_BOOTSTRAP',
+        created_at: nowIso,
+        updated_at: nowIso
+      };
+
+      const { data: upsertedRow, error: upsertErr } = await supabaseAdmin
+        .from('users')
+        .upsert(newSuperuser)
+        .select('*, user_sites(site_id)')
+        .single();
+
+      if (!upsertErr && upsertedRow) {
+        const camel = toCamelCase<any>(upsertedRow);
+        return { exists: true, data: { ...camel, siteIds: [] } };
+      }
     }
 
     return { exists: false };
@@ -109,7 +142,7 @@ router.post("/admin/bootstrap-superuser", async (req, res) => {
     }
 
     // Check if profile already exists for this authoritative UID
-    const existing = await safeGetUserProfile(verifiedUid);
+    const existing = await safeGetUserProfile(verifiedUid, callerEmail);
     if (existing.exists && existing.data?.role === 'PLATFORM_SUPERUSER') {
       return res.status(200).json({
         success: true,
@@ -122,7 +155,7 @@ router.post("/admin/bootstrap-superuser", async (req, res) => {
 
     // Upsert the platform superuser profile explicitly tied to authenticated UID
     const nowIso = new Date().toISOString();
-    const { error: upsertErr } = await supabase.from('users').upsert({
+    const { error: upsertErr } = await supabaseAdmin.from('users').upsert({
       id: verifiedUid,
       email: callerEmail,
       display_name: 'Platform Superuser',
@@ -142,7 +175,7 @@ router.post("/admin/bootstrap-superuser", async (req, res) => {
     }
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await supabaseAdmin.from('audit_logs').insert({
       tenant_id: null,
       user_id: verifiedUid,
       user_email: callerEmail,
@@ -184,8 +217,8 @@ router.post("/admin/provision-user", async (req, res) => {
     const verifiedUid = verifiedToken.uid;
 
     currentStage = "CALLER_PROFILE_LOOKUP";
-    // Strictly authoritative UID identity check
-    const callerRes = await safeGetUserProfile(verifiedUid);
+    // Authoritative UID identity check
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller user profile not found", stage: currentStage });
     }
@@ -248,7 +281,7 @@ router.post("/admin/provision-user", async (req, res) => {
     if (siteIds && Array.isArray(siteIds) && siteIds.length > 0) {
       if (callerRoleUpper === 'TENANT_ADMIN' && targetTenantId) {
         // Query database to ensure all siteIds belong to this tenant
-        const { data: tenantSites, error: siteCheckErr } = await supabase
+        const { data: tenantSites, error: siteCheckErr } = await supabaseAdmin
           .from('sites')
           .select('id')
           .eq('tenant_id', targetTenantId)
@@ -301,16 +334,8 @@ router.post("/admin/provision-user", async (req, res) => {
     const newUserId = authData.user.id;
     createdAuthUid = authData.user.id;
 
-    // Create a scoped client acting as the caller for RLS
-    const { createClient } = await import('@supabase/supabase-js');
-    const { supabaseUrl, supabasePublishableKey } = await import('../config/supabase');
-    const callerClient = createClient(supabaseUrl, supabasePublishableKey, {
-      global: { headers: { Authorization: `Bearer ${callerToken}` } },
-      auth: { persistSession: false }
-    });
-
     currentStage = "USER_PROFILE_CREATE";
-    const { error: profileErr } = await callerClient.from('users').upsert({
+    const { error: profileErr } = await supabaseAdmin.from('users').upsert({
       id: newUserId,
       email: cleanEmail,
       display_name: displayName.trim(),
@@ -350,11 +375,11 @@ router.post("/admin/provision-user", async (req, res) => {
         user_id: newUserId,
         site_id: sId
       }));
-      const { error: sitesErr } = await callerClient.from('user_sites').insert(userSiteRows);
+      const { error: sitesErr } = await supabaseAdmin.from('user_sites').insert(userSiteRows);
       if (sitesErr) {
         // Safe compensation: clean up profile and auth user
         try {
-          await callerClient.from('users').delete().eq('id', newUserId);
+          await supabaseAdmin.from('users').delete().eq('id', newUserId);
           if (createdAuthUid) {
             await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
           }
@@ -371,7 +396,7 @@ router.post("/admin/provision-user", async (req, res) => {
 
     // Insert Audit Log
     currentStage = "AUDIT_LOG_CREATE";
-    await callerClient.from('audit_logs').insert({
+    await supabaseAdmin.from('audit_logs').insert({
       tenant_id: targetTenantId,
       user_id: verifiedUid,
       user_email: verifiedToken.email,
@@ -403,6 +428,123 @@ router.post("/admin/provision-user", async (req, res) => {
   }
 });
 
+// Admin Tenant Provisioning Endpoint (Superuser Only)
+router.post("/admin/provision-tenant", async (req, res) => {
+  let currentStage = "INIT";
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header", stage: "AUTH_CHECK" });
+    }
+
+    const callerToken = authHeader.substring(7).trim();
+    currentStage = "TOKEN_VERIFICATION";
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+
+    currentStage = "CALLER_PROFILE_LOOKUP";
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found", stage: currentStage });
+    }
+
+    currentStage = "CALLER_AUTHORIZATION";
+    const callerRoleUpper = (callerRes.data.role || '').toUpperCase().trim();
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER') {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can create tenants", stage: currentStage });
+    }
+
+    currentStage = "VALIDATION";
+    const body = req.body || {};
+    const tenantName = (body.tenantName || body.name || '').trim();
+    const tenantCode = (body.tenantCode || body.code || '').trim().toUpperCase();
+
+    if (!tenantName) {
+      return res.status(400).json({ success: false, error: "Tenant Name is required", stage: currentStage });
+    }
+    if (!tenantCode) {
+      return res.status(400).json({ success: false, error: "Tenant Code is required", stage: currentStage });
+    }
+
+    currentStage = "TENANT_DUPLICATE_CHECK";
+    const { data: existingTenant } = await supabaseAdmin
+      .from('tenants')
+      .select('id, tenant_code, name')
+      .or(`tenant_code.eq.${tenantCode},name.eq.${tenantName}`)
+      .maybeSingle();
+
+    if (existingTenant) {
+      return res.status(409).json({
+        success: false,
+        error: `A tenant with code '${tenantCode}' or name '${tenantName}' already exists.`,
+        stage: currentStage
+      });
+    }
+
+    currentStage = "TENANT_CREATE";
+    const tenantId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+
+    const newTenantRecord = {
+      id: tenantId,
+      name: tenantName,
+      tenant_name: tenantName,
+      tenant_code: tenantCode,
+      active: true,
+      status: 'active',
+      is_system_tenant: false,
+      created_by: verifiedUid,
+      created_at: nowIso,
+      created_date: nowIso,
+      modified_by: verifiedUid,
+      modified_date: nowIso,
+      updated_at: nowIso
+    };
+
+    const { error: insertErr } = await supabaseAdmin
+      .from('tenants')
+      .insert(newTenantRecord);
+
+    if (insertErr) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to create tenant in database: ${insertErr.message}`,
+        stage: currentStage
+      });
+    }
+
+    currentStage = "AUDIT_LOG_CREATE";
+    await supabaseAdmin.from('audit_logs').insert({
+      tenant_id: tenantId,
+      user_id: verifiedUid,
+      user_email: verifiedToken.email,
+      action: 'TENANT_CREATION',
+      entity_type: 'Tenant',
+      entity_id: tenantId,
+      details: { tenantName, tenantCode, createdBy: verifiedUid },
+      timestamp: nowIso
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Tenant ${tenantName} (${tenantCode}) successfully created.`,
+      tenantId,
+      tenant: {
+        id: tenantId,
+        name: tenantName,
+        tenantName,
+        tenantCode,
+        active: true,
+        status: 'active'
+      }
+    });
+
+  } catch (err: any) {
+    console.error(`[Admin Provision Tenant Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to process tenant provisioning request", stage: currentStage });
+  }
+});
+
 // Tenant Deletion Endpoint (Superuser Only)
 router.post("/tenant-deletion", async (req, res) => {
   let currentStage = "INIT";
@@ -419,7 +561,7 @@ router.post("/tenant-deletion", async (req, res) => {
 
     currentStage = "CALLER_AUTHORIZATION";
     // Authoritative UID identity check
-    const callerRes = await safeGetUserProfile(verifiedUid);
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
     }
@@ -438,7 +580,7 @@ router.post("/tenant-deletion", async (req, res) => {
     const nowIso = new Date().toISOString();
 
     // Mark tenant as DELETION_PENDING
-    const { error: tenantErr } = await supabase
+    const { error: tenantErr } = await supabaseAdmin
       .from('tenants')
       .update({
         status: 'DELETION_PENDING',
@@ -452,7 +594,7 @@ router.post("/tenant-deletion", async (req, res) => {
     }
 
     // Persist deletion job record with accurate status DELETION_PENDING
-    const { error: jobErr } = await supabase
+    const { error: jobErr } = await supabaseAdmin
       .from('tenant_deletion_jobs')
       .insert({
         id: jobId,
@@ -471,7 +613,7 @@ router.post("/tenant-deletion", async (req, res) => {
     }
 
     // Insert Audit Log
-    await supabase.from('audit_logs').insert({
+    await supabaseAdmin.from('audit_logs').insert({
       tenant_id: tenantId,
       user_id: verifiedUid,
       user_email: verifiedToken.email,
@@ -509,7 +651,7 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     const verifiedUid = verifiedToken.uid;
 
     // Authoritative UID identity check
-    const callerRes = await safeGetUserProfile(verifiedUid);
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
     }
@@ -525,7 +667,7 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     }
 
     // Look up deletion job in database
-    const { data: jobRow, error: jobFetchErr } = await supabase
+    const { data: jobRow, error: jobFetchErr } = await supabaseAdmin
       .from('tenant_deletion_jobs')
       .select('*')
       .eq('id', jobId)
@@ -543,7 +685,7 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     const newRetryCount = (jobRow.retry_count || 0) + 1;
 
     // Update job state
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await supabaseAdmin
       .from('tenant_deletion_jobs')
       .update({
         status: 'DELETION_PENDING',
@@ -558,7 +700,7 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     }
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await supabaseAdmin.from('audit_logs').insert({
       tenant_id: jobRow.tenant_id,
       user_id: verifiedUid,
       user_email: verifiedToken.email,

@@ -32,6 +32,28 @@ describe('apiApp Express routing tests', () => {
     expect(res.body.stage).toBe('AUTH_CHECK');
   });
 
+  it('routes POST /api/admin/provision-tenant correctly (expecting 401 and stage AUTH_CHECK when unauthenticated)', async () => {
+    const res = await request(apiApp)
+      .post('/api/admin/provision-tenant')
+      .send({});
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error).toContain('Missing or invalid Authorization header');
+    expect(res.body.stage).toBe('AUTH_CHECK');
+  });
+
+  it('reports stage TOKEN_VERIFICATION when bearer token is invalid for tenant provisioning', async () => {
+    const res = await request(apiApp)
+      .post('/api/admin/provision-tenant')
+      .set('Authorization', 'Bearer invalid-token-12345')
+      .send({
+        tenantName: 'New Logistics Inc',
+        tenantCode: 'NLI'
+      });
+    expect(res.body.success).toBe(false);
+    expect(res.body.stage).toBe('TOKEN_VERIFICATION');
+  });
+
   it('reports stage TOKEN_VERIFICATION when bearer token is invalid', async () => {
     const res = await request(apiApp)
       .post('/api/admin/provision-user')

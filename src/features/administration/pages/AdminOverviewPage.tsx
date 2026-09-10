@@ -475,37 +475,50 @@ export const AdminOverviewPage: React.FC = () => {
     setCreatingTenant(true);
     setTenantMsg(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
 
-      console.log('OVMS tenant creation auth:', {
-        hasSession: !!session,
-        userId: session?.user?.id,
-        email: session?.user?.email,
-        accessTokenPresent: !!session?.access_token
-      });
+      if (!token) {
+        throw new Error('Authentication session not found. Please log in as Platform Superuser.');
+      }
 
       const code = newTenantCode.toUpperCase().trim();
-      const payload: Tenant = {
-        id: crypto.randomUUID(),
-        tenantName: newTenantName.trim(),
-        tenantCode: code,
-        active: true,
-        createdBy: userProfile?.uid || 'ADMIN',
-        createdDate: new Date().toISOString(),
-        modifiedBy: userProfile?.uid || 'ADMIN',
-        modifiedDate: new Date().toISOString()
-      } as any;
-      
-      const { error: insertErr } = await supabase
-        .from('tenants')
-        .insert(toSnakeCase(payload));
-      if (insertErr) throw insertErr;
+      const apiRes = await fetch('/api/admin/provision-tenant', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          tenantName: newTenantName.trim(),
+          tenantCode: code
+        })
+      });
 
-      setTenantMsg(`Tenant ${newTenantName} (${code}) successfully created.`);
+      const resText = await apiRes.text();
+      let apiData: any;
+      try {
+        apiData = JSON.parse(resText);
+      } catch {
+        const cleanSnippet = resText ? resText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().slice(0, 150) : '';
+        if (!apiRes.ok) {
+          throw new Error(`Server returned HTTP ${apiRes.status}${cleanSnippet ? `: ${cleanSnippet}` : ''}.`);
+        }
+        throw new Error(`Unexpected server response: ${cleanSnippet || resText.slice(0, 150)}`);
+      }
+
+      if (!apiRes.ok || !apiData.success) {
+        const errorMsg = apiData.error || apiData.message || 'Failed to provision tenant';
+        const fullMsg = apiData.stage ? `[${apiData.stage}] ${errorMsg}` : errorMsg;
+        throw new Error(fullMsg);
+      }
+
+      setTenantMsg(apiData.message || `Tenant ${newTenantName} (${code}) successfully created.`);
       setNewTenantName('');
       setNewTenantCode('');
       fetchTenants();
     } catch (err: any) {
+      console.error('Failed to create tenant:', err);
       setTenantMsg(`Failed to create tenant: ${err.message}`);
     } finally {
       setCreatingTenant(false);

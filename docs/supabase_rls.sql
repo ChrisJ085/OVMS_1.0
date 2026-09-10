@@ -83,7 +83,18 @@ RETURNS trigger AS $$
 DECLARE
     caller_is_super BOOLEAN;
     caller_is_admin BOOLEAN;
+    current_jwt_uid UUID;
 BEGIN
+    BEGIN
+        current_jwt_uid := auth.uid();
+    EXCEPTION WHEN OTHERS THEN
+        current_jwt_uid := NULL;
+    END;
+
+    IF current_jwt_uid IS NULL THEN
+        RETURN NEW;
+    END IF;
+
     caller_is_super := ovms_internal.is_platform_superuser();
     IF caller_is_super THEN
         RETURN NEW;
