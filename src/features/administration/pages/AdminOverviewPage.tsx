@@ -475,6 +475,15 @@ export const AdminOverviewPage: React.FC = () => {
     setCreatingTenant(true);
     setTenantMsg(null);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      console.log('OVMS tenant creation auth:', {
+        hasSession: !!session,
+        userId: session?.user?.id,
+        email: session?.user?.email,
+        accessTokenPresent: !!session?.access_token
+      });
+
       const code = newTenantCode.toUpperCase().trim();
       const payload: Tenant = {
         id: crypto.randomUUID(),

@@ -13,13 +13,19 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE IF NOT EXISTS public.tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
+    tenant_code TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'DELETION_PENDING')),
     is_system_tenant BOOLEAN DEFAULT FALSE,
     deletion_job_id TEXT,
     deletion_requested_by TEXT,
     deletion_requested_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    active BOOLEAN DEFAULT TRUE,
+    created_by TEXT,
+    created_date TIMESTAMPTZ DEFAULT NOW(),
+    modified_by TEXT,
+    modified_date TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS public.sites (
