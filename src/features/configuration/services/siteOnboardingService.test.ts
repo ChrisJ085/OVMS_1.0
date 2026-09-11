@@ -11,7 +11,8 @@ import {
 } from './siteOnboardingService';
 
 vi.mock('../../administration/services/settingsService', () => ({
-  createAuditLog: vi.fn()
+  createAuditLog: vi.fn(),
+  isValidUuid: vi.fn().mockImplementation((val) => typeof val === 'string' && val.length > 0 && val !== 'SETUP_REQUIRED' && val !== 'GLOBAL')
 }));
 
 const mockMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -143,6 +144,27 @@ describe('siteOnboardingService', () => {
 
       expect(res.blockers.decisionSettingsIncomplete).toBe(false);
       expect(res.counts.destinations).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('Invalid target handling (SETUP_REQUIRED / invalid UUID)', () => {
+    it('getSiteOnboarding returns null without querying supabase', async () => {
+      const res = await getSiteOnboarding('tenant-123', 'SETUP_REQUIRED');
+      expect(res).toBeNull();
+      expect(supabase.from).not.toHaveBeenCalled();
+    });
+
+    it('initializeSiteOnboarding returns default data without querying supabase', async () => {
+      const res = await initializeSiteOnboarding('tenant-123', 'SETUP_REQUIRED', userId);
+      expect(res.status).toBe('NOT_STARTED');
+      expect(supabase.from).not.toHaveBeenCalled();
+    });
+
+    it('runSiteReadinessChecks returns default blank blockers without querying supabase', async () => {
+      const res = await runSiteReadinessChecks('tenant-123', 'SETUP_REQUIRED');
+      expect(res.blockers.noActiveDestination).toBe(false);
+      expect(res.counts.destinations).toBe(0);
+      expect(supabase.from).not.toHaveBeenCalled();
     });
   });
 });

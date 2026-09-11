@@ -33,7 +33,7 @@ const TABS = [
 ];
 
 export const ConfigurationPage: React.FC = () => {
-  const { tenantId, siteId, availableSites } = useSiteContext();
+  const { tenantId, siteId, availableSites, refreshSites } = useSiteContext();
   const { userProfile } = useAuth();
   const isSuperUser = userProfile?.role === 'PLATFORM_SUPERUSER';
   const { onboarding, canComplete, isComplete, canModifyConfig } = useSiteOnboarding();
@@ -99,16 +99,16 @@ export const ConfigurationPage: React.FC = () => {
         constraints.push({ field: 'tenantId', op: '==', value: selectedTenantFilter });
       }
     } else {
-      constraints.push({ field: 'tenantId', op: '==', value: tenantId });
+      if (tenantId && tenantId !== 'GLOBAL') {
+        constraints.push({ field: 'tenantId', op: '==', value: tenantId });
+      }
     }
 
-    // Filter by siteId for site-scoped tabs
+    // Filter by siteId for site-scoped tabs ONLY
     if (activeTab.siteScoped) {
-      if (siteId) {
+      if (siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
         constraints.push({ field: 'siteId', op: '==', value: siteId });
       }
-    } else {
-      constraints.push({ field: 'siteId', op: '==', value: '' });
     }
 
     const unsubscribe = subscribeToCollection<any>(
@@ -122,8 +122,8 @@ export const ConfigurationPage: React.FC = () => {
            if (a.sortOrder !== undefined && b.sortOrder !== undefined) {
              return a.sortOrder - b.sortOrder;
            }
-           const aName = a.name || a.label || a.siteName || a.destinationName || a.areaName || a.lineName || a.code || '';
-           const bName = b.name || b.label || b.siteName || b.destinationName || b.areaName || b.lineName || b.code || '';
+           const aName = a.name || a.label || a.siteName || a.destinationName || a.areaName || a.lineName || a.code || a.siteCode || '';
+           const bName = b.name || b.label || b.siteName || b.destinationName || b.areaName || b.lineName || b.code || b.siteCode || '';
            return aName.localeCompare(bName);
         });
         setData(sorted);
@@ -146,6 +146,9 @@ export const ConfigurationPage: React.FC = () => {
       } else {
         await reactivateConfigItem(activeTab.collection, actionItem.item.id);
       }
+      if (activeTab.id === 'sites') {
+        await refreshSites();
+      }
     } catch (err: any) {
       alert(err.message || 'Action failed');
     } finally {
@@ -156,11 +159,45 @@ export const ConfigurationPage: React.FC = () => {
   const handleSaveModal = async (formData: any) => {
     const effectiveTenantId = formData.tenantId || (isSuperUser && selectedTenantFilter !== 'ALL' ? selectedTenantFilter : tenantId);
 
-    const payload = {
+    const payload: { tenantId: string; siteId?: string; [key: string]: any } = {
       ...formData,
       tenantId: effectiveTenantId,
-      siteId: activeTab.siteScoped ? siteId : '',
     };
+
+    if (activeTab.siteScoped && siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
+      payload.siteId = siteId;
+    }
+
+    // Ensure alias columns are satisfied for PostgreSQL constraints
+    if (activeTab.id === 'sites') {
+      payload.code = formData.siteCode || formData.code;
+      payload.siteCode = formData.siteCode || formData.code;
+      payload.name = formData.siteName || formData.name;
+      payload.siteName = formData.siteName || formData.name;
+    } else if (activeTab.id === 'destinations') {
+      payload.code = formData.destinationCode || formData.code;
+      payload.destinationCode = formData.destinationCode || formData.code;
+      payload.name = formData.destinationName || formData.name;
+      payload.destinationName = formData.destinationName || formData.name;
+    } else if (activeTab.id === 'areas') {
+      payload.code = formData.areaCode || formData.code;
+      payload.areaCode = formData.areaCode || formData.code;
+      payload.name = formData.areaName || formData.name;
+      payload.areaName = formData.areaName || formData.name;
+    } else if (activeTab.id === 'lines') {
+      payload.code = formData.lineCode || formData.code;
+      payload.lineCode = formData.lineCode || formData.code;
+      payload.name = formData.lineName || formData.name;
+      payload.lineName = formData.lineName || formData.name;
+    } else if (activeTab.id === 'actions') {
+      payload.code = formData.code;
+      payload.label = formData.label || formData.name;
+      payload.name = formData.label || formData.name;
+    } else if (activeTab.id === 'priorities') {
+      payload.code = formData.code;
+      payload.label = formData.label || formData.name;
+      payload.name = formData.label || formData.name;
+    }
     
     let result;
     if (modalState.item) {
@@ -171,7 +208,7 @@ export const ConfigurationPage: React.FC = () => {
         activeTab.codeField,
         formData[activeTab.codeField],
         effectiveTenantId,
-        activeTab.siteScoped ? siteId : ''
+        activeTab.siteScoped ? siteId : undefined
       );
     } else {
       result = await createConfigItem(
@@ -184,6 +221,9 @@ export const ConfigurationPage: React.FC = () => {
     
     if (result.success) {
       setModalState({ isOpen: false });
+      if (activeTab.id === 'sites') {
+        await refreshSites();
+      }
     } else {
       alert(result.error);
     }
@@ -205,23 +245,23 @@ export const ConfigurationPage: React.FC = () => {
 
     // Determine dynamic columns based on collection
     if (activeTab.id === 'sites') {
-      cols.push({ header: 'Code', accessor: 'siteCode' as const });
-      cols.push({ header: 'Name', accessor: 'siteName' as const });
-      cols.push({ header: 'Timezone', accessor: 'timezone' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.siteCode || row.code || '-' });
+      cols.push({ header: 'Name', accessor: (row: any) => row.siteName || row.name || '-' });
+      cols.push({ header: 'Timezone', accessor: (row: any) => row.timezone || 'Europe/London' });
     } else if (activeTab.id === 'destinations') {
-      cols.push({ header: 'Code', accessor: 'destinationCode' as const });
-      cols.push({ header: 'Name', accessor: 'destinationName' as const });
-      cols.push({ header: 'Type', accessor: 'destinationType' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.destinationCode || row.code || '-' });
+      cols.push({ header: 'Name', accessor: (row: any) => row.destinationName || row.name || '-' });
+      cols.push({ header: 'Type', accessor: (row: any) => row.destinationType || '-' });
     } else if (activeTab.id === 'units' || activeTab.id === 'categories') {
-      cols.push({ header: 'Code', accessor: 'code' as const });
-      cols.push({ header: 'Name', accessor: 'name' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.code || '-' });
+      cols.push({ header: 'Name', accessor: (row: any) => row.name || '-' });
     } else if (activeTab.id === 'areas') {
-      cols.push({ header: 'Code', accessor: 'areaCode' as const });
-      cols.push({ header: 'Name', accessor: 'areaName' as const });
-      cols.push({ header: 'Type', accessor: 'areaType' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.areaCode || row.code || '-' });
+      cols.push({ header: 'Name', accessor: (row: any) => row.areaName || row.name || '-' });
+      cols.push({ header: 'Type', accessor: (row: any) => row.areaType || '-' });
     } else if (activeTab.id === 'lines') {
-      cols.push({ header: 'Code', accessor: 'lineCode' as const });
-      cols.push({ header: 'Name', accessor: 'lineName' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.lineCode || row.code || '-' });
+      cols.push({ header: 'Name', accessor: (row: any) => row.lineName || row.name || '-' });
       cols.push({ header: 'SAP Resource Code', accessor: (row: any) => row.sapResourceCode || <span className="text-slate-500 italic">Not set</span> });
       cols.push({ header: 'SAP Aliases', accessor: (row: any) => Array.isArray(row.sapResourceAliases) && row.sapResourceAliases.length > 0 ? row.sapResourceAliases.join(', ') : <span className="text-slate-500 italic">None</span> });
       cols.push({ 
@@ -233,13 +273,13 @@ export const ConfigurationPage: React.FC = () => {
         ) 
       });
     } else if (activeTab.id === 'actions') {
-      cols.push({ header: 'Code', accessor: 'code' as const });
-      cols.push({ header: 'Label', accessor: 'label' as const });
-      cols.push({ header: 'Meaning', accessor: 'meaning' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.code || '-' });
+      cols.push({ header: 'Label', accessor: (row: any) => row.label || row.name || '-' });
+      cols.push({ header: 'Meaning', accessor: (row: any) => row.meaning || '-' });
     } else if (activeTab.id === 'priorities') {
-      cols.push({ header: 'Code', accessor: 'code' as const });
-      cols.push({ header: 'Label', accessor: 'label' as const });
-      cols.push({ header: 'Weight', accessor: 'numericWeight' as const });
+      cols.push({ header: 'Code', accessor: (row: any) => row.code || '-' });
+      cols.push({ header: 'Label', accessor: (row: any) => row.label || row.name || '-' });
+      cols.push({ header: 'Weight', accessor: (row: any) => row.numericWeight || row.weight || '-' });
     }
 
     cols.push({

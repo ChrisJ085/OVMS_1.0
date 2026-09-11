@@ -1,4 +1,4 @@
-import { createAuditLog } from '../../administration/services/settingsService';
+import { createAuditLog, isValidUuid } from '../../administration/services/settingsService';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
 
@@ -46,8 +46,20 @@ export interface ReadinessCheckResult {
   };
 }
 
+const isInvalidTarget = (tenantId: string, siteId: string): boolean => {
+  return (
+    !tenantId ||
+    !siteId ||
+    tenantId === 'GLOBAL' ||
+    siteId === 'GLOBAL' ||
+    siteId === 'SETUP_REQUIRED' ||
+    !isValidUuid(tenantId) ||
+    !isValidUuid(siteId)
+  );
+};
+
 export const getSiteOnboarding = async (tenantId: string, siteId: string): Promise<SiteOnboarding | null> => {
-  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return null;
+  if (isInvalidTarget(tenantId, siteId)) return null;
   try {
     const { data, error } = await supabase
       .from('site_onboarding')
@@ -86,6 +98,10 @@ export const initializeSiteOnboarding = async (
     lastUpdatedAt: new Date().toISOString() as any
   };
 
+  if (isInvalidTarget(tenantId, siteId)) {
+    return data;
+  }
+
   const { error } = await supabase
     .from('site_onboarding')
     .insert(toSnakeCase(data));
@@ -106,6 +122,8 @@ export const updateSiteOnboardingStep = async (
   userId: string,
   status: SiteOnboarding['status'] = 'IN_PROGRESS'
 ): Promise<void> => {
+  if (isInvalidTarget(tenantId, siteId)) return;
+
   const payload = {
     current_step: currentStep,
     completed_steps: completedSteps,
@@ -129,6 +147,8 @@ export const dismissOnboardingModal = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
+  if (isInvalidTarget(tenantId, siteId)) return;
+
   const { error } = await supabase
     .from('site_onboarding')
     .update({
@@ -147,6 +167,8 @@ export const completeSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
+  if (isInvalidTarget(tenantId, siteId)) return;
+
   // 1. Update siteOnboarding record to COMPLETED
   const { error: onboardingErr } = await supabase
     .from('site_onboarding')
@@ -195,6 +217,8 @@ export const reopenSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
+  if (isInvalidTarget(tenantId, siteId)) return;
+
   // 1. Update onboarding status
   const { error: onboardingErr } = await supabase
     .from('site_onboarding')
@@ -242,6 +266,8 @@ export const resetSiteOnboarding = async (
   siteId: string,
   userId: string
 ): Promise<void> => {
+  if (isInvalidTarget(tenantId, siteId)) return;
+
   // 1. Reset siteOnboarding progress
   const data: SiteOnboarding = {
     tenantId,
@@ -294,7 +320,7 @@ export const runSiteReadinessChecks = async (
   tenantId: string,
   siteId: string
 ): Promise<ReadinessCheckResult> => {
-  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+  if (isInvalidTarget(tenantId, siteId)) {
     return {
       blockers: {
         noActiveDestination: false,

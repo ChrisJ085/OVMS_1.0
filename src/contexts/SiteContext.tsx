@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Site } from '../types/site';
 import { fetchUserPermittedSites } from '../features/administration/services/siteService';
 import { useAuth } from '../features/auth/context/AuthContext';
+import { supabase } from '../config/supabase';
 
 export interface SiteContextType {
   tenantId: string;
@@ -11,6 +12,7 @@ export interface SiteContextType {
   timezone: string;
   site: Site | null;
   setSite: (site: Site) => void;
+  refreshSites: () => Promise<void>;
   availableSites: Site[];
   siteLoading: boolean;
   siteReady: boolean;
@@ -85,130 +87,160 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [siteError, setSiteError] = useState<string | null>(null);
 
   // Sync available sites and validate active site whenever userProfile or authLoading changes
-  useEffect(() => {
-    let isMounted = true;
-
-    async function syncSites() {
-      if (authLoading) {
-        if (isMounted) {
-          setSiteLoading(true);
-          setSiteReady(false);
-        }
-        return;
-      }
-
-      if (!userProfile) {
-        if (isMounted) {
-          setSiteState(null);
-          setAvailableSites([]);
-          setSiteLoading(false);
-          setSiteReady(false);
-          setSiteError(null);
-        }
-        return;
-      }
-
-      try {
-        if (isMounted) {
-          setSiteLoading(true);
-          setSiteReady(false);
-          setSiteError(null);
-        }
-
-        const isSuperuser = userProfile.role === 'PLATFORM_SUPERUSER';
-        const sites = await fetchUserPermittedSites(userProfile);
-        if (!isMounted) return;
-
-        setAvailableSites(sites);
-
-        if (!sites || sites.length === 0) {
-          if (isMounted) {
-            if (isSuperuser) {
-              const globalSite: Site = {
-                tenantId: userProfile.tenantId || 'GLOBAL',
-                tenantName: 'Platform Global',
-                siteId: 'GLOBAL',
-                siteName: 'Global System',
-                timezone: 'Europe/London',
-              };
-              setSiteState(globalSite);
-              setAvailableSites([globalSite]);
-              setSiteError(null);
-              setSiteReady(true);
-            } else {
-              setSiteState(null);
-              setSiteLoading(false);
-              setSiteReady(false);
-              setSiteError('You have no assigned operational sites.');
-            }
-          }
-          return;
-        }
-
-        // Validate current active site or local storage site
-        let selectedSite: Site | null = null;
-        const savedSite = getStoredSite();
-        if (savedSite) {
-          // Check if saved site is in permitted list or if user is superuser
-          const isPermitted = isSuperuser || sites.some(s => s.tenantId === savedSite.tenantId && s.siteId === savedSite.siteId);
-          if (isPermitted) {
-            selectedSite = savedSite;
-          }
-        }
-
-        if (!selectedSite) {
-          selectedSite = sites[0];
-          localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(selectedSite));
-        }
-
-        if (isMounted) {
-          setSiteState(selectedSite);
-          setSiteError(null);
-          setSiteReady(true);
-        }
-      } catch (err: any) {
-        console.error('Error loading permitted sites:', err);
-        if (isMounted) {
-          const isSuperuser = userProfile.role === 'PLATFORM_SUPERUSER';
-          if (isSuperuser) {
-            const globalSite: Site = {
-              tenantId: userProfile.tenantId || 'GLOBAL',
-              tenantName: 'Platform Global',
-              siteId: 'GLOBAL',
-              siteName: 'Global System',
-              timezone: 'Europe/London',
-            };
-            setSiteState(globalSite);
-            setAvailableSites([globalSite]);
-            setSiteError(null);
-            setSiteReady(true);
-          } else {
-            const errMsg = err?.message || '';
-            const userSiteIds = Array.isArray(userProfile.siteIds) ? userProfile.siteIds : [];
-            if (err?.code === 'permission-denied' || errMsg.includes('permission')) {
-              setSiteError('Your site access could not be verified.');
-            } else if (errMsg.includes('UNRESOLVED_ASSIGNMENTS')) {
-              setSiteError('Your assigned sites could not be found. Contact an administrator.');
-            } else if (userSiteIds.length === 0) {
-              setSiteError('You have no assigned operational sites.');
-            } else {
-              setSiteError('Operational sites could not be loaded.');
-            }
-          }
-        }
-      } finally {
-        if (isMounted) {
-          setSiteLoading(false);
-        }
-      }
+  const syncSites = useCallback(async () => {
+    if (authLoading) {
+      setSiteLoading(true);
+      setSiteReady(false);
+      return;
     }
 
+    if (!userProfile) {
+      setSiteState(null);
+      setAvailableSites([]);
+      setSiteLoading(false);
+      setSiteReady(false);
+      setSiteError(null);
+      return;
+    }
+
+    try {
+      setSiteLoading(true);
+      setSiteReady(false);
+      setSiteError(null);
+
+      const isSuperuser = userProfile.role === 'PLATFORM_SUPERUSER';
+      const isTenantAdmin = userProfile.role === 'TENANT_ADMIN';
+      const sites = await fetchUserPermittedSites(userProfile);
+
+      setAvailableSites(sites);
+
+      if (!sites || sites.length === 0) {
+        if (isSuperuser) {
+          const globalSite: Site = {
+            tenantId: userProfile.tenantId || 'GLOBAL',
+            tenantName: 'Platform Global',
+            siteId: 'GLOBAL',
+            siteName: 'Global System',
+            timezone: 'Europe/London',
+          };
+          setSiteState(globalSite);
+          setAvailableSites([globalSite]);
+          setSiteError(null);
+          setSiteReady(true);
+        } else if (isTenantAdmin) {
+          const tenantAdminSite: Site = {
+            tenantId: userProfile.tenantId || 'TENANT_DEFAULT',
+            tenantName: 'Organization Workspace',
+            siteId: 'SETUP_REQUIRED',
+            siteName: 'Primary Site (Setup Required)',
+            timezone: 'Europe/London',
+          };
+          setSiteState(tenantAdminSite);
+          setAvailableSites([tenantAdminSite]);
+          setSiteError(null);
+          setSiteReady(true);
+        } else {
+          setSiteState(null);
+          setSiteLoading(false);
+          setSiteReady(false);
+          setSiteError('You have no assigned operational sites.');
+        }
+        return;
+      }
+
+      // Filter out placeholder sites if real sites exist
+      const realSites = sites.filter(s => s.siteId !== 'GLOBAL' && s.siteId !== 'SETUP_REQUIRED');
+      const candidates = realSites.length > 0 ? realSites : sites;
+
+      // Validate current active site or local storage site
+      let selectedSite: Site | null = null;
+      const savedSite = getStoredSite();
+      if (savedSite && savedSite.siteId !== 'GLOBAL' && savedSite.siteId !== 'SETUP_REQUIRED') {
+        const isPermitted = isSuperuser || candidates.some(s => s.tenantId === savedSite.tenantId && s.siteId === savedSite.siteId);
+        if (isPermitted) {
+          selectedSite = candidates.find(s => s.siteId === savedSite.siteId) || savedSite;
+        }
+      }
+
+      if (!selectedSite && candidates.length > 0) {
+        selectedSite = candidates[0];
+        localStorage.setItem(NEW_LOCAL_STORAGE_KEY, JSON.stringify(selectedSite));
+      }
+
+      if (selectedSite) {
+        setSiteState(selectedSite);
+        setSiteError(null);
+        setSiteReady(true);
+      }
+    } catch (err: any) {
+      console.error('Error loading permitted sites:', err);
+      const isSuperuser = userProfile.role === 'PLATFORM_SUPERUSER';
+      const isTenantAdmin = userProfile.role === 'TENANT_ADMIN';
+      if (isSuperuser) {
+        const globalSite: Site = {
+          tenantId: userProfile.tenantId || 'GLOBAL',
+          tenantName: 'Platform Global',
+          siteId: 'GLOBAL',
+          siteName: 'Global System',
+          timezone: 'Europe/London',
+        };
+        setSiteState(globalSite);
+        setAvailableSites([globalSite]);
+        setSiteError(null);
+        setSiteReady(true);
+      } else if (isTenantAdmin) {
+        const tenantAdminSite: Site = {
+          tenantId: userProfile.tenantId || 'TENANT_DEFAULT',
+          tenantName: 'Organization Workspace',
+          siteId: 'SETUP_REQUIRED',
+          siteName: 'Primary Site (Setup Required)',
+          timezone: 'Europe/London',
+        };
+        setSiteState(tenantAdminSite);
+        setAvailableSites([tenantAdminSite]);
+        setSiteError(null);
+        setSiteReady(true);
+      } else {
+        const errMsg = err?.message || '';
+        const userSiteIds = Array.isArray(userProfile.siteIds) ? userProfile.siteIds : [];
+        if (err?.code === 'permission-denied' || errMsg.includes('permission')) {
+          setSiteError('Your site access could not be verified.');
+        } else if (errMsg.includes('UNRESOLVED_ASSIGNMENTS')) {
+          setSiteError('Your assigned sites could not be found. Contact an administrator.');
+        } else if (userSiteIds.length === 0) {
+          setSiteError('You have no assigned operational sites.');
+        } else {
+          setSiteError('Operational sites could not be loaded.');
+        }
+      }
+    } finally {
+      setSiteLoading(false);
+    }
+  }, [userProfile, authLoading]);
+
+  useEffect(() => {
     syncSites();
 
+    // Subscribe to realtime changes on 'sites' table to keep availableSites up to date
+    const channel = supabase
+      .channel(`sub_sites_ctx_${Math.random().toString(36).slice(2, 8)}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sites' },
+        () => {
+          syncSites();
+        }
+      )
+      .subscribe();
+
     return () => {
-      isMounted = false;
+      supabase.removeChannel(channel);
     };
-  }, [userProfile, authLoading]);
+  }, [syncSites]);
+
+  const refreshSites = useCallback(async () => {
+    await syncSites();
+  }, [syncSites]);
 
   const setSite = (newSite: Site) => {
     if (!isValidSite(newSite)) {
@@ -218,11 +250,14 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     const isSuperuser = userProfile?.role === 'PLATFORM_SUPERUSER';
+    const isTenantAdmin = userProfile?.role === 'TENANT_ADMIN';
     const matchedSite = availableSites.find(
       (s) => s.tenantId === newSite.tenantId && s.siteId === newSite.siteId
     );
 
-    if (!matchedSite && !isSuperuser) {
+    const isPermitted = matchedSite || isSuperuser || (isTenantAdmin && (newSite.tenantId === userProfile?.tenantId || !userProfile?.tenantId));
+
+    if (!isPermitted) {
       console.error('setSite rejected: Site not permitted in availableSites', newSite);
       setSiteError('Selected site is not permitted or does not belong to your account.');
       return;
@@ -246,6 +281,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     timezone: site?.timezone || 'Europe/London',
     site,
     setSite,
+    refreshSites,
     availableSites,
     siteLoading,
     siteReady,

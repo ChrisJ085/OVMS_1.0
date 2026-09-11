@@ -36,7 +36,6 @@ export const ensureDefaultDecisionConfiguration = async (
       if (!found) {
         const newId = await createDocument<any>('actionTypes', {
           tenantId,
-          siteId: '',
           code,
           label,
           meaning: `${label} action`,
@@ -63,7 +62,6 @@ export const ensureDefaultDecisionConfiguration = async (
       if (!found) {
         const newId = await createDocument<any>('priorityLevels', {
           tenantId,
-          siteId: '',
           code,
           label,
           level,
@@ -285,7 +283,6 @@ export const autoConfigureDecisionSettings = async (
       if (!found) {
         const newId = await createDocument<any>('actionTypes', {
           tenantId,
-          siteId: '',
           code,
           label,
           meaning: `${label} action`,
@@ -315,7 +312,6 @@ export const autoConfigureDecisionSettings = async (
       if (!found) {
         const newId = await createDocument<any>('priorityLevels', {
           tenantId,
-          siteId: '',
           code,
           label,
           level,
@@ -340,7 +336,7 @@ export const autoConfigureDecisionSettings = async (
     let defaultDestinationId: string | null = null;
 
     if (destDocs.length > 0) {
-      const activeDest = destDocs.find(d => d.status === 'active' && (!d.siteId || d.siteId === siteId));
+      const activeDest = destDocs.find(d => d.status === 'active');
       if (activeDest) {
         defaultDestinationId = activeDest.id;
         recordsReused.push(`Destination: ${activeDest.destinationName || activeDest.destinationCode}`);
@@ -350,7 +346,6 @@ export const autoConfigureDecisionSettings = async (
     if (!defaultDestinationId) {
       const destId = await createDocument<any>('destinations', {
         tenantId,
-        siteId,
         destinationCode: 'CH',
         destinationName: 'Chester Hub',
         status: 'active',

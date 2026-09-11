@@ -228,12 +228,11 @@ export const commitPlanningRulesImport = async (
       return destMap.get(key)!.id!;
     }
 
-    // Auto-create destination if not found
+      // Auto-create destination if not found
     try {
       const code = destName.toUpperCase().replace(/\s+/g, '_').slice(0, 10);
       const newDestId = await createDocument<any>('destinations', {
         tenantId,
-        siteId,
         destinationCode: code,
         destinationName: destName,
         destinationType: 'EXTERNAL_SITE',
@@ -243,7 +242,6 @@ export const commitPlanningRulesImport = async (
       const newDest: Destination = {
         id: newDestId,
         tenantId,
-        siteId,
         destinationCode: code,
         destinationName: destName,
         destinationType: 'EXTERNAL_SITE',
@@ -274,7 +272,6 @@ export const commitPlanningRulesImport = async (
     // Create product
     const newProdId = await createDocument<any>('products', {
       tenantId,
-      siteId,
       productCode,
       description: description || `Product ${productCode}`,
       categoryId: '',
@@ -297,7 +294,6 @@ export const commitPlanningRulesImport = async (
     const newProd: Product = {
       id: newProdId,
       tenantId,
-      siteId,
       productCode,
       description: description || `Product ${productCode}`,
       categoryId: '',

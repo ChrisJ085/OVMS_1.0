@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../features/auth/context/AuthContext';
 import { useSiteContext } from '../contexts/SiteContext';
 import { SiteOnboarding, getSiteOnboarding, initializeSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
+import { isValidUuid } from '../features/administration/services/settingsService';
 import { supabase } from '../config/supabase';
 import { toCamelCase } from '../utils/caseTransformers';
 
@@ -24,7 +25,15 @@ export function useSiteOnboarding() {
   const canModifyConfig = isSuperUser || isTenantAdmin;
 
   useEffect(() => {
-    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+    if (
+      !tenantId ||
+      !siteId ||
+      tenantId === 'GLOBAL' ||
+      siteId === 'GLOBAL' ||
+      siteId === 'SETUP_REQUIRED' ||
+      !isValidUuid(tenantId) ||
+      !isValidUuid(siteId)
+    ) {
       setOnboarding(null);
       setLoading(false);
       return;

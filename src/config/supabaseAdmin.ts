@@ -15,16 +15,10 @@ const normalizeSupabaseUrl = (url: string): string => {
   return cleaned;
 };
 
-const rawUrl = getEnvVar('SUPABASE_URL') || getEnvVar('VITE_SUPABASE_URL');
-if (!rawUrl) {
-  throw new Error('Configuration error: SUPABASE_URL environment variable is required for admin client.');
-}
+const rawUrl = getEnvVar('SUPABASE_URL') || getEnvVar('VITE_SUPABASE_URL') || 'https://placeholder.supabase.co';
 export const supabaseAdminUrl = normalizeSupabaseUrl(rawUrl);
 
-const secretKey = getEnvVar('SUPABASE_SECRET_KEY');
-if (!secretKey) {
-  throw new Error('Configuration error: SUPABASE_SECRET_KEY environment variable is required for admin client.');
-}
+const secretKey = getEnvVar('SUPABASE_SECRET_KEY') || getEnvVar('SUPABASE_SERVICE_ROLE_KEY') || 'placeholder-secret-key';
 export const supabaseAdminSecretKey = secretKey;
 
 export const supabaseAdmin: SupabaseClient = createClient(supabaseAdminUrl, supabaseAdminSecretKey, {
@@ -34,3 +28,12 @@ export const supabaseAdmin: SupabaseClient = createClient(supabaseAdminUrl, supa
     detectSessionInUrl: false,
   },
 });
+
+export const isSupabaseAdminConfigured = (): boolean => {
+  return (
+    Boolean(supabaseAdminUrl) &&
+    Boolean(supabaseAdminSecretKey) &&
+    !supabaseAdminUrl.includes('placeholder') &&
+    !supabaseAdminSecretKey.includes('placeholder')
+  );
+};

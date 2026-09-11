@@ -27,24 +27,67 @@ import {
   Settings,
   RotateCcw,
   ShieldCheck,
-  Settings2
+  Settings2,
+  Compass,
+  ArrowRight,
+  Sparkles,
+  Play,
+  CheckCircle,
+  Activity,
+  MapPin,
+  Tag,
+  Sliders,
+  LineChart,
+  ListChecks
 } from 'lucide-react';
 import { UserProfile, UserRole, AccountStatus, Tenant } from '../../../types/auth';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useEnvironmentMode } from '../../../contexts/EnvironmentModeContext';
+import { useSiteOnboarding } from '../../../hooks/useSiteOnboarding';
+import { SiteOnboardingWizard } from '../../../components/onboarding/SiteOnboardingWizard';
+import { 
+  completeSiteOnboarding, 
+  reopenSiteOnboarding, 
+  resetSiteOnboarding, 
+  initializeSiteOnboarding,
+  runSiteReadinessChecks,
+  ReadinessCheckResult
+} from '../../configuration/services/siteOnboardingService';
+import { isValidUuid } from '../services/settingsService';
 import { seedDevelopmentConfiguration } from '../../configuration/services/configurationService';
 import { seedTestDataForTesting } from '../../planning/services/testDataSeeder';
 import { getDocument, getDocuments, where } from '../../../services/dbService';
 import { toSnakeCase } from '../../../utils/caseTransformers';
 
+const ONBOARDING_STEPS = [
+  { id: 0, title: 'Site Details', icon: Compass, description: 'Verify name, code, and timezone' },
+  { id: 1, title: 'Production Lines', icon: Activity, description: 'Active line resources' },
+  { id: 2, title: 'Destinations', icon: MapPin, description: 'Operational destinations' },
+  { id: 3, title: 'Action Types', icon: Tag, description: 'Hold, Review, Release actions' },
+  { id: 4, title: 'Priority Levels', icon: Sliders, description: 'Priority weights & severity' },
+  { id: 5, title: 'Operational Settings', icon: Settings, description: 'Inventory & TV parameters' },
+  { id: 6, title: 'Decision Settings', icon: Sparkles, description: 'Decision matrix mappings' },
+  { id: 7, title: 'Products', icon: Tag, description: 'Product catalog & units' },
+  { id: 8, title: 'Planning Rules', icon: LineChart, description: 'Production planning constraints' },
+  { id: 9, title: 'Readiness Review', icon: CheckCircle, description: 'Readiness checks & completion' }
+];
+
 export const AdminOverviewPage: React.FC = () => {
   const { userProfile, currentUser, user } = useAuth();
-  const { tenantId, siteId } = useSiteContext();
+  const { tenantId, siteId, site, siteName } = useSiteContext();
   const { mode, isDevelopmentMode, setMode, toggleMode } = useEnvironmentMode();
+  const { onboarding, isComplete: isOnboardingComplete, canComplete, canModifyConfig } = useSiteOnboarding();
+
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'tenants'>('overview');
   const [deletingTenant, setDeletingTenant] = useState<any>(null);
+
+  // Onboarding modal & actions
+  const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
+  const [onboardingActionLoading, setOnboardingActionLoading] = useState(false);
+  const [onboardingFeedback, setOnboardingFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [readinessResult, setReadinessResult] = useState<ReadinessCheckResult | null>(null);
 
   // Seeding states & feedback
   const [seedingConfig, setSeedingConfig] = useState(false);
@@ -63,7 +106,7 @@ export const AdminOverviewPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const fetchOverviewStats = async () => {
-    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL' || siteId === 'SETUP_REQUIRED' || !isValidUuid(tenantId) || !isValidUuid(siteId)) {
       setLoading(false);
       return;
     }
@@ -84,10 +127,80 @@ export const AdminOverviewPage: React.FC = () => {
         invalidRulesCount: 0
       });
 
+      try {
+        const checkRes = await runSiteReadinessChecks(tenantId, siteId);
+        setReadinessResult(checkRes);
+      } catch (checkErr) {
+        console.warn('Readiness check failed:', checkErr);
+      }
+
     } catch (err: any) {
       console.error("Error fetching overview", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStartOrContinueOnboarding = () => {
+    if (!tenantId || !siteId || siteId === 'SETUP_REQUIRED') {
+      setOnboardingFeedback({ type: 'error', message: 'Please select a valid site to start onboarding.' });
+      return;
+    }
+    setOnboardingFeedback(null);
+    setShowOnboardingWizard(true);
+  };
+
+  const handleCompleteOnboardingDirectly = async () => {
+    if (!tenantId || !siteId || siteId === 'SETUP_REQUIRED') return;
+    if (!window.confirm('Are you sure you want to complete onboarding for this site? This will transition the site to active operational mode.')) {
+      return;
+    }
+    setOnboardingActionLoading(true);
+    setOnboardingFeedback(null);
+    try {
+      await completeSiteOnboarding(tenantId, siteId, userProfile?.uid || 'ADMIN');
+      setOnboardingFeedback({ type: 'success', message: 'Site onboarding completed successfully! The site is now marked fully operational.' });
+      await fetchOverviewStats();
+    } catch (err: any) {
+      setOnboardingFeedback({ type: 'error', message: err?.message || 'Error completing onboarding.' });
+    } finally {
+      setOnboardingActionLoading(false);
+    }
+  };
+
+  const handleReopenOnboardingDirectly = async () => {
+    if (!tenantId || !siteId || siteId === 'SETUP_REQUIRED') return;
+    if (!window.confirm('Are you sure you want to reopen onboarding for this site? This will set the site status back to ONBOARDING mode to permit guided adjustments.')) {
+      return;
+    }
+    setOnboardingActionLoading(true);
+    setOnboardingFeedback(null);
+    try {
+      await reopenSiteOnboarding(tenantId, siteId, userProfile?.uid || 'ADMIN');
+      setOnboardingFeedback({ type: 'success', message: 'Site onboarding reopened. You can now step through and adjust onboarding settings.' });
+      await fetchOverviewStats();
+    } catch (err: any) {
+      setOnboardingFeedback({ type: 'error', message: err?.message || 'Error reopening onboarding.' });
+    } finally {
+      setOnboardingActionLoading(false);
+    }
+  };
+
+  const handleResetOnboardingDirectly = async () => {
+    if (!tenantId || !siteId || siteId === 'SETUP_REQUIRED') return;
+    if (!window.confirm('Are you sure you want to reset site onboarding progress? This will reset all steps back to Step 1 (Site Details).')) {
+      return;
+    }
+    setOnboardingActionLoading(true);
+    setOnboardingFeedback(null);
+    try {
+      await resetSiteOnboarding(tenantId, siteId, userProfile?.uid || 'ADMIN');
+      setOnboardingFeedback({ type: 'success', message: 'Site onboarding progress reset to Step 1.' });
+      await fetchOverviewStats();
+    } catch (err: any) {
+      setOnboardingFeedback({ type: 'error', message: err?.message || 'Error resetting onboarding.' });
+    } finally {
+      setOnboardingActionLoading(false);
     }
   };
 
@@ -570,6 +683,310 @@ export const AdminOverviewPage: React.FC = () => {
 
       {activeTab === 'overview' && (
         <div className="space-y-6 animate-fade-in">
+          {/* Site Onboarding & Operational Readiness Console */}
+          <SectionCard 
+            title="Site Onboarding & Operational Readiness"
+            actions={
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full border ${
+                  isOnboardingComplete
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : onboarding?.status === 'IN_PROGRESS'
+                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                    : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                }`}>
+                  {isOnboardingComplete ? (
+                    <><CheckCircle2 className="w-3.5 h-3.5" /> Operational (Complete)</>
+                  ) : onboarding?.status === 'IN_PROGRESS' ? (
+                    <><Activity className="w-3.5 h-3.5 animate-pulse" /> Step {(onboarding?.currentStep ?? 0) + 1} of 10: {ONBOARDING_STEPS[onboarding?.currentStep ?? 0]?.title}</>
+                  ) : (
+                    <><Compass className="w-3.5 h-3.5" /> Setup Required</>
+                  )}
+                </span>
+              </div>
+            }
+          >
+            <div className="space-y-5">
+              {/* Onboarding Feedback Banner */}
+              {onboardingFeedback && (
+                <div
+                  className={`p-3.5 rounded-xl text-xs flex items-center justify-between border ${
+                    onboardingFeedback.type === 'success'
+                      ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                      : 'bg-red-950/40 border-red-800/60 text-red-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    {onboardingFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                    )}
+                    <span className="font-medium">{onboardingFeedback.message}</span>
+                  </div>
+                  <button
+                    onClick={() => setOnboardingFeedback(null)}
+                    className="text-slate-400 hover:text-slate-200 ml-2 shrink-0 p-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Status Header & Progress Overview */}
+              <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-200">
+                      Active Site: <span className="text-amber-400">{siteName || siteId || 'No Site Selected'}</span>
+                    </span>
+                    {site?.siteCode && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono">
+                        {site.siteCode}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    {isOnboardingComplete
+                      ? 'All mandatory configuration steps, resources, and decision tables are active. Site is ready for production planning.'
+                      : onboarding?.status === 'IN_PROGRESS'
+                      ? 'Onboarding wizard is currently in progress. Complete all mandatory steps to transition this site into live production mode.'
+                      : 'This site has not completed initial onboarding. Follow the guided 10-step wizard to configure master data, production lines, and decision matrices.'}
+                  </p>
+                </div>
+
+                {/* Progress Meter */}
+                <div className="flex flex-col items-start md:items-end gap-1.5 shrink-0 min-w-[200px]">
+                  <div className="flex items-center justify-between w-full text-xs font-semibold">
+                    <span className="text-slate-400">Setup Progress</span>
+                    <span className={isOnboardingComplete ? 'text-emerald-400' : 'text-amber-400'}>
+                      {isOnboardingComplete 
+                        ? '100% (10/10)' 
+                        : `${Math.round(((onboarding?.completedSteps?.length || 0) / 10) * 100)}% (${onboarding?.completedSteps?.length || 0}/10)`}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                    <div
+                      className={`h-full transition-all duration-500 ${
+                        isOnboardingComplete ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}
+                      style={{
+                        width: isOnboardingComplete
+                          ? '100%'
+                          : `${Math.max(5, Math.round(((onboarding?.completedSteps?.length || 0) / 10) * 100))}%`
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 10-Step Journey Map */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <ListChecks className="w-3.5 h-3.5 text-amber-500" />
+                    Onboarding Milestones
+                  </h4>
+                  <span className="text-[11px] text-slate-500">Click any step to launch setup wizard</span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+                  {ONBOARDING_STEPS.map((step) => {
+                    const isStepComplete = isOnboardingComplete || (onboarding?.completedSteps || []).includes(step.id);
+                    const isCurrentStep = !isOnboardingComplete && (onboarding?.currentStep ?? 0) === step.id;
+                    const StepIcon = step.icon;
+
+                    return (
+                      <button
+                        key={step.id}
+                        type="button"
+                        onClick={handleStartOrContinueOnboarding}
+                        className={`p-2.5 rounded-lg border text-left transition-all group flex flex-col justify-between relative ${
+                          isStepComplete
+                            ? 'bg-emerald-950/20 border-emerald-800/40 hover:border-emerald-700/60'
+                            : isCurrentStep
+                            ? 'bg-amber-950/20 border-amber-500/50 shadow-sm shadow-amber-500/10 hover:border-amber-400'
+                            : 'bg-slate-900/40 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            isStepComplete 
+                              ? 'bg-emerald-500/20 text-emerald-400' 
+                              : isCurrentStep 
+                              ? 'bg-amber-500/20 text-amber-400' 
+                              : 'bg-slate-800 text-slate-400'
+                          }`}>
+                            Step {step.id + 1}
+                          </span>
+                          {isStepComplete ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : isCurrentStep ? (
+                            <Activity className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                          ) : (
+                            <StepIcon className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                          )}
+                        </div>
+                        <div>
+                          <div className={`text-xs font-semibold truncate ${
+                            isStepComplete ? 'text-slate-200' : isCurrentStep ? 'text-amber-300' : 'text-slate-400'
+                          }`}>
+                            {step.title}
+                          </div>
+                          <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                            {step.description}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Readiness Blockers & Checks Display */}
+              {readinessResult && (
+                <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+                      Operational Readiness Status:
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      {Object.values(readinessResult.blockers).some(b => b === true) ? (
+                        <span className="text-amber-400 font-medium">Pending items require attention</span>
+                      ) : (
+                        <span className="text-emerald-400 font-medium">All core prerequisites met</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-1 text-xs">
+                    <div className="flex items-center gap-2 p-2 rounded bg-slate-950/40 border border-slate-800/60">
+                      {readinessResult.blockers.noActiveDestination ? (
+                        <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      )}
+                      <span className="text-slate-300">
+                        Destinations: <strong className="text-slate-200">{readinessResult.counts.destinations} active</strong>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 p-2 rounded bg-slate-950/40 border border-slate-800/60">
+                      {readinessResult.blockers.noActiveProductionLine ? (
+                        <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      )}
+                      <span className="text-slate-300">
+                        Production Lines: <strong className="text-slate-200">{readinessResult.counts.lines} active</strong>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 p-2 rounded bg-slate-950/40 border border-slate-800/60">
+                      {readinessResult.blockers.decisionSettingsIncomplete ? (
+                        <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      )}
+                      <span className="text-slate-300">
+                        Decision Matrix: <strong className="text-slate-200">{readinessResult.blockers.decisionSettingsIncomplete ? 'Incomplete' : 'Ready'}</strong>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 p-2 rounded bg-slate-950/40 border border-slate-800/60">
+                      {readinessResult.recommendations.noProducts ? (
+                        <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      )}
+                      <span className="text-slate-300">
+                        Products: <strong className="text-slate-200">{readinessResult.counts.products} cataloged</strong>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons Hub */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Primary Start / Continue / Review Button */}
+                  <button
+                    type="button"
+                    onClick={handleStartOrContinueOnboarding}
+                    disabled={onboardingActionLoading || !tenantId || !siteId || siteId === 'SETUP_REQUIRED'}
+                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 border border-transparent rounded-lg transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isOnboardingComplete ? (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Review / Adjust Onboarding Wizard
+                      </>
+                    ) : onboarding?.status === 'IN_PROGRESS' ? (
+                      <>
+                        <Play className="w-3.5 h-3.5 fill-slate-950" />
+                        Continue Site Onboarding (Step {(onboarding?.currentStep ?? 0) + 1})
+                      </>
+                    ) : (
+                      <>
+                        <Compass className="w-3.5 h-3.5" />
+                        Start Site Onboarding Wizard
+                      </>
+                    )}
+                  </button>
+
+                  {/* Complete Onboarding Button (if in-progress or not completed) */}
+                  {!isOnboardingComplete && canComplete && (
+                    <button
+                      type="button"
+                      onClick={handleCompleteOnboardingDirectly}
+                      disabled={onboardingActionLoading || !tenantId || !siteId || siteId === 'SETUP_REQUIRED'}
+                      className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 hover:border-emerald-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      {onboardingActionLoading ? (
+                        <RotateCcw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      )}
+                      Complete Site Onboarding
+                    </button>
+                  )}
+
+                  {/* Reopen Onboarding Button (if already completed) */}
+                  {isOnboardingComplete && canComplete && (
+                    <button
+                      type="button"
+                      onClick={handleReopenOnboardingDirectly}
+                      disabled={onboardingActionLoading || !tenantId || !siteId || siteId === 'SETUP_REQUIRED'}
+                      className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      {onboardingActionLoading ? (
+                        <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                      ) : (
+                        <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                      )}
+                      Reopen Site Onboarding
+                    </button>
+                  )}
+                </div>
+
+                {/* Reset Progress Button (subtle) */}
+                {onboarding && !isOnboardingComplete && canComplete && (
+                  <button
+                    type="button"
+                    onClick={handleResetOnboardingDirectly}
+                    disabled={onboardingActionLoading || !tenantId || !siteId || siteId === 'SETUP_REQUIRED'}
+                    className="text-xs text-slate-400 hover:text-red-400 font-medium transition-colors px-2 py-1 flex items-center gap-1.5"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Reset Progress
+                  </button>
+                )}
+              </div>
+            </div>
+          </SectionCard>
+
           {/* Application Environment Mode & Data Provisioning */}
           <SectionCard title="Application Mode & Environment Configuration">
             <div className="space-y-5">
@@ -1239,6 +1656,15 @@ export const AdminOverviewPage: React.FC = () => {
             />
           </div>
         </div>
+      )}
+
+      {showOnboardingWizard && (
+        <SiteOnboardingWizard 
+          onClose={() => {
+            setShowOnboardingWizard(false);
+            fetchOverviewStats();
+          }} 
+        />
       )}
 
     </div>

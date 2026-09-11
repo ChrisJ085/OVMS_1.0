@@ -10,13 +10,11 @@ const COLLECTION_NAME = 'products';
  */
 async function isUniqueProductCode(
   tenantId: string,
-  siteId: string,
   productCode: string,
   excludeId?: string
 ): Promise<boolean> {
   const filters = [
     { field: 'tenantId', op: '==' as const, value: tenantId },
-    { field: 'siteId', op: '==' as const, value: siteId },
     { field: 'productCode', op: '==' as const, value: productCode }
   ];
 
@@ -44,7 +42,7 @@ export const createProduct = async (
 ): Promise<ServiceResult<string>> => {
   try {
     const codeValue = trimCode(data.productCode);
-    const isUnique = await isUniqueProductCode(data.tenantId, data.siteId, codeValue);
+    const isUnique = await isUniqueProductCode(data.tenantId, codeValue);
     if (!isUnique) {
       return { success: false, error: `A product with code "${codeValue}" already exists.` };
     }
@@ -65,15 +63,15 @@ export const createProduct = async (
 
     // Synchronize legacy fields with first configuration
     const primaryConfig = data.configurations[0];
+    const { siteId: _unusedSiteId, ...productData } = data as any;
 
     const id = await createDocument<any>(COLLECTION_NAME, {
-      ...data,
+      ...productData,
       productCode: codeValue,
       description: trimDescription(data.description),
       unitOfMeasureId: primaryConfig.unitOfMeasureId,
       casesPerPallet: primaryConfig.casesPerPallet,
       unitsPerCase: primaryConfig.unitsPerCase,
-      siteId: data.siteId,
       status: 'active'
     });
     return { success: true, data: id };
@@ -93,7 +91,7 @@ export const updateProduct = async (
 
     if (data.productCode) {
       const codeValue = trimCode(data.productCode);
-      const isUnique = await isUniqueProductCode(tenantId, data.siteId !== undefined ? data.siteId : currentProduct.siteId, codeValue, id);
+      const isUnique = await isUniqueProductCode(tenantId, codeValue, id);
       if (!isUnique) {
         return { success: false, error: `A product with code "${codeValue}" already exists.` };
       }
@@ -136,7 +134,8 @@ export const updateProduct = async (
       }
     }
 
-    await updateDocument(COLLECTION_NAME, id, data);
+    const { siteId: _unusedSiteId, ...updatePayload } = data as any;
+    await updateDocument(COLLECTION_NAME, id, updatePayload);
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -161,13 +160,12 @@ export const setProductStatus = async (
 
 export const subscribeToProducts = (
   tenantId: string,
-  siteId: string,
+  _siteId: string,
   onUpdate: (products: Product[]) => void,
   onError: (error: Error) => void
 ) => {
   const constraints = [
-    { field: 'tenantId', op: '==' as const, value: tenantId },
-    { field: 'siteId', op: '==' as const, value: siteId }
+    { field: 'tenantId', op: '==' as const, value: tenantId }
   ];
   
   return subscribeToCollection<Product>(

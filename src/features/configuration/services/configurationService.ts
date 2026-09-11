@@ -146,7 +146,6 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
     const destinationsData = [
       {
         tenantId,
-        siteId: '',
         destinationCode: 'NF',
         destinationName: 'North Fleet',
         destinationType: 'EXTERNAL_SITE',
@@ -159,7 +158,6 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
       },
       {
         tenantId,
-        siteId: '',
         destinationCode: 'CH',
         destinationName: 'Chester',
         destinationType: 'EXTERNAL_SITE',
@@ -207,7 +205,6 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
     ];
     const categoriesData = initialCategories.map(cat => toSnakeCase({
       tenantId,
-      siteId: '',
       code: cat.code,
       name: cat.name,
       createdBy: userId,
@@ -224,7 +221,6 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
     const actionTypesData = [
       {
         tenantId,
-        siteId: '',
         code: 'HOLD',
         label: 'Hold',
         meaning: 'Do not pick or load',
@@ -239,7 +235,6 @@ export const seedDevelopmentConfiguration = async (tenantId: string, siteId: str
       },
       {
         tenantId,
-        siteId: '',
         code: 'SEND',
         label: 'Send',
         meaning: 'Release for picking',

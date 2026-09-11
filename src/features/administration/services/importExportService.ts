@@ -13,7 +13,7 @@ export async function validateImportData(
   let rowIndex = 2; // Assuming header is row 1
 
   if (type === 'PRODUCTS') {
-    const docs = await getDocuments<any>('products', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+    const docs = await getDocuments<any>('products', [where('tenantId', '==', tenantId)]);
     const existingCodes = new Set(docs.map(d => d.productCode));
 
     for (const row of data) {
@@ -21,7 +21,7 @@ export async function validateImportData(
       const warnings: string[] = [];
       
       if (!row.productCode) errors.push('Column productCode is required.');
-      if (!row.name) errors.push('Column name is required.');
+      if (!row.name && !row.description) errors.push('Column name or description is required.');
       
       let action: 'CREATE' | 'UPDATE' | 'ERROR' = 'ERROR';
       
@@ -55,7 +55,7 @@ export async function validateImportData(
           results.push({ rowNumber: rowIndex++, action, data: row, errors, warnings: [] });
       }
   } else if (type === 'INVENTORY') {
-     const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+     const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId)]);
      const productMap = new Map(prodDocs.map(d => [d.productCode, d]));
 
      const locDocs = await getDocuments<any>('locations', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
@@ -95,9 +95,9 @@ export async function validateImportData(
               errors,
               warnings: []
           });
-      }
+     }
   } else if (type === 'PLANNING_RULES') {
-    const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
+    const prodDocs = await getDocuments<any>('products', [where('tenantId', '==', tenantId)]);
     const productMap = new Map(prodDocs.map(d => [d.productCode, d]));
 
     const ruleDocs = await getDocuments<any>('planningRules', [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]);
@@ -121,14 +121,14 @@ export async function validateImportData(
       let prodDoc = null;
       if (row.productCode) {
         prodDoc = productMap.get(row.productCode);
-        if (!prodDoc) errors.push(`Product with code \${row.productCode} not found.`);
+        if (!prodDoc) errors.push(`Product with code ${row.productCode} not found.`);
       }
 
       let action: 'CREATE' | 'UPDATE' | 'ERROR' = 'ERROR';
       if (errors.length === 0) {
         if (prodDoc) {
            row._productId = prodDoc.id;
-           row._productCode = prodDoc.data().productCode;
+           row._productCode = prodDoc.productCode || prodDoc.code;
         }
         if (existingRules.has(row.productCode)) {
           action = 'UPDATE';
@@ -204,15 +204,28 @@ export async function commitImportData(
 
     for (const row of validRows) {
       if (type === 'PRODUCTS') {
+        const description = row.data.description || row.data.name || `Product ${row.data.productCode}`;
+        const uom = row.data.defaultUnitOfMeasureCode || row.data.unitOfMeasureId || 'CS';
+        const casesPerPallet = Number(row.data.casesPerPallet) || 100;
+        const unitsPerCase = Number(row.data.unitsPerCase) || 1;
+
         await createDocument<any>('products', {
           tenantId,
-          siteId,
           productCode: row.data.productCode,
-          name: row.data.name,
-          description: row.data.description || '',
-          categoryCode: row.data.categoryCode || '',
-          defaultUnitOfMeasureCode: row.data.defaultUnitOfMeasureCode || 'EA',
-          status: 'ACTIVE',
+          description,
+          categoryId: row.data.categoryId || row.data.categoryCode || 'default',
+          unitOfMeasureId: uom,
+          casesPerPallet,
+          unitsPerCase,
+          configurations: [
+            {
+              unitOfMeasureId: uom,
+              casesPerPallet,
+              unitsPerCase
+            }
+          ],
+          operationallyRelevant: true,
+          status: 'active',
           createdDate: new Date().toISOString(),
           modifiedDate: new Date().toISOString()
         });

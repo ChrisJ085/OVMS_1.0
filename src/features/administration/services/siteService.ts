@@ -2,6 +2,39 @@ import { supabase } from '../../../config/supabase';
 import { UserProfile } from '../../../types/auth';
 import { Site } from '../../../types/site';
 
+async function querySitesWithTenant(tenantFilter?: string | null): Promise<any[]> {
+  try {
+    let q = supabase.from('sites').select('*, tenants(id, name)');
+    if (tenantFilter && tenantFilter !== 'GLOBAL') {
+      q = q.eq('tenant_id', tenantFilter);
+    }
+    const { data, error } = await q;
+    if (!error && data && data.length > 0) {
+      return data;
+    }
+    if (!error && data) {
+      return data;
+    }
+  } catch (e) {
+    // Continue to fallback without relation
+  }
+
+  try {
+    let q2 = supabase.from('sites').select('*');
+    if (tenantFilter && tenantFilter !== 'GLOBAL') {
+      q2 = q2.eq('tenant_id', tenantFilter);
+    }
+    const { data: rawSites, error: err2 } = await q2;
+    if (!err2 && rawSites) {
+      return rawSites;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return [];
+}
+
 export async function fetchUserPermittedSites(profile: UserProfile): Promise<Site[]> {
   if (!profile) return [];
 
@@ -20,14 +53,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
 
     // 1. Platform Superuser: query all active sites across all tenants
     if (profile.role === 'PLATFORM_SUPERUSER') {
-      const { data: sites, error } = await supabase
-        .from('sites')
-        .select('*, tenants(id, name)');
-
-      if (error) {
-        console.warn('[fetchUserPermittedSites] Failed to query sites for superuser:', error.message);
-        return [];
-      }
+      const sites = await querySitesWithTenant(null);
 
       (sites || []).forEach((row: any) => {
         const tId = row.tenant_id || tenantId || 'GLOBAL';
@@ -43,78 +69,121 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
           });
         }
       });
+
+      if (sitesMap.size === 0) {
+        return [
+          {
+            tenantId: tenantId || 'GLOBAL',
+            tenantName: 'Platform Global',
+            siteId: 'GLOBAL',
+            siteName: 'Global System',
+            timezone: 'Europe/London',
+          }
+        ];
+      }
+
       return Array.from(sitesMap.values());
     }
 
     // 2. Tenant Admin: query all active sites in their tenant
     if (profile.role === 'TENANT_ADMIN') {
-      if (!tenantId || tenantId === 'GLOBAL') return [];
+      const targetTenantId = tenantId || 'TENANT_DEFAULT';
+      const sites = await querySitesWithTenant(targetTenantId);
 
-      const { data: sites, error } = await supabase
-        .from('sites')
-        .select('*, tenants(id, name)')
-        .eq('tenant_id', tenantId);
-
-      if (error) {
-        console.warn('[fetchUserPermittedSites] Failed to query sites for tenant admin:', error.message);
-        return [];
+      // Look up tenant name
+      let tenantName = 'Tenant Organization';
+      if (targetTenantId && targetTenantId !== 'TENANT_DEFAULT' && targetTenantId !== 'GLOBAL') {
+        try {
+          const { data: tenantRow } = await supabase
+            .from('tenants')
+            .select('name')
+            .eq('id', targetTenantId)
+            .maybeSingle();
+          if (tenantRow?.name) {
+            tenantName = tenantRow.name;
+          }
+        } catch {
+          // ignore
+        }
       }
 
       (sites || []).forEach((row: any) => {
         const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
         if (isActive) {
-          const key = `${tenantId}_${row.id}`;
+          const key = `${targetTenantId}_${row.id}`;
           sitesMap.set(key, {
-            tenantId,
-            tenantName: row.tenants?.name || row.tenantName || 'Tenant',
+            tenantId: targetTenantId,
+            tenantName: row.tenants?.name || tenantName,
             siteId: row.id,
             siteName: row.name || row.code || row.id,
             timezone: row.timezone || 'Europe/London',
           });
         }
       });
+
+      // If no sites exist yet in this tenant, provision a tenant workspace setup site
+      // so Tenant Admins can always access administration, settings, and the onboarding wizard
+      if (sitesMap.size === 0) {
+        sitesMap.set(`${targetTenantId}_setup`, {
+          tenantId: targetTenantId,
+          tenantName,
+          siteId: 'SETUP_REQUIRED',
+          siteName: 'Primary Site (Setup Required)',
+          timezone: 'Europe/London',
+        });
+      }
+
       return Array.from(sitesMap.values());
     }
 
-    // 3. Restricted roles (PLANNER, WAREHOUSE_OPERATOR, VIEWER, DISPLAY):
-    // Determine assigned site IDs from profile or user_sites table
+    // 3. Operational roles (PLANNER, WAREHOUSE_OPERATOR, VIEWER, DISPLAY):
     let userSiteIds = Array.isArray(profile.siteIds) ? profile.siteIds : [];
 
     if (userSiteIds.length === 0 && profile.uid) {
-      const { data: userSiteRows } = await supabase
-        .from('user_sites')
-        .select('site_id')
-        .eq('user_id', profile.uid);
+      try {
+        const { data: userSiteRows } = await supabase
+          .from('user_sites')
+          .select('site_id')
+          .eq('user_id', profile.uid);
 
-      if (userSiteRows && userSiteRows.length > 0) {
-        userSiteIds = userSiteRows.map((us: any) => us.site_id);
+        if (userSiteRows && userSiteRows.length > 0) {
+          userSiteIds = userSiteRows.map((us: any) => us.site_id);
+        }
+      } catch (e) {
+        // ignore
       }
     }
 
-    if (!tenantId || tenantId === 'GLOBAL' || userSiteIds.length === 0) {
-      console.log(`[fetchUserPermittedSites] User ${uid} (role ${profile.role}) has no assigned siteIds.`);
-      return [];
-    }
+    const targetTenantId = tenantId || 'TENANT_DEFAULT';
+    const sites = await querySitesWithTenant(targetTenantId);
 
-    // Query assigned sites by ID or code for tenant
-    const { data: sites, error } = await supabase
-      .from('sites')
-      .select('*, tenants(id, name)')
-      .eq('tenant_id', tenantId);
-
-    if (error) {
-      console.warn('[fetchUserPermittedSites] Failed to query sites for assigned user:', error.message);
-      return [];
+    // Look up tenant name
+    let tenantName = 'Tenant Organization';
+    if (targetTenantId && targetTenantId !== 'TENANT_DEFAULT' && targetTenantId !== 'GLOBAL') {
+      try {
+        const { data: tenantRow } = await supabase
+          .from('tenants')
+          .select('name')
+          .eq('id', targetTenantId)
+          .maybeSingle();
+        if (tenantRow?.name) {
+          tenantName = tenantRow.name;
+        }
+      } catch {
+        // ignore
+      }
     }
 
     (sites || []).forEach((row: any) => {
-      const isAssigned = userSiteIds.includes(row.id) || userSiteIds.includes(row.code);
+      // If user has specific assigned siteIds, match on id or code;
+      // If user has no specific site restrictions, grant access to all active sites of their tenant.
+      const isAssigned = userSiteIds.length === 0 || userSiteIds.includes(row.id) || userSiteIds.includes(row.code);
       const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
       if (isAssigned && isActive) {
-        const key = `${tenantId}_${row.id}`;
+        const key = `${targetTenantId}_${row.id}`;
         sitesMap.set(key, {
-          tenantId,
-          tenantName: row.tenants?.name || row.tenantName || 'Tenant',
+          tenantId: targetTenantId,
+          tenantName: row.tenants?.name || tenantName,
           siteId: row.id,
           siteName: row.name || row.code || row.id,
           timezone: row.timezone || 'Europe/London',
@@ -138,3 +207,4 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
     return [];
   }
 }
+

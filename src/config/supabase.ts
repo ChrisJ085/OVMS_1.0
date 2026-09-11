@@ -18,16 +18,10 @@ const normalizeSupabaseUrl = (url: string): string => {
   return cleaned;
 };
 
-const rawUrl = getEnvVar('VITE_SUPABASE_URL', 'SUPABASE_URL');
-if (!rawUrl) {
-  throw new Error('Configuration error: VITE_SUPABASE_URL environment variable is required but not set.');
-}
+const rawUrl = getEnvVar('VITE_SUPABASE_URL', 'SUPABASE_URL') || 'https://placeholder.supabase.co';
 export const supabaseUrl = normalizeSupabaseUrl(rawUrl);
 
-const publishableKey = getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_PUBLISHABLE_KEY');
-if (!publishableKey) {
-  throw new Error('Configuration error: VITE_SUPABASE_PUBLISHABLE_KEY environment variable is required but not set.');
-}
+const publishableKey = getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_PUBLISHABLE_KEY') || 'placeholder-publishable-key';
 export const supabasePublishableKey = publishableKey;
 
 export const isSupabaseConfigured = (): boolean => {

@@ -344,7 +344,6 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     try {
       const payload = {
         tenantId,
-        siteId,
         destinationCode: newDestForm.destinationCode.toUpperCase(),
         destinationName: newDestForm.destinationName,
         destinationType: newDestForm.destinationType,
@@ -384,7 +383,6 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     try {
       const payload = {
         tenantId,
-        siteId: '', // Action types are tenant-wide by default
         code: newActionForm.code.toUpperCase(),
         label: newActionForm.label,
         meaning: newActionForm.meaning,
@@ -426,7 +424,6 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     try {
       const payload = {
         tenantId,
-        siteId: '', // Tenant-wide priority levels
         code: newPriorityForm.code.toUpperCase(),
         label: newPriorityForm.label,
         level: parseInt(newPriorityForm.level, 10) || 1,
@@ -512,7 +509,6 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     try {
       const payload = {
         tenantId,
-        siteId,
         productCode: newProductForm.productCode.toUpperCase(),
         description: newProductForm.description,
         categoryId: newProductForm.categoryId || 'default',
