@@ -5,6 +5,7 @@ import { PlannerNoteForm } from './PlannerNoteForm';
 import { ProductionLine } from '../../../../types/configuration';
 import { ProductionLinePlanNote } from '../../../../types/production';
 import { NoteFormState } from '../../hooks/useProductionLineNotes';
+import { toSafeDate } from '../../../../utils/timeFormatters';
 
 export const formatUTCFull = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -59,7 +60,7 @@ export const PlannerNotesView: React.FC<PlannerNotesViewProps> = ({
                         <strong className="text-slate-300 font-semibold block">{note.productionLineId}</strong>
                         <span className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
                           <Calendar className="w-3 h-3 text-slate-500" />
-                          {formatUTCFull(note.noteDate.toDate())}
+                          {formatUTCFull(toSafeDate(note.noteDate))}
                         </span>
                       </td>
                       <td className="p-3">

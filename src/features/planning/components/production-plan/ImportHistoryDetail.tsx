@@ -1,6 +1,7 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { ProductionPlanImport, ProductionPlanRow } from '../../../../types/production';
+import { toSafeDate } from '../../../../utils/timeFormatters';
 
 interface ImportHistoryDetailProps {
   selectedImport: ProductionPlanImport | null;
@@ -77,7 +78,10 @@ export const ImportHistoryDetail: React.FC<ImportHistoryDetailProps> = ({
                   <div className="text-right">
                     <strong className="text-brand-400 block">{row.plannedQuantity.toLocaleString()} cs</strong>
                     <span className="text-slate-500 text-[10px]">
-                      On {`${row.productionDate.toDate().getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][row.productionDate.toDate().getUTCMonth()]}`}
+                      On {(() => {
+                        const d = toSafeDate(row.productionDate);
+                        return `${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}`;
+                      })()}
                     </span>
                   </div>
                 </div>

@@ -152,6 +152,8 @@ export const validatePromotionRule = (data: Partial<PromotionProductRule>): stri
   if (err) return err;
   err = checkNonNegative(data.retentionUpliftQuantity, 'Retention uplift quantity');
   if (err) return err;
+  err = checkNonNegative(data.retentionUpliftPercentage, 'Retention uplift percentage');
+  if (err) return err;
   err = checkNonNegative(data.promotionMinimumOverride, 'Minimum override');
   if (err) return err;
   err = checkNonNegative(data.promotionTargetOverride, 'Target override');
@@ -166,6 +168,7 @@ export const validatePromotionRule = (data: Partial<PromotionProductRule>): stri
     !data.expectedVolumeUpliftQuantity &&
     !data.expectedVolumeUpliftPercent &&
     !data.retentionUpliftQuantity &&
+    !data.retentionUpliftPercentage &&
     (data.promotionMinimumOverride === null || data.promotionMinimumOverride === undefined) &&
     (data.promotionTargetOverride === null || data.promotionTargetOverride === undefined) &&
     (data.promotionMaximumOverride === null || data.promotionMaximumOverride === undefined) &&

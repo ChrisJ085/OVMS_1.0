@@ -164,7 +164,7 @@ export const ConfigurationPage: React.FC = () => {
       tenantId: effectiveTenantId,
     };
 
-    if (activeTab.siteScoped && siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
+    if (siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
       payload.siteId = siteId;
     }
 

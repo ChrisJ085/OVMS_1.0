@@ -29,9 +29,23 @@ export const logAuditEvent = async (
       performedByUuid = sanitized.performedBy;
     }
 
+    let tenantId = sanitized.tenantId || sanitized.tenant_id;
+    let siteId = sanitized.siteId || sanitized.site_id;
+
+    if (!tenantId || tenantId === 'GLOBAL' || !siteId || siteId === 'GLOBAL' || siteId === 'SETUP_REQUIRED') {
+      try {
+        const activeSiteStr = localStorage.getItem('ovms_active_site');
+        if (activeSiteStr) {
+          const activeSite = JSON.parse(activeSiteStr);
+          if (!tenantId || tenantId === 'GLOBAL') tenantId = activeSite.tenantId;
+          if (!siteId || siteId === 'GLOBAL' || siteId === 'SETUP_REQUIRED') siteId = activeSite.siteId;
+        }
+      } catch {}
+    }
+
     const dbRow = {
-      tenant_id: (sanitized.tenantId && sanitized.tenantId !== 'GLOBAL') ? sanitized.tenantId : null,
-      site_id: (sanitized.siteId && sanitized.siteId !== 'GLOBAL') ? sanitized.siteId : null,
+      tenant_id: (tenantId && tenantId !== 'GLOBAL') ? tenantId : null,
+      site_id: (siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') ? siteId : null,
       user_id: performedByUuid,
       user_email: sanitized.performedByEmail || null,
       action: sanitized.eventType || 'UNKNOWN',

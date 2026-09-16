@@ -16,6 +16,7 @@ import { Product } from '../../../types/product';
 import { ProductionLine } from '../../../types/configuration';
 import {
   createDocument,
+  createDocuments,
   getDocuments,
   setDocument,
   updateDocument,
@@ -1039,6 +1040,7 @@ export const createImportPreview = async (
         importId: previewImportId,
         sourceSheetName: selectedSheetName,
         sourceRowNumber: idx + headerRowIndex + 2,
+        productionLineId: lineObj ? lineObj.id : null,
         productionLineCode: lineObj ? lineObj.lineCode : (resourceVal ? (resourceVal.split('_')[0] || resourceVal) : ''),
         productionLineName: lineObj ? lineObj.lineName : resourceVal,
         productCode: skuVal,
@@ -1243,7 +1245,7 @@ export const commitProductionPlanImport = async (
     throw new Error(`Cannot commit production plan import with ${preview.summary.errorCount} blocking error(s). Please resolve all errors before committing.`);
   }
 
-  const importId = `imp_${Math.random().toString(36).substring(2, 11)}`;
+  const importId = crypto.randomUUID();
 
   const importDoc: ProductionPlanImport = {
     ...preview.summary,
@@ -1256,13 +1258,6 @@ export const commitProductionPlanImport = async (
 
   await setDocument('productionPlanImports', importId, importDoc);
 
-  for (const row of preview.rows) {
-    await createDocument(`productionPlanImports/${importId}/rows`, {
-      ...row,
-      importId
-    } as any);
-  }
-
   await supersedePreviousProductionPlan(
     preview.summary.tenantId,
     preview.summary.siteId,
@@ -1271,31 +1266,35 @@ export const commitProductionPlanImport = async (
     importId
   );
 
+  const entryDocs: any[] = [];
   for (const row of preview.rows) {
     if (row.rowStatus === 'ERROR' || !row.matchedProductId || !row.productionLineCode) continue;
 
-    const entryDoc: any = {
+    entryDocs.push({
       tenantId: row.tenantId,
       siteId: row.siteId,
+      importId,
       activeImportId: importId,
       productId: row.matchedProductId,
       productCodeSnapshot: row.productCode,
       descriptionSnapshot: row.matchedProductDescription || row.sourceProductDescription,
-      productionLineId: row.productionLineCode,
+      productionLineId: row.productionLineId || null,
       productionLineCodeSnapshot: row.productionLineCode,
       productionDate: row.productionDate,
-      plannedCases: row.plannedQuantity,
-      casesPerPallet: row.casesPerPallet,
-      plannedPallets: row.calculatedPallets,
+      plannedCases: Math.round(row.plannedQuantity) || 0,
+      casesPerPallet: row.casesPerPallet || 0,
+      plannedPallets: row.calculatedPallets || 0,
       sourceType: 'SAP_MPPS7',
       sourceSheetName: row.sourceSheetName,
       sourceRowNumber: row.sourceRowNumber,
       sourceUpdatedAt: new Date().toISOString() as any,
       planVersion: '2.0',
       status: 'PLANNED'
-    };
+    });
+  }
 
-    await createDocument('productionPlanEntries', entryDoc);
+  if (entryDocs.length > 0) {
+    await createDocuments('productionPlanEntries', entryDocs);
   }
 
   // Log Audit Event for MPPS/SAP Ingestion

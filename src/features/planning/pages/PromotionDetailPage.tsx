@@ -128,7 +128,18 @@ export const PromotionDetailPage: React.FC = () => {
         {row.expectedVolumeUpliftQuantity === null && row.expectedVolumeUpliftPercent === null ? '-' : ''}
       </div>
     )},
-    { header: 'Uplift (Ret)', accessor: (row: any) => row.retentionUpliftQuantity !== null ? <span className="text-brand-400">+{row.retentionUpliftQuantity}</span> : '-' },
+    { header: 'Uplift (Ret)', accessor: (row: any) => (
+      <div className="text-sm">
+        {row.retentionUpliftPercentage !== null && row.retentionUpliftPercentage !== undefined ? (
+          <span className="text-brand-400">+{row.retentionUpliftPercentage}%</span>
+        ) : null}
+        {row.retentionUpliftPercentage !== null && row.retentionUpliftPercentage !== undefined && row.retentionUpliftQuantity !== null ? ' / ' : ''}
+        {row.retentionUpliftQuantity !== null ? (
+          <span className="text-slate-300">+{row.retentionUpliftQuantity}</span>
+        ) : null}
+        {(row.retentionUpliftPercentage === null || row.retentionUpliftPercentage === undefined) && row.retentionUpliftQuantity === null ? '-' : ''}
+      </div>
+    )},
     { header: 'Overrides (Min/Tgt/Max)', accessor: (row: any) => (
       <div className="text-sm text-slate-300">
         {row.promotionMinimumOverride ?? '-'}/{row.promotionTargetOverride ?? '-'}/{row.promotionMaximumOverride ?? '-'}

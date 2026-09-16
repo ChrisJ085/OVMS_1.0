@@ -66,7 +66,7 @@ export const MissingProductResolution: React.FC<MissingProductResolutionProps> =
 
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [where('tenantId', '==', tenantId)],
       (items) => {
         setUnits(items);
         const active = items.filter(u => u.status === 'active');

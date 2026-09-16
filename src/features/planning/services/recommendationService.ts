@@ -17,6 +17,7 @@ import { ProductionPlanEntry, ProductionLinePlanNote, ProductProductionContext }
 import { NorthfleetStoRequirement } from '../../../types/production';
 import { logAuditEvent } from '../../../services/auditService';
 import { RecommendationAuditSnapshot } from '../../../types/audit';
+import { toSafeDate } from '../../../utils/timeFormatters';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { getOutstandingStoCasesForProduct } from './northfleetStoService';
@@ -111,7 +112,7 @@ const generateFingerprint = (input: DecisionInputSnapshot): string => {
   const prod = input.productionContext;
   const str = JSON.stringify({
     inv: input.inventoryTotal,
-    invTime: input.inventoryUpdatedAt ? new Date(input.inventoryUpdatedAt).getTime() : 0,
+    invTime: input.inventoryUpdatedAt ? toSafeDate(input.inventoryUpdatedAt).getTime() : 0,
     rule: rule ? {
       id: rule.id,
       min: rule.minimumQuantity,

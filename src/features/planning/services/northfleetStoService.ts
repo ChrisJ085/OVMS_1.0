@@ -5,6 +5,7 @@ import { generateRecommendationForProduct } from './recommendationService';
 import { getDocument, getDocuments, where } from '../../../services/dbService';
 import { supabase } from '../../../config/supabase';
 import { toSnakeCase, toCamelCase } from '../../../utils/caseTransformers';
+import { normalizeProductCode, padProductCode } from '../../../utils/productCodeNormalizer';
 
 const STO_REQUIREMENTS_COLLECTION = 'northfleetStoRequirements';
 const STO_IMPORTS_COLLECTION = 'northfleetStoImports';
@@ -244,12 +245,22 @@ export const validateNorthfleetStoRows = async (
 
   prodDocs.forEach(d => {
     const code = d.code || d.productCode || d.id;
+    if (!code) return;
     const desc = d.description || d.productName || d.name || code;
-    productsByCode.set(code, {
+    const info = {
       id: d.id,
       description: desc,
       preferredDestinationId: d.preferredDestinationId
-    });
+    };
+
+    // Add multiple forms of keys to Map for maximum lookup flexibility
+    const rawCode = code.toString().trim().toUpperCase();
+    const normalizedCode = normalizeProductCode(rawCode);
+    const paddedCode8 = padProductCode(rawCode, 8);
+
+    productsByCode.set(rawCode, info);
+    productsByCode.set(normalizedCode, info);
+    productsByCode.set(paddedCode8, info);
   });
 
   // 2. Fetch Northfleet destination if configured
@@ -304,7 +315,14 @@ export const validateNorthfleetStoRows = async (
     }
 
     // Product lookup
-    const prodInfo = productsByCode.get(row.productCode);
+    const lookupCode = row.productCode ? row.productCode.toString().trim().toUpperCase() : '';
+    const normalizedLookup = normalizeProductCode(lookupCode);
+    const paddedLookup8 = padProductCode(lookupCode, 8);
+
+    const prodInfo = productsByCode.get(lookupCode) || 
+                     productsByCode.get(normalizedLookup) || 
+                     productsByCode.get(paddedLookup8);
+
     if (!prodInfo) {
       status = 'UNKNOWN_PRODUCT';
       messages.push(`Product Code "${row.productCode}" does not exist in Product Master.`);

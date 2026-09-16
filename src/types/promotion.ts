@@ -26,6 +26,7 @@ export interface PromotionProductRule extends BaseDocument {
   expectedVolumeUpliftQuantity: number | null;
   expectedVolumeUpliftPercent: number | null;
   retentionUpliftQuantity: number | null;
+  retentionUpliftPercentage?: number | null;
   promotionMinimumOverride: number | null;
   promotionTargetOverride: number | null;
   promotionMaximumOverride: number | null;

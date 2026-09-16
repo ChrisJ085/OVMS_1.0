@@ -10,6 +10,7 @@ import { PromotionWithPhase } from '../../../types/promotion';
 import { PromotionModal } from './components/PromotionModal';
 import { useNavigate } from 'react-router-dom';
 import { useSiteContext } from '../../../contexts/SiteContext';
+import { toEpochMillis, toSafeDate } from '../../../utils/timeFormatters';
 
 export const PromotionsPage: React.FC = () => {
   const { tenantId } = useSiteContext();
@@ -58,15 +59,14 @@ export const PromotionsPage: React.FC = () => {
     
     return true;
   }).sort((a, b) => {
-    const aTime = (a.startDate as any).toDate().getTime();
-    const bTime = (b.startDate as any).toDate().getTime();
+    const aTime = toEpochMillis(a.startDate) || 0;
+    const bTime = toEpochMillis(b.startDate) || 0;
     return bTime - aTime; // descending start date
   });
 
   const renderDate = (dateVal: any) => {
     if (!dateVal) return '-';
-    if (dateVal.toDate) return dateVal.toDate().toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-    return new Date(dateVal).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return toSafeDate(dateVal).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
   };
   
   const getStatusBadge = (status: string) => {

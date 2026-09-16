@@ -186,6 +186,7 @@ export interface ProductionPlanRow {
   importId: string;
   sourceSheetName: string;
   sourceRowNumber: number;
+  productionLineId?: string | null;
   productionLineCode: string;
   productionLineName: string;
   productCode: string;
@@ -210,6 +211,7 @@ export interface ProductionPlanRow {
 export interface ProductionPlanEntry {
   tenantId: string;
   siteId: string;
+  importId?: string;
   activeImportId: string;
   productId: string;
   productCodeSnapshot: string;

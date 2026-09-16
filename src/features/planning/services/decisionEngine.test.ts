@@ -518,4 +518,43 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     expect(output.recommendedActionTypeId).toBeNull();
     expect(output.recommendedPriorityLevelId).toBeNull();
   });
+
+  // Scenario 25: Storage ramp-up percentage increases retention uplift dynamically
+  it('Scenario 25: Storage ramp-up percentage dynamically elevates effective thresholds and retention', () => {
+    // Base target is 200, base min is 100
+    const input = createBaseInput({
+      inventoryTotal: 220,
+      activePromotionImpacts: [
+        {
+          rule: {
+            retentionUpliftPercentage: 25, // 25% of 200 = 50 uplift
+            retentionUpliftQuantity: null,
+            expectedVolumeUpliftQuantity: null,
+            expectedVolumeUpliftPercent: null,
+            promotionMinimumOverride: null,
+            promotionTargetOverride: null,
+            promotionMaximumOverride: null,
+            priorityWeightUplift: 0,
+            destinationOverrideId: null,
+            actionTypeOverrideId: null
+          } as any,
+          promotion: {
+            id: 'promo-ramp',
+            promotionName: 'Summer BBQ Ramp',
+            phase: 'ACTIVE'
+          } as any
+        }
+      ]
+    });
+
+    const output = evaluateDecision(input);
+
+    // With 25% of 200 = 50 uplift, effTarget = 250.
+    // Inventory is 220, which is below the effective target of 250!
+    // So with HOLD_UNTIL_TARGET, it recommends HOLD action instead of releasing.
+    expect(output.reasonCodes).toContain('PROMOTION_ACTIVE');
+    expect(output.explanationLines.some(l => l.includes('Summer BBQ Ramp') && l.includes('25% ramp-up'))).toBe(true);
+    expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.holdActionId);
+    expect(output.recommendedQuantity).toBe(0);
+  });
 });

@@ -110,6 +110,12 @@ export const ProductPromotionsPanel: React.FC<ProductPromotionsPanelProps> = ({ 
                     <span className="text-indigo-400 font-medium">+{rule.expectedVolumeUpliftPercent}%</span>
                   </div>
                 )}
+                {rule.retentionUpliftPercentage !== null && rule.retentionUpliftPercentage !== undefined && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Storage Ramp-up (%):</span>
+                    <span className="text-brand-400 font-medium">+{rule.retentionUpliftPercentage}%</span>
+                  </div>
+                )}
                 {rule.retentionUpliftQuantity !== null && (
                   <div className="flex justify-between">
                     <span className="text-slate-400">Ret. Uplift (Qty):</span>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRight, CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
 import { ParsedPlanPreview } from '../../services/mpps7ImportService';
+import { toSafeDate } from '../../../../utils/timeFormatters';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -23,7 +24,7 @@ export const ValidationStep: React.FC<ValidationStepProps> = ({
   onRemoveFile,
   onProceedToReview
 }) => {
-  const uniqueDatesCount = Array.from(new Set(previewData.rows.map(r => r.productionDate.toDate().toISOString()))).length;
+  const uniqueDatesCount = Array.from(new Set(previewData.rows.map(r => toSafeDate(r.productionDate).toISOString()))).length;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -45,7 +46,7 @@ export const ValidationStep: React.FC<ValidationStepProps> = ({
           <div className="bg-slate-950 p-4 rounded-md border border-slate-850">
             <span className="text-xs text-slate-400 block">Detected Period</span>
             <strong className="text-sm text-slate-200 mt-1 block">
-              {formatUTCDate(previewData.summary.periodStart.toDate())} - {formatUTCFull(previewData.summary.periodEnd.toDate())}
+              {formatUTCDate(toSafeDate(previewData.summary.periodStart))} - {formatUTCFull(toSafeDate(previewData.summary.periodEnd))}
             </strong>
           </div>
           <div className="bg-slate-950 p-4 rounded-md border border-slate-850">

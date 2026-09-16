@@ -62,8 +62,7 @@ export const InventoryDetailModal: React.FC<InventoryDetailModalProps> = ({
     const unsubUnits = subscribeToCollection<UnitOfMeasure>(
       collections.UNITS_OF_MEASURE,
       [
-        { field: 'tenantId', op: '==', value: tenantId },
-        { field: 'siteId', op: '==', value: '' }
+        { field: 'tenantId', op: '==', value: tenantId }
       ],
       setUnits,
       console.error

@@ -14,6 +14,7 @@ import { ProductionEventModal } from './components/ProductionEventModal';
 import { ProductionActionModal } from './components/ProductionActionModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { subscribeToCollection, where } from '../../../services/dbService';
+import { toEpochMillis, toSafeDate } from '../../../utils/timeFormatters';
 
 export const ProductionPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -100,8 +101,8 @@ export const ProductionPage: React.FC = () => {
         return true;
     }
   }).sort((a, b) => {
-    const aTime = (a.plannedStart as any).toDate().getTime();
-    const bTime = (b.plannedStart as any).toDate().getTime();
+    const aTime = toEpochMillis(a.plannedStart) || 0;
+    const bTime = toEpochMillis(b.plannedStart) || 0;
     return aTime - bTime;
   });
 
@@ -110,8 +111,7 @@ export const ProductionPage: React.FC = () => {
 
   const renderDate = (dateVal: any) => {
     if (!dateVal) return '-';
-    if (dateVal.toDate) return dateVal.toDate().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    return new Date(dateVal).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return toSafeDate(dateVal).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
   
   const getStatusBadge = (status: string) => {

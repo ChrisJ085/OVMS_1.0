@@ -42,6 +42,9 @@ import { DecisionSettingsPage } from '../features/administration/pages/DecisionS
 import { DataFreshnessSettingsPage } from '../features/administration/pages/DataFreshnessSettingsPage';
 import { AuditLogPage } from '../features/administration/pages/AuditLogPage';
 import { DataUtilitiesPage } from '../features/administration/pages/DataUtilitiesPage';
+import { LearningCentrePage } from '../features/learning/pages/LearningCentrePage';
+import { SopReaderPage } from '../features/learning/pages/SopReaderPage';
+import { SopEditorPage } from '../features/learning/pages/SopEditorPage';
 
 export const router = createBrowserRouter([
   {
@@ -93,6 +96,12 @@ export const router = createBrowserRouter([
       { path: 'admin/data-freshness', element: <PermissionRoute requiredPermissions="VIEW_ADMINISTRATION"><DataFreshnessSettingsPage /></PermissionRoute>, handle: { title: 'Administration' } },
       { path: 'admin/audit-log', element: <PermissionRoute requiredPermissions="VIEW_AUDIT_LOG"><AuditLogPage /></PermissionRoute>, handle: { title: 'Administration' } },
       { path: 'admin/data-utilities', element: <PermissionRoute requiredPermissions="MANAGE_CONFIGURATION"><DataUtilitiesPage /></PermissionRoute>, handle: { title: 'Administration' } },
+
+      // Learning & SOP Centre routes
+      { path: 'learning', element: <PermissionRoute requiredPermissions="VIEW_LEARNING"><LearningCentrePage /></PermissionRoute>, handle: { title: 'Learning & SOP Centre' } },
+      { path: 'learning/sop/:id', element: <PermissionRoute requiredPermissions="VIEW_LEARNING"><SopReaderPage /></PermissionRoute>, handle: { title: 'SOP Reader' } },
+      { path: 'learning/editor', element: <PermissionRoute requiredPermissions="MANAGE_LEARNING"><SopEditorPage /></PermissionRoute>, handle: { title: 'SOP Editor' } },
+      { path: 'learning/editor/:id', element: <PermissionRoute requiredPermissions="MANAGE_LEARNING"><SopEditorPage /></PermissionRoute>, handle: { title: 'SOP Editor' } },
     ],
   },
   {

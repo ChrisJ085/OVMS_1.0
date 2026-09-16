@@ -302,11 +302,15 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     }
     setSubmitting(true);
     try {
+      const lineCodeVal = newLineForm.lineCode.toUpperCase();
+      const lineNameVal = newLineForm.lineName;
       const payload = {
         tenantId,
         siteId,
-        lineCode: newLineForm.lineCode.toUpperCase(),
-        lineName: newLineForm.lineName,
+        code: lineCodeVal,
+        lineCode: lineCodeVal,
+        name: lineNameVal,
+        lineName: lineNameVal,
         sapResourceCode: newLineForm.sapResourceCode || null,
         sortOrder: parseInt(newLineForm.sortOrder, 10) || 1,
         status: 'active',
@@ -342,10 +346,14 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     }
     setSubmitting(true);
     try {
+      const destCodeVal = newDestForm.destinationCode.toUpperCase();
+      const destNameVal = newDestForm.destinationName;
       const payload = {
         tenantId,
-        destinationCode: newDestForm.destinationCode.toUpperCase(),
-        destinationName: newDestForm.destinationName,
+        code: destCodeVal,
+        destinationCode: destCodeVal,
+        name: destNameVal,
+        destinationName: destNameVal,
         destinationType: newDestForm.destinationType,
         sortOrder: parseInt(newDestForm.sortOrder, 10) || 1,
         status: 'active',
@@ -507,10 +515,14 @@ export const SiteOnboardingWizard: React.FC<SiteOnboardingWizardProps> = ({ onCl
     }
     setSubmitting(true);
     try {
+      const pCode = newProductForm.productCode.toUpperCase();
+      const pName = newProductForm.description;
       const payload = {
         tenantId,
-        productCode: newProductForm.productCode.toUpperCase(),
-        description: newProductForm.description,
+        code: pCode,
+        productCode: pCode,
+        name: pName,
+        description: pName,
         categoryId: newProductForm.categoryId || 'default',
         unitOfMeasureId: newProductForm.unitOfMeasureId,
         casesPerPallet: parseInt(newProductForm.casesPerPallet, 10) || null,

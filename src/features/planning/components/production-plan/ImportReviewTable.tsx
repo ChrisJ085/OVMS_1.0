@@ -1,6 +1,7 @@
 import React from 'react';
 import { Search } from 'lucide-react';
 import { ProductionPlanRow } from '../../../../types/production';
+import { toSafeDate } from '../../../../utils/timeFormatters';
 
 interface ImportReviewTableProps {
   rows: ProductionPlanRow[];
@@ -102,7 +103,10 @@ export const ImportReviewTable: React.FC<ImportReviewTableProps> = ({
                   {row.sourceProductDescription}
                 </td>
                 <td className="p-3 text-center">
-                  {`${row.productionDate.toDate().getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][row.productionDate.toDate().getUTCMonth()]}`}
+                  {(() => {
+                    const d = toSafeDate(row.productionDate);
+                    return `${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}`;
+                  })()}
                 </td>
                 <td className="p-3 text-right font-mono font-semibold">
                   {row.plannedQuantity.toLocaleString()} {row.sourceUnitOfMeasure}

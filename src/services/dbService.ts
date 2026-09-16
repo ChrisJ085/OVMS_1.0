@@ -1,5 +1,5 @@
 import { supabase } from '../config/supabase';
-import { getTableName, toCamelCase, toSnakeCase } from '../utils/caseTransformers';
+import { getTableName, toCamelCase, toSnakeCase, normalizeTablePayload } from '../utils/caseTransformers';
 import { BaseDocument } from '../types/common';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -140,22 +140,72 @@ export const getDocuments = async <T = any>(
   return (data || []).map(row => toCamelCase<T>(row));
 };
 
+function enrichWithActiveSite(data: Record<string, any>): Record<string, any> {
+  const result = { ...data };
+  let tenantId = result.tenantId || result.tenant_id;
+  let siteId = result.siteId || result.site_id;
+
+  if (!tenantId || tenantId === 'GLOBAL' || !siteId || siteId === 'GLOBAL' || siteId === 'SETUP_REQUIRED') {
+    try {
+      const activeSiteStr = localStorage.getItem('ovms_active_site');
+      if (activeSiteStr) {
+        const activeSite = JSON.parse(activeSiteStr);
+        if (!tenantId || tenantId === 'GLOBAL') {
+          tenantId = activeSite.tenantId;
+        }
+        if (!siteId || siteId === 'GLOBAL' || siteId === 'SETUP_REQUIRED') {
+          siteId = activeSite.siteId;
+        }
+      }
+    } catch {}
+  }
+
+  if (tenantId) {
+    result.tenantId = tenantId;
+    result.tenant_id = tenantId;
+  }
+  if (siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
+    result.siteId = siteId;
+    result.site_id = siteId;
+  }
+
+  return result;
+}
+
+function sanitizeUuidFields(data: Record<string, any>): Record<string, any> {
+  const result = { ...data };
+  for (const key of Object.keys(result)) {
+    const val = result[key];
+    if (val !== undefined && val !== null && val !== '') {
+      if ((key.endsWith('_id') || key === 'id') && key !== 'tenant_id' && key !== 'site_id') {
+        if (typeof val === 'string' && !isValidUuid(val)) {
+          result[key] = null;
+        }
+      }
+    }
+  }
+  return result;
+}
+
 export const createDocument = async <T extends BaseDocument>(
   collectionName: string,
   data: Omit<T, 'id' | 'createdBy' | 'createdDate' | 'modifiedBy' | 'modifiedDate'>
 ): Promise<string> => {
   const tableName = getTableName(collectionName);
   
-  const createdBy = (data as any).createdBy;
-  const modifiedBy = (data as any).modifiedBy || createdBy;
+  const enrichedData = enrichWithActiveSite(data);
+  const createdBy = (enrichedData as any).createdBy;
+  const modifiedBy = (enrichedData as any).modifiedBy || createdBy;
 
-  const snakeData = toSnakeCase({
-    ...data,
+  const rawSnake = toSnakeCase({
+    ...enrichedData,
     createdBy,
     createdDate: new Date().toISOString(),
     modifiedBy,
     modifiedDate: new Date().toISOString(),
   });
+
+  const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
 
   const { data: inserted, error } = await supabase
     .from(tableName)
@@ -171,23 +221,87 @@ export const createDocument = async <T extends BaseDocument>(
   return inserted.id;
 };
 
+export const createDocuments = async <T extends BaseDocument>(
+  collectionName: string,
+  items: Array<Omit<T, 'id' | 'createdBy' | 'createdDate' | 'modifiedBy' | 'modifiedDate'>>
+): Promise<string[]> => {
+  if (!items || items.length === 0) return [];
+  const tableName = getTableName(collectionName);
+  const now = new Date().toISOString();
+
+  const payloads = items.map(item => {
+    const enriched = enrichWithActiveSite(item);
+    const createdBy = (enriched as any).createdBy;
+    const modifiedBy = (enriched as any).modifiedBy || createdBy;
+    const rawSnake = toSnakeCase({
+      ...enriched,
+      createdBy,
+      createdDate: now,
+      modifiedBy,
+      modifiedDate: now
+    });
+    return sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+  });
+
+  const insertedIds: string[] = [];
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
+    const chunk = payloads.slice(i, i + CHUNK_SIZE);
+    const { data: inserted, error } = await supabase
+      .from(tableName)
+      .insert(chunk)
+      .select('id');
+
+    if (error) {
+      console.error(`[Supabase createDocuments] Error creating documents in ${tableName}:`, error);
+      throw new Error(`Failed to create documents in ${tableName}: ${error.message}`);
+    }
+    if (inserted) {
+      insertedIds.push(...inserted.map(row => row.id));
+    }
+  }
+
+  return insertedIds;
+};
+
 export const setDocument = async (
   collectionName: string,
   id: string,
   data: Record<string, any>
 ): Promise<void> => {
   const tableName = getTableName(collectionName);
-  const payload: Record<string, any> = { ...data };
+  const enriched = enrichWithActiveSite(data);
+  const payload: Record<string, any> = { ...enriched };
 
-  if (isValidUuid(id)) {
+  // Set ID if valid UUID, OR if table uses string/composite IDs (like decision_configurations, recommendation_runs, display_priorities, etc.)
+  const TEXT_ID_TABLES = new Set([
+    'decision_configurations',
+    'recommendation_runs',
+    'display_priorities',
+    'site_onboarding',
+    'announcements'
+  ]);
+
+  if (isValidUuid(id) || TEXT_ID_TABLES.has(tableName)) {
     payload.id = id;
   }
   payload.modifiedDate = new Date().toISOString();
 
-  const snakeData = toSnakeCase(payload);
+  const rawSnake = toSnakeCase(payload);
+  const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+
+  if (TEXT_ID_TABLES.has(tableName) && !snakeData.id && id) {
+    snakeData.id = id;
+  }
+
+  const TENANT_SITE_UNIQUE_TABLES = new Set([
+    'decision_configurations',
+    'recommendation_runs',
+    'display_priorities'
+  ]);
 
   let error;
-  if (!isValidUuid(id) && snakeData.tenant_id && snakeData.site_id) {
+  if (!isValidUuid(id) && TENANT_SITE_UNIQUE_TABLES.has(tableName) && snakeData.tenant_id && snakeData.site_id) {
     const res = await supabase
       .from(tableName)
       .upsert(snakeData, { onConflict: 'tenant_id,site_id' });
@@ -211,12 +325,20 @@ export const updateDocument = async (
   data: Record<string, any>
 ): Promise<void> => {
   const tableName = getTableName(collectionName);
+  const enriched = { ...data };
+  delete enriched.id;
+  delete enriched.ID;
+  delete (enriched as any)._id;
+
+  const enrichedWithSite = enrichWithActiveSite(enriched);
   
-  const snakeData = toSnakeCase({
-    ...data,
-    modifiedBy: data.modifiedBy,
+  const rawSnake = toSnakeCase({
+    ...enrichedWithSite,
+    modifiedBy: enrichedWithSite.modifiedBy,
     modifiedDate: new Date().toISOString(),
   });
+  const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+  delete snakeData.id;
 
   if (id.includes('_')) {
     const parts = id.split('_');

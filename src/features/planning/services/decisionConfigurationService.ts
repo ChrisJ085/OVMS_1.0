@@ -400,7 +400,10 @@ export const autoConfigureDecisionSettings = async (
       capacityWarningThresholdPercentage: existingConfigData?.capacityWarningThresholdPercentage ?? 100
     };
 
-    await saveDecisionConfiguration(tenantId, siteId, newConfig);
+    const saveResult = await saveDecisionConfiguration(tenantId, siteId, newConfig);
+    if (!saveResult.success) {
+      throw new Error(saveResult.error || 'Failed to save decision configuration');
+    }
 
     const fullConfig = await getDecisionConfiguration(tenantId, siteId, false);
     if (!fullConfig) {

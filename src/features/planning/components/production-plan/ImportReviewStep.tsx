@@ -5,6 +5,7 @@ import { MasterDataIssuesPanel } from '../MasterDataIssuesPanel';
 import { ImportReviewTable } from './ImportReviewTable';
 import { Product } from '../../../../types/product';
 import { ProductionLine, UnitOfMeasure } from '../../../../types/configuration';
+import { toSafeDate } from '../../../../utils/timeFormatters';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -68,8 +69,14 @@ export const ImportReviewStep: React.FC<ImportReviewStepProps> = ({
   onBackToStep2,
   onCommit
 }) => {
-  const periodStartFormatted = `${previewData.summary.periodStart.toDate().getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][previewData.summary.periodStart.toDate().getUTCMonth()]}`;
-  const periodEndFormatted = `${previewData.summary.periodEnd.toDate().getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][previewData.summary.periodEnd.toDate().getUTCMonth()]}`;
+  const periodStartFormatted = (() => {
+    const d = toSafeDate(previewData.summary.periodStart);
+    return `${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}`;
+  })();
+  const periodEndFormatted = (() => {
+    const d = toSafeDate(previewData.summary.periodEnd);
+    return `${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}`;
+  })();
 
   const isCommitDisabled =
     previewData.summary.errorCount > 0 ||

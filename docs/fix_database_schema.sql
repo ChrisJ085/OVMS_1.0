@@ -22,5 +22,13 @@ ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS created_date TIMESTAMPTZ DEF
 ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS modified_by TEXT;
 ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS modified_date TIMESTAMPTZ DEFAULT NOW();
 
--- 3. Force API schema reload to recognize new columns/tables
+-- 3. Synchronize decision_configurations columns
+ALTER TABLE public.decision_configurations ADD COLUMN IF NOT EXISTS inventory_staleness_hours_threshold INTEGER DEFAULT 24;
+ALTER TABLE public.decision_configurations ADD COLUMN IF NOT EXISTS production_staleness_hours_threshold INTEGER DEFAULT 24;
+ALTER TABLE public.decision_configurations ADD COLUMN IF NOT EXISTS near_production_days_window INTEGER DEFAULT 7;
+ALTER TABLE public.decision_configurations ADD COLUMN IF NOT EXISTS capacity_warning_threshold_percentage NUMERIC DEFAULT 100;
+ALTER TABLE public.decision_configurations ADD COLUMN IF NOT EXISTS as_per_schedule_action_id UUID REFERENCES public.action_types(id) ON DELETE SET NULL;
+ALTER TABLE public.decision_configurations ADD COLUMN IF NOT EXISTS configuration_version TEXT;
+
+-- 4. Force API schema reload to recognize new columns/tables
 NOTIFY pgrst, 'reload schema';

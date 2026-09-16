@@ -3,6 +3,7 @@ import { FileSpreadsheet } from 'lucide-react';
 import { SectionCard } from '../../../../components/ui/SectionCard';
 import { ImportHistoryDetail } from './ImportHistoryDetail';
 import { ProductionPlanImport, ProductionPlanRow } from '../../../../types/production';
+import { toSafeDate } from '../../../../utils/timeFormatters';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -63,12 +64,12 @@ export const ImportHistoryView: React.FC<ImportHistoryViewProps> = ({
                           ID: {imp.id} • Hash: {imp.fileHash.slice(0, 8)}...
                         </div>
                         <div className="text-[10px] text-slate-400 mt-1">
-                          Uploaded by: {imp.uploadedBy} on {imp.uploadedAt.toDate().toLocaleDateString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          Uploaded by: {imp.uploadedBy} on {toSafeDate(imp.uploadedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </td>
                       <td className="p-3 text-center">
                         <div className="font-medium text-slate-300">
-                          {formatUTCDate(imp.periodStart.toDate())} - {formatUTCFull(imp.periodEnd.toDate())}
+                          {formatUTCDate(toSafeDate(imp.periodStart))} - {formatUTCFull(toSafeDate(imp.periodEnd))}
                         </div>
                         <span className="text-[10px] text-slate-500 block mt-0.5">MPPS7 Source Period</span>
                       </td>

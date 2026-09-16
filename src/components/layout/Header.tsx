@@ -6,9 +6,13 @@ import { useEnvironmentMode } from '../../contexts/EnvironmentModeContext';
 import { useRecommendationGeneration } from '../../features/planning/context/RecommendationGenerationContext';
 import { useNavigate } from 'react-router-dom';
 import { DataFreshnessHoverCard } from './DataFreshnessHoverCard';
+import { HelpButton } from '../../features/learning/components/HelpButton';
+import { ActivePageStarButton } from './ActivePageStarButton';
+import { useSidebar } from '../../contexts/SidebarContext';
 
 export const Header: React.FC = () => {
   const { userProfile, logout } = useAuth();
+  const { isCollapsed, toggleSidebar } = useSidebar();
   const { siteId, siteName, availableSites, setSite } = useSiteContext();
   const { isDevelopmentMode } = useEnvironmentMode();
   const { 
@@ -52,13 +56,13 @@ export const Header: React.FC = () => {
 
   return (
     <header className="h-16 bg-slate-950 border-b border-slate-800 flex items-center justify-between px-6 shrink-0 select-none">
-      <div className="flex items-center gap-4 text-slate-300">
+      <div className="flex items-center gap-3 text-slate-300">
         {userProfile && (
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-sm text-slate-200 uppercase">
               {userProfile.displayName ? userProfile.displayName.charAt(0) : userProfile.email.charAt(0)}
             </div>
-            <div>
+            <div className="hidden sm:block">
               <div className="text-sm font-semibold text-slate-200 leading-tight">
                 {userProfile.displayName || 'Operations User'}
               </div>
@@ -67,7 +71,7 @@ export const Header: React.FC = () => {
                   {roleLabels[userProfile.role] || userProfile.role}
                 </span>
                 {userProfile.tenantId && (
-                  <span className="text-[10px] text-slate-500 font-medium">
+                  <span className="text-[10px] text-slate-500 font-medium hidden lg:inline">
                     Tenant: {userProfile.tenantId}
                   </span>
                 )}
@@ -75,9 +79,15 @@ export const Header: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Active Page Star Toggle Button */}
+        <ActivePageStarButton />
       </div>
 
       <div className="flex items-center gap-3 md:gap-4">
+        {/* Help & SOP Global Trigger */}
+        <HelpButton />
+
         {/* System Data Updates & Freshness Hover Container */}
         <DataFreshnessHoverCard />
 

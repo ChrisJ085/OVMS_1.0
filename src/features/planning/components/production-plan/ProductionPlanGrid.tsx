@@ -8,6 +8,7 @@ import {
   PRODUCTION_EVENT_COLOURS,
   ChangeoverEventType,
 } from '../../services/changeoverEngine';
+import { isEntryForLine } from '../../services/productionLineMappingService';
 import { LineDayHeaderCell } from './LineDayHeaderCell';
 import { useSiteContext } from '../../../../contexts/SiteContext';
 import { useAuth } from '../../../auth/context/AuthContext';
@@ -221,7 +222,7 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
 
   // Check if any matching entries exist overall across all lines when filtering
   const totalMatchingSKUs = productionLines.reduce((acc, line) => {
-    const lineEntries = visibleEntries.filter(e => e.productionLineId.toUpperCase() === line.lineCode.toUpperCase());
+    const lineEntries = visibleEntries.filter(e => isEntryForLine(e, line));
     return acc + new Set(lineEntries.map(e => e.productCodeSnapshot)).size;
   }, 0);
 
@@ -358,8 +359,8 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
         </thead>
         <tbody>
           {productionLines.map(line => {
-            const fullLineEntries = completeEntries.filter(e => e.productionLineId.toUpperCase() === line.lineCode.toUpperCase());
-            const dispLineEntries = visibleEntries.filter(e => e.productionLineId.toUpperCase() === line.lineCode.toUpperCase());
+            const fullLineEntries = completeEntries.filter(e => isEntryForLine(e, line));
+            const dispLineEntries = visibleEntries.filter(e => isEntryForLine(e, line));
 
             const scheduledSKUs = Array.from(new Set(dispLineEntries.map(e => e.productCodeSnapshot)));
 
@@ -480,7 +481,8 @@ export const ProductionPlanGrid: React.FC<ProductionPlanGridProps> = ({
                 {/* Scheduled SKUs Rows */}
                 {scheduledSKUs.map(sku => {
                   const sampleEntry = fullLineEntries.find(e => e.productCodeSnapshot === sku);
-                  const desc = sampleEntry?.descriptionSnapshot || 'Unknown Product';
+                  const matchedProd = products.find(p => p.productCode === sku || p.code === sku || p.id === sampleEntry?.productId);
+                  const desc = sampleEntry?.descriptionSnapshot || matchedProd?.description || matchedProd?.name || 'Unknown Product';
 
                   return (
                     <tr key={sku} className="border-b border-slate-850/50 hover:bg-slate-900/20 transition-colors">

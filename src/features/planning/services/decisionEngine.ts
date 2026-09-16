@@ -11,6 +11,7 @@ import {
   DecisionVersionInfo
 } from '../../../types/decision';
 import { PlanningBandStatus, BelowTargetBehavior } from '../../../types/planning';
+import { toSafeDate } from '../../../utils/timeFormatters';
 
 export const ENGINE_VERSION = '2.0.0';
 
@@ -39,7 +40,7 @@ export const generateDeterministicHash = (input: DecisionInputSnapshot): string 
     siteId: input.siteId,
     productId: input.productId,
     inventoryTotal: input.inventoryTotal,
-    inventoryUpdatedAt: input.inventoryUpdatedAt ? input.inventoryUpdatedAt.toISOString() : null,
+    inventoryUpdatedAt: input.inventoryUpdatedAt ? toSafeDate(input.inventoryUpdatedAt).toISOString() : null,
     planningRule: input.planningRule ? {
       id: input.planningRule.id,
       minimumQuantity: input.planningRule.minimumQuantity,
@@ -67,6 +68,7 @@ export const generateDeterministicHash = (input: DecisionInputSnapshot): string 
       phase: p.promotion.phase,
       rule: {
         retentionUpliftQuantity: p.rule.retentionUpliftQuantity,
+        retentionUpliftPercentage: p.rule.retentionUpliftPercentage,
         destinationOverrideId: p.rule.destinationOverrideId,
         actionTypeOverrideId: p.rule.actionTypeOverrideId,
         promotionMinimumOverride: p.rule.promotionMinimumOverride,
@@ -254,9 +256,12 @@ export const evaluateDecision = (
     planningRule,
     productionContext,
     activePromotionImpacts = [],
-    inventoryUpdatedAt,
-    evaluationTime
+    inventoryUpdatedAt: rawInventoryUpdatedAt,
+    evaluationTime: rawEvaluationTime
   } = input;
+
+  const inventoryUpdatedAt = rawInventoryUpdatedAt ? toSafeDate(rawInventoryUpdatedAt) : null;
+  const evaluationTime = toSafeDate(rawEvaluationTime);
 
   const dataQualityIssues: DataQualityIssue[] = [];
   const reasonCodes: ReasonCode[] = [];
@@ -541,7 +546,17 @@ export const evaluateDecision = (
     if (r.promotionMinimumOverride !== null && r.promotionMinimumOverride !== undefined) minOverride = Math.max(minOverride ?? 0, r.promotionMinimumOverride);
     if (r.promotionTargetOverride !== null && r.promotionTargetOverride !== undefined) targetOverride = Math.max(targetOverride ?? 0, r.promotionTargetOverride);
     if (r.promotionMaximumOverride !== null && r.promotionMaximumOverride !== undefined) maxOverride = Math.max(maxOverride ?? 0, r.promotionMaximumOverride);
-    if (r.retentionUpliftQuantity !== null) retentionUplift += r.retentionUpliftQuantity;
+    let ruleUplift = 0;
+    if (r.retentionUpliftQuantity !== null && r.retentionUpliftQuantity !== undefined) {
+      ruleUplift += r.retentionUpliftQuantity;
+    }
+    if (r.retentionUpliftPercentage !== null && r.retentionUpliftPercentage !== undefined && r.retentionUpliftPercentage > 0) {
+      const targetBasis = (targetOverride !== null ? targetOverride : baseTarget) || baseMin || 0;
+      const percentQuantity = Math.round(targetBasis * (r.retentionUpliftPercentage / 100));
+      ruleUplift += percentQuantity;
+    }
+    retentionUplift += ruleUplift;
+
     if (r.destinationOverrideId && !promotionDestinationConflict) destOverride = r.destinationOverrideId;
     if (r.actionTypeOverrideId && !promotionActionConflict) actionOverride = r.actionTypeOverrideId;
     if (r.priorityWeightUplift > 0) prioUplift += r.priorityWeightUplift;
@@ -549,7 +564,12 @@ export const evaluateDecision = (
     if (p.phase === 'ACTIVE') reasonCodes.push('PROMOTION_ACTIVE');
     if (p.phase === 'PRE_BUILD') reasonCodes.push('PROMOTION_PRE_BUILD');
 
-    promotionLines.push(`- Promotion: ${p.promotionName} (${p.phase}) - Retention Uplift: +${r.retentionUpliftQuantity || 0}, Dest Override: ${r.destinationOverrideId || 'None'}`);
+    const upliftDetail = [
+      r.retentionUpliftPercentage ? `${r.retentionUpliftPercentage}% ramp-up` : null,
+      r.retentionUpliftQuantity ? `${r.retentionUpliftQuantity} qty` : null
+    ].filter(Boolean).join(' + ');
+
+    promotionLines.push(`- Promotion: ${p.promotionName} (${p.phase}) - Retention Uplift: +${ruleUplift}${upliftDetail ? ` (${upliftDetail})` : ''}, Dest Override: ${r.destinationOverrideId || 'None'}`);
   });
 
   if (!isPromoActive) {

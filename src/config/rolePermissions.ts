@@ -20,7 +20,9 @@ export type Permission =
   | 'MANAGE_CONFIGURATION'
   | 'VIEW_AUDIT_LOG'
   | 'VIEW_TV_DASHBOARD'
-  | 'MANAGE_ANNOUNCEMENTS';
+  | 'MANAGE_ANNOUNCEMENTS'
+  | 'VIEW_LEARNING'
+  | 'MANAGE_LEARNING';
 
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   PLATFORM_SUPERUSER: [
@@ -44,6 +46,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'VIEW_AUDIT_LOG',
     'VIEW_TV_DASHBOARD',
     'MANAGE_ANNOUNCEMENTS',
+    'VIEW_LEARNING',
+    'MANAGE_LEARNING',
   ],
   TENANT_ADMIN: [
     'VIEW_OVERVIEW',
@@ -66,6 +70,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'VIEW_AUDIT_LOG',
     'VIEW_TV_DASHBOARD',
     'MANAGE_ANNOUNCEMENTS',
+    'VIEW_LEARNING',
+    'MANAGE_LEARNING',
   ],
   PLANNER: [
     'VIEW_OVERVIEW',
@@ -84,6 +90,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'VIEW_REPORTS',
     'VIEW_TV_DASHBOARD',
     'MANAGE_ANNOUNCEMENTS',
+    'VIEW_LEARNING',
   ],
   WAREHOUSE_OPERATOR: [
     'VIEW_OVERVIEW',
@@ -93,6 +100,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'VIEW_INVENTORY',
     'VIEW_REPORTS',
     'VIEW_TV_DASHBOARD',
+    'VIEW_LEARNING',
   ],
   VIEWER: [
     'VIEW_OVERVIEW',
@@ -103,6 +111,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'VIEW_INVENTORY',
     'VIEW_REPORTS',
     'VIEW_TV_DASHBOARD',
+    'VIEW_LEARNING',
   ],
   DISPLAY: [
     'VIEW_TV_DASHBOARD',

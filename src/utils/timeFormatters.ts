@@ -31,6 +31,32 @@ export function toEpochMillis(val: Date | TimestampLike | number | string | null
   return null;
 }
 
+export function toSafeDate(val: any): Date {
+  if (!val) return new Date();
+  if (val instanceof Date) return isNaN(val.getTime()) ? new Date() : val;
+  if (typeof val === 'number') {
+    return new Date(val < 1e11 ? val * 1000 : val);
+  }
+  if (typeof val === 'string') {
+    const p = new Date(val);
+    return isNaN(p.getTime()) ? new Date() : p;
+  }
+  if (typeof val.toDate === 'function') {
+    try {
+      const d = val.toDate();
+      if (d instanceof Date && !isNaN(d.getTime())) return d;
+    } catch {}
+  }
+  if (typeof val.toMillis === 'function') {
+    return new Date(val.toMillis());
+  }
+  if (typeof val.seconds === 'number') {
+    return new Date(val.seconds * 1000);
+  }
+  const parsed = new Date(val);
+  return isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 /**
  * Returns human-friendly relative time string (e.g. "just now", "5 mins ago", "2 hrs ago", "3 days ago").
  */

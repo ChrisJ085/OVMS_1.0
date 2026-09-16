@@ -6,6 +6,8 @@ import { ProductionPlanLegend } from './ProductionPlanLegend';
 import { ProductionLine, ProductCategory } from '../../../../types/configuration';
 import { Product } from '../../../../types/product';
 import { ProductionPlanEntry, ProductionLinePlanNote } from '../../../../types/production';
+import { toSafeDate } from '../../../../utils/timeFormatters';
+import { isEntryForLine } from '../../services/productionLineMappingService';
 
 export const formatUTCDate = (d: Date) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -59,7 +61,7 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
   // Count entries running today overall
   const todayEntriesCount = useMemo(() => {
     return activeEntries.filter(e => {
-      const d = e.productionDate.toDate();
+      const d = toSafeDate(e.productionDate);
       return d.getUTCFullYear() === todayYear &&
              d.getUTCMonth() === todayMonth &&
              d.getUTCDate() === todayDate;
@@ -106,11 +108,16 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
       // 1. Line Filter
       if (selectedLineCode !== 'ALL') {
         const targetLine = productionLines.find(
-          l => l.lineCode.toUpperCase() === selectedLineCode.toUpperCase() || l.id === selectedLineCode
+          l => (l.lineCode && l.lineCode.toUpperCase() === selectedLineCode.toUpperCase()) ||
+               l.id === selectedLineCode
         );
-        const codeToMatch = targetLine ? targetLine.lineCode : selectedLineCode;
-        if (entry.productionLineId.toUpperCase() !== codeToMatch.toUpperCase()) {
-          return false;
+        if (targetLine) {
+          if (!isEntryForLine(entry, targetLine)) {
+            return false;
+          }
+        } else {
+          const entryLine = (entry.productionLineCodeSnapshot || entry.productionLineId || '').toUpperCase();
+          if (entryLine !== selectedLineCode.toUpperCase()) return false;
         }
       }
 
@@ -124,7 +131,7 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
 
       // 3. Today's SKUs filter
       if (showTodayOnly) {
-        const eDate = entry.productionDate.toDate();
+        const eDate = toSafeDate(entry.productionDate);
         const isToday = eDate.getUTCFullYear() === todayYear &&
                         eDate.getUTCMonth() === todayMonth &&
                         eDate.getUTCDate() === todayDate;
@@ -270,7 +277,7 @@ export const CurrentPlanView: React.FC<CurrentPlanViewProps> = ({
               <span className="font-semibold text-slate-300">Active View:</span>
               {selectedLineCode !== 'ALL' && (
                 <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700">
-                  Line: {productionLines.find(l => l.lineCode === selectedLineCode)?.lineName || selectedLineCode}
+                  Line: {productionLines.find(l => l.lineCode === selectedLineCode || l.id === selectedLineCode)?.lineName || selectedLineCode}
                 </span>
               )}
               {skuSearch.trim() && (

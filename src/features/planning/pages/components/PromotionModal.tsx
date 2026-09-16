@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { FormField } from '../../../../components/ui/FormField';
-import { Promotion, PromotionImportance, PromotionStatus } from '../../../../types/promotion';
-import { createPromotion, updatePromotion } from '../../services/promotionService';
+import { Promotion, PromotionImportance, PromotionStatus, PromotionProductRule } from '../../../../types/promotion';
+import { Product } from '../../../../types/product';
+import { createPromotion, updatePromotion, createPromotionRule } from '../../services/promotionService';
+import { ProductLookup } from '../../../inventory/components/ProductLookup';
 import { useSiteContext } from '../../../../contexts/SiteContext';
 
 interface PromotionModalProps {
@@ -14,7 +17,8 @@ interface PromotionModalProps {
 export const PromotionModal: React.FC<PromotionModalProps> = ({ 
   isOpen, onClose, item
 }) => {
-  const { tenantId } = useSiteContext();
+  const { tenantId, siteId } = useSiteContext();
+  const navigate = useNavigate();
   const [formData, setFormData] = useState<Partial<Promotion>>({});
   const [submitting, setSubmitting] = useState(false);
   
@@ -23,8 +27,17 @@ export const PromotionModal: React.FC<PromotionModalProps> = ({
   const [preBuildInput, setPreBuildInput] = useState('');
   const [runDownInput, setRunDownInput] = useState('');
 
+  // Optional initial product attachment & storage ramp-up
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [retentionPercentInput, setRetentionPercentInput] = useState('');
+  const [retentionQtyInput, setRetentionQtyInput] = useState('');
+
   useEffect(() => {
     if (isOpen) {
+      setSelectedProduct(null);
+      setRetentionPercentInput('');
+      setRetentionQtyInput('');
+
       if (item) {
         setFormData({ ...item });
         const start = (item.startDate as any).toDate ? (item.startDate as any).toDate() : new Date(item.startDate as any);
@@ -97,11 +110,42 @@ export const PromotionModal: React.FC<PromotionModalProps> = ({
         ...payload,
         tenantId,
       } as Omit<Promotion, 'id' | 'status' | 'createdDate' | 'modifiedDate'>);
+
+      if (result.success && selectedProduct) {
+        const promoId = result.data;
+        const rampPercent = retentionPercentInput !== '' ? Number(retentionPercentInput) : null;
+        const rampQty = retentionQtyInput !== '' ? Number(retentionQtyInput) : null;
+
+        await createPromotionRule({
+          tenantId,
+          siteId,
+          promotionId: promoId,
+          productId: selectedProduct.id,
+          productCodeSnapshot: selectedProduct.productCode,
+          descriptionSnapshot: selectedProduct.description,
+          expectedVolumeUpliftQuantity: null,
+          expectedVolumeUpliftPercent: null,
+          retentionUpliftQuantity: rampQty,
+          retentionUpliftPercentage: rampPercent,
+          promotionMinimumOverride: null,
+          promotionTargetOverride: null,
+          promotionMaximumOverride: null,
+          destinationOverrideId: null,
+          priorityWeightUplift: 0,
+          actionTypeOverrideId: null,
+          notes: 'Configured during promotion creation',
+          createdBy: 'planner',
+          modifiedBy: 'planner'
+        } as Omit<PromotionProductRule, 'id' | 'status' | 'createdDate' | 'modifiedDate'>);
+      }
     }
     
     setSubmitting(false);
     if (result.success) {
       onClose();
+      if (!item?.id && result.data) {
+        navigate(`/planning/promotions/${result.data}`);
+      }
     } else {
       alert(result.error);
     }
@@ -127,12 +171,14 @@ export const PromotionModal: React.FC<PromotionModalProps> = ({
                 label="Promotion Code *" 
                 value={formData.promotionCode || ''} 
                 onChange={(e) => handleChange('promotionCode', e.target.value)} 
+                helpText="Unique system identifier (e.g., SUMMER26)"
                 required 
               />
               <FormField 
                 label="Promotion Name *" 
                 value={formData.promotionName || ''} 
                 onChange={(e) => handleChange('promotionName', e.target.value)} 
+                helpText="Descriptive display title (e.g., Summer 2026 Sale)"
                 required 
               />
             </div>
@@ -219,6 +265,47 @@ export const PromotionModal: React.FC<PromotionModalProps> = ({
                 />
               </div>
             </div>
+
+            {!item && (
+              <div className="pt-4 border-t border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-brand-400">Target Product & Storage Ramp-up (Optional)</h3>
+                  <span className="text-xs text-slate-500">Can also configure later</span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Optionally select an initial product to associate with this promotion and configure how much storage retention should ramp up.
+                </p>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-slate-300">Product Code / SKU</label>
+                  <ProductLookup 
+                    value={selectedProduct?.id}
+                    onChange={(product) => setSelectedProduct(product)}
+                  />
+                </div>
+
+                {selectedProduct && (
+                  <div className="grid grid-cols-2 gap-4 pt-1">
+                    <FormField 
+                      label="Storage Ramp-up (%)" 
+                      type="number"
+                      value={retentionPercentInput}
+                      onChange={(e) => setRetentionPercentInput(e.target.value)}
+                      helpText="% increase of target retention stock (e.g., 25%)"
+                      placeholder="e.g. 25"
+                    />
+                    <FormField 
+                      label="Retention Uplift (Qty)" 
+                      type="number"
+                      value={retentionQtyInput}
+                      onChange={(e) => setRetentionQtyInput(e.target.value)}
+                      helpText="Optional flat quantity to hold"
+                      placeholder="e.g. 100"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             <FormField 
               label="Notes" 

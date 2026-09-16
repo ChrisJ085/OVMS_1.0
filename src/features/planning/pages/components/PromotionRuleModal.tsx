@@ -36,6 +36,7 @@ export const PromotionRuleModal: React.FC<PromotionRuleModalProps> = ({
           expectedVolumeUpliftQuantity: null,
           expectedVolumeUpliftPercent: null,
           retentionUpliftQuantity: null,
+          retentionUpliftPercentage: null,
           promotionMinimumOverride: null,
           promotionTargetOverride: null,
           promotionMaximumOverride: null,
@@ -115,7 +116,7 @@ export const PromotionRuleModal: React.FC<PromotionRuleModalProps> = ({
 
             <div className="space-y-4">
               <h3 className="text-sm font-medium text-brand-400 border-b border-slate-800 pb-2">Volume & Retention Impacts</h3>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <FormField 
                   label="Vol. Uplift (Qty)" 
                   type="number"
@@ -129,10 +130,18 @@ export const PromotionRuleModal: React.FC<PromotionRuleModalProps> = ({
                   onChange={(e) => handleNumberChange('expectedVolumeUpliftPercent', e.target.value)} 
                 />
                 <FormField 
+                  label="Storage Ramp-up (%)" 
+                  type="number"
+                  value={formData.retentionUpliftPercentage ?? ''} 
+                  onChange={(e) => handleNumberChange('retentionUpliftPercentage', e.target.value)} 
+                  helpText="% of target to hold"
+                />
+                <FormField 
                   label="Retention Uplift (Qty)" 
                   type="number"
                   value={formData.retentionUpliftQuantity ?? ''} 
                   onChange={(e) => handleNumberChange('retentionUpliftQuantity', e.target.value)} 
+                  helpText="Flat quantity to hold"
                 />
               </div>
             </div>
