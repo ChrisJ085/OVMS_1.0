@@ -341,16 +341,14 @@ CREATE POLICY "SiteOnboarding: Insert" ON public.site_onboarding FOR INSERT WITH
 CREATE POLICY "SiteOnboarding: Update" ON public.site_onboarding FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "SiteOnboarding: Delete" ON public.site_onboarding FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- Table: site_recommendation_runs
-ALTER TABLE IF EXISTS public.site_recommendation_runs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "SiteRecommendationRuns: Select" ON public.site_recommendation_runs;
-DROP POLICY IF EXISTS "SiteRecommendationRuns: Insert" ON public.site_recommendation_runs;
-DROP POLICY IF EXISTS "SiteRecommendationRuns: Update" ON public.site_recommendation_runs;
-DROP POLICY IF EXISTS "SiteRecommendationRuns: Delete" ON public.site_recommendation_runs;
-CREATE POLICY "SiteRecommendationRuns: Select" ON public.site_recommendation_runs FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "SiteRecommendationRuns: Insert" ON public.site_recommendation_runs FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "SiteRecommendationRuns: Update" ON public.site_recommendation_runs FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "SiteRecommendationRuns: Delete" ON public.site_recommendation_runs FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+-- View: site_recommendation_runs (View on recommendation_runs)
+-- Views do not support ENABLE ROW LEVEL SECURITY in Postgres; set security_invoker = true so the underlying recommendation_runs RLS policies apply.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'site_recommendation_runs') THEN
+    ALTER VIEW public.site_recommendation_runs SET (security_invoker = true);
+  END IF;
+END $$;
 
 -- Table: recommendation_runs
 ALTER TABLE IF EXISTS public.recommendation_runs ENABLE ROW LEVEL SECURITY;

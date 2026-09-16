@@ -93,11 +93,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     let result;
     const isUpdate = !!item?.id;
     if (isUpdate) {
-      result = await updateProduct(item.id, formData, tenantId);
+      result = await updateProduct(item.id, { ...formData, siteId: formData.siteId || item.siteId || siteId }, tenantId);
     } else {
       result = await createProduct({
         ...formData,
         tenantId,
+        siteId,
       } as Omit<Product, 'id' | 'status' | 'createdDate' | 'modifiedDate'>);
     }
     

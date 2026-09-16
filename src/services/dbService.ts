@@ -140,8 +140,14 @@ export const getDocuments = async <T = any>(
   return (data || []).map(row => toCamelCase<T>(row));
 };
 
-function enrichWithActiveSite(data: Record<string, any>): Record<string, any> {
+function enrichWithActiveSite(data: Record<string, any>, tableName?: string): Record<string, any> {
   const result = { ...data };
+  if (tableName === 'sites' || tableName === 'tenants' || tableName === 'users') {
+    delete result.siteId;
+    delete result.site_id;
+    return result;
+  }
+
   let tenantId = result.tenantId || result.tenant_id;
   let siteId = result.siteId || result.site_id;
 
@@ -192,8 +198,13 @@ export const createDocument = async <T extends BaseDocument>(
   data: Omit<T, 'id' | 'createdBy' | 'createdDate' | 'modifiedBy' | 'modifiedDate'>
 ): Promise<string> => {
   const tableName = getTableName(collectionName);
+  const isSiteOrTenant = tableName === 'sites' || tableName === 'tenants' || tableName === 'users';
   
-  const enrichedData = enrichWithActiveSite(data);
+  const enrichedData = enrichWithActiveSite(data, tableName);
+  if (isSiteOrTenant) {
+    delete (enrichedData as any).siteId;
+    delete (enrichedData as any).site_id;
+  }
   const createdBy = (enrichedData as any).createdBy;
   const modifiedBy = (enrichedData as any).modifiedBy || createdBy;
 
@@ -205,7 +216,16 @@ export const createDocument = async <T extends BaseDocument>(
     modifiedDate: new Date().toISOString(),
   });
 
+  if (isSiteOrTenant) {
+    delete (rawSnake as any).site_id;
+    delete (rawSnake as any).siteId;
+  }
+
   const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+  if (isSiteOrTenant) {
+    delete snakeData.site_id;
+    delete snakeData.siteId;
+  }
 
   const { data: inserted, error } = await supabase
     .from(tableName)
@@ -227,10 +247,15 @@ export const createDocuments = async <T extends BaseDocument>(
 ): Promise<string[]> => {
   if (!items || items.length === 0) return [];
   const tableName = getTableName(collectionName);
+  const isSiteOrTenant = tableName === 'sites' || tableName === 'tenants' || tableName === 'users';
   const now = new Date().toISOString();
 
   const payloads = items.map(item => {
-    const enriched = enrichWithActiveSite(item);
+    const enriched = enrichWithActiveSite(item, tableName);
+    if (isSiteOrTenant) {
+      delete (enriched as any).siteId;
+      delete (enriched as any).site_id;
+    }
     const createdBy = (enriched as any).createdBy;
     const modifiedBy = (enriched as any).modifiedBy || createdBy;
     const rawSnake = toSnakeCase({
@@ -240,7 +265,16 @@ export const createDocuments = async <T extends BaseDocument>(
       modifiedBy,
       modifiedDate: now
     });
-    return sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+    if (isSiteOrTenant) {
+      delete (rawSnake as any).site_id;
+      delete (rawSnake as any).siteId;
+    }
+    const normalized = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+    if (isSiteOrTenant) {
+      delete normalized.site_id;
+      delete normalized.siteId;
+    }
+    return normalized;
   });
 
   const insertedIds: string[] = [];
@@ -270,7 +304,12 @@ export const setDocument = async (
   data: Record<string, any>
 ): Promise<void> => {
   const tableName = getTableName(collectionName);
-  const enriched = enrichWithActiveSite(data);
+  const isSiteOrTenant = tableName === 'sites' || tableName === 'tenants' || tableName === 'users';
+  const enriched = enrichWithActiveSite(data, tableName);
+  if (isSiteOrTenant) {
+    delete (enriched as any).siteId;
+    delete (enriched as any).site_id;
+  }
   const payload: Record<string, any> = { ...enriched };
 
   // Set ID if valid UUID, OR if table uses string/composite IDs (like decision_configurations, recommendation_runs, display_priorities, etc.)
@@ -288,7 +327,15 @@ export const setDocument = async (
   payload.modifiedDate = new Date().toISOString();
 
   const rawSnake = toSnakeCase(payload);
+  if (isSiteOrTenant) {
+    delete (rawSnake as any).site_id;
+    delete (rawSnake as any).siteId;
+  }
   const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+  if (isSiteOrTenant) {
+    delete snakeData.site_id;
+    delete snakeData.siteId;
+  }
 
   if (TEXT_ID_TABLES.has(tableName) && !snakeData.id && id) {
     snakeData.id = id;
@@ -325,20 +372,33 @@ export const updateDocument = async (
   data: Record<string, any>
 ): Promise<void> => {
   const tableName = getTableName(collectionName);
+  const isSiteOrTenant = tableName === 'sites' || tableName === 'tenants' || tableName === 'users';
   const enriched = { ...data };
   delete enriched.id;
   delete enriched.ID;
   delete (enriched as any)._id;
 
-  const enrichedWithSite = enrichWithActiveSite(enriched);
+  const enrichedWithSite = enrichWithActiveSite(enriched, tableName);
+  if (isSiteOrTenant) {
+    delete (enrichedWithSite as any).siteId;
+    delete (enrichedWithSite as any).site_id;
+  }
   
   const rawSnake = toSnakeCase({
     ...enrichedWithSite,
     modifiedBy: enrichedWithSite.modifiedBy,
     modifiedDate: new Date().toISOString(),
   });
+  if (isSiteOrTenant) {
+    delete (rawSnake as any).site_id;
+    delete (rawSnake as any).siteId;
+  }
   const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
   delete snakeData.id;
+  if (isSiteOrTenant) {
+    delete snakeData.site_id;
+    delete snakeData.siteId;
+  }
 
   if (id.includes('_')) {
     const parts = id.split('_');

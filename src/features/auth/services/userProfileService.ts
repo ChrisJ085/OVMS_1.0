@@ -20,9 +20,9 @@ export async function fetchUserProfile(uid: string): Promise<UserProfile | null>
       return null;
     }
 
-    const siteIds = Array.isArray(userRow.user_sites)
+    const siteIds = (Array.isArray(userRow.user_sites) && userRow.user_sites.length > 0)
       ? userRow.user_sites.map((us: any) => us.site_id)
-      : [];
+      : (Array.isArray(userRow.site_ids) ? userRow.site_ids : []);
 
     const profile: UserProfile = {
       id: userRow.id,

@@ -50,9 +50,9 @@ async function safeGetUserProfile(uid: string, callerEmail?: string): Promise<{ 
     }
 
     if (userRow && userRow.id === uid) {
-      const siteIds = Array.isArray(userRow.user_sites)
+      const siteIds = (Array.isArray(userRow.user_sites) && userRow.user_sites.length > 0)
         ? userRow.user_sites.map((us: any) => us.site_id)
-        : [];
+        : (Array.isArray(userRow.site_ids) ? userRow.site_ids : []);
       const camel = toCamelCase<any>(userRow);
       return { exists: true, data: { ...camel, siteIds } };
     }
@@ -279,28 +279,43 @@ router.post("/admin/provision-user", async (req, res) => {
     // Validate site assignments if provided:
     let validatedSiteIds: string[] = [];
     if (siteIds && Array.isArray(siteIds) && siteIds.length > 0) {
-      if (callerRoleUpper === 'TENANT_ADMIN' && targetTenantId) {
-        // Query database to ensure all siteIds belong to this tenant
-        const { data: tenantSites, error: siteCheckErr } = await supabaseAdmin
-          .from('sites')
-          .select('id')
-          .eq('tenant_id', targetTenantId)
-          .in('id', siteIds);
+      let query = supabaseAdmin.from('sites').select('id, site_code, tenant_id');
+      if (targetTenantId) {
+        query = query.eq('tenant_id', targetTenantId);
+      }
+      const { data: tenantSites, error: siteCheckErr } = await query;
 
-        if (siteCheckErr) {
-          return res.status(500).json({ success: false, error: "Failed to validate site assignments", stage: currentStage });
-        }
-        const validSiteIdSet = new Set((tenantSites || []).map((s: any) => s.id));
-        const invalidSites = siteIds.filter((sId: string) => !validSiteIdSet.has(sId));
-        if (invalidSites.length > 0) {
-          return res.status(403).json({
-            success: false,
-            error: "Forbidden: Cannot assign sites that do not belong to your tenant",
-            stage: currentStage
-          });
+      if (siteCheckErr) {
+        return res.status(500).json({ success: false, error: "Failed to validate site assignments", stage: currentStage });
+      }
+
+      const validIdToUuidMap = new Map<string, string>();
+      (tenantSites || []).forEach((s: any) => {
+        if (s.id) validIdToUuidMap.set(s.id, s.id);
+        if (s.site_code) validIdToUuidMap.set(s.site_code, s.id);
+      });
+
+      const resolvedSiteUuids: string[] = [];
+      const invalidSites: string[] = [];
+      for (const inputId of siteIds) {
+        const mappedUuid = validIdToUuidMap.get(String(inputId).trim());
+        if (mappedUuid) {
+          if (!resolvedSiteUuids.includes(mappedUuid)) {
+            resolvedSiteUuids.push(mappedUuid);
+          }
+        } else {
+          invalidSites.push(inputId);
         }
       }
-      validatedSiteIds = siteIds;
+
+      if (invalidSites.length > 0) {
+        return res.status(403).json({
+          success: false,
+          error: `Cannot assign sites: the following sites are invalid or do not belong to the target tenant: [${invalidSites.join(', ')}]`,
+          stage: currentStage
+        });
+      }
+      validatedSiteIds = resolvedSiteUuids;
     }
 
     // Cryptographically random password generation if not explicitly provided (no hardcoded credentials)
@@ -309,7 +324,7 @@ router.post("/admin/provision-user", async (req, res) => {
       ? temporaryPassword.trim()
       : secureRandomPassword;
 
-    // Create account via Supabase Admin Auth API
+    // Create account via Supabase Admin Auth API (or update password if user already exists)
     currentStage = "SUPABASE_AUTH_CREATE";
     const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
       email: cleanEmail,
@@ -320,19 +335,40 @@ router.post("/admin/provision-user", async (req, res) => {
       }
     });
 
+    let newUserId: string;
     if (authErr || !authData?.user?.id) {
       const errMsg = authErr?.message || 'Failed to create Supabase Auth user';
       const isDuplicate = errMsg.toLowerCase().includes('already') || errMsg.toLowerCase().includes('registered') || errMsg.toLowerCase().includes('exists');
-      const status = isDuplicate ? 409 : 400;
-      return res.status(status).json({
-        success: false,
-        error: isDuplicate ? 'An account with this email address already exists in Supabase Auth.' : errMsg,
-        stage: currentStage
-      });
-    }
+      
+      if (isDuplicate) {
+        currentStage = "SUPABASE_AUTH_LOOKUP_EXISTING";
+        const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+        const existingUser = (listData as any)?.users?.find((u: any) => u.email?.toLowerCase() === cleanEmail);
+        if (!existingUser) {
+          return res.status(400).json({ success: false, error: `Account exists in Auth but could not be located: ${errMsg}`, stage: currentStage });
+        }
+        newUserId = existingUser.id;
+        createdAuthUid = existingUser.id;
 
-    const newUserId = authData.user.id;
-    createdAuthUid = authData.user.id;
+        currentStage = "SUPABASE_AUTH_UPDATE_PASSWORD";
+        const { error: updateAuthErr } = await supabaseAdmin.auth.admin.updateUserById(newUserId, {
+          password: initialPassword,
+          user_metadata: { display_name: displayName.trim() }
+        });
+        if (updateAuthErr) {
+          return res.status(400).json({ success: false, error: `Failed to update password for existing user: ${updateAuthErr.message}`, stage: currentStage });
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: errMsg,
+          stage: currentStage
+        });
+      }
+    } else {
+      newUserId = authData.user.id;
+      createdAuthUid = authData.user.id;
+    }
 
     currentStage = "USER_PROFILE_CREATE";
     const { error: profileErr } = await supabaseAdmin.from('users').upsert({
@@ -342,6 +378,7 @@ router.post("/admin/provision-user", async (req, res) => {
       job_title: jobTitle ? String(jobTitle).trim() : '',
       role: targetRoleUpper,
       tenant_id: targetTenantId,
+      site_ids: validatedSiteIds,
       account_status: 'ACTIVE',
       requires_password_change: true,
       failed_login_attempts: 0,
@@ -368,29 +405,39 @@ router.post("/admin/provision-user", async (req, res) => {
 
     createdProfileInDb = true;
 
-    // Insert user site assignments into user_sites
+    // Insert user site assignments into user_sites table
+    let userSitesWarning: string | null = null;
     if (validatedSiteIds.length > 0) {
       currentStage = "USER_SITES_ASSIGN";
       const userSiteRows = validatedSiteIds.map((sId: string) => ({
         user_id: newUserId,
         site_id: sId
       }));
-      const { error: sitesErr } = await supabaseAdmin.from('user_sites').insert(userSiteRows);
+      const { error: sitesErr } = await supabaseAdmin
+        .from('user_sites')
+        .upsert(userSiteRows, { onConflict: 'user_id,site_id' });
+
       if (sitesErr) {
-        // Safe compensation: clean up profile and auth user
-        try {
-          await supabaseAdmin.from('users').delete().eq('id', newUserId);
-          if (createdAuthUid) {
-            await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
+        console.warn('[Provisioning Sites Assignment Warning]:', sitesErr.message);
+        // If the error is due to missing modified_date column on user_sites trigger
+        if (sitesErr.message?.includes('modified_date') || sitesErr.code === '42703') {
+          userSitesWarning = 'User provisioned and site permissions saved to user profile. Notice: The user_sites join table requires the migration in docs/migration_fix_user_sites.sql to be run in Supabase SQL editor.';
+        } else {
+          // Fatal unexpected error: rollback profile and auth user
+          try {
+            await supabaseAdmin.from('users').delete().eq('id', newUserId);
+            if (createdAuthUid) {
+              await supabaseAdmin.auth.admin.deleteUser(createdAuthUid);
+            }
+          } catch (rollbackErr) {
+            console.warn('[Provisioning Rollback] Error during sites assignment rollback:', rollbackErr);
           }
-        } catch (rollbackErr) {
-          console.warn('[Provisioning Rollback] Error during sites assignment rollback:', rollbackErr);
+          return res.status(500).json({
+            success: false,
+            error: `Failed to assign sites to newly provisioned user: ${sitesErr.message}. Ensure the user_sites table migration is applied.`,
+            stage: currentStage
+          });
         }
-        return res.status(500).json({
-          success: false,
-          error: `Failed to assign sites to newly provisioned user: ${sitesErr.message}`,
-          stage: currentStage
-        });
       }
     }
 
@@ -403,7 +450,7 @@ router.post("/admin/provision-user", async (req, res) => {
       action: 'USER_CREATION',
       entity_type: 'UserProfile',
       entity_id: newUserId,
-      details: { email: cleanEmail, role: targetRoleUpper, tenantId: targetTenantId }
+      details: { email: cleanEmail, role: targetRoleUpper, tenantId: targetTenantId, siteIds: validatedSiteIds, warning: userSitesWarning }
     });
 
     return res.status(200).json({
@@ -411,7 +458,9 @@ router.post("/admin/provision-user", async (req, res) => {
       message: `User ${cleanEmail} provisioned successfully`,
       uid: newUserId,
       email: cleanEmail,
-      role: targetRoleUpper
+      role: targetRoleUpper,
+      siteIds: validatedSiteIds,
+      warning: userSitesWarning
     });
 
   } catch (err: any) {
@@ -425,6 +474,379 @@ router.post("/admin/provision-user", async (req, res) => {
       }
     }
     return res.status(500).json({ success: false, error: err?.message || "Failed to process user provisioning request", stage: currentStage });
+  }
+});
+
+// Admin Update User Sites Endpoint
+router.post("/admin/update-user-sites", async (req, res) => {
+  let currentStage = "INIT";
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header", stage: "AUTH_CHECK" });
+    }
+
+    const callerToken = authHeader.substring(7).trim();
+    currentStage = "TOKEN_VERIFICATION";
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+
+    currentStage = "CALLER_PROFILE_LOOKUP";
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found", stage: currentStage });
+    }
+
+    const callerProfile = callerRes.data;
+    const callerRoleUpper = (callerProfile.role || '').toUpperCase().trim();
+
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER' && callerRoleUpper !== 'TENANT_ADMIN') {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Tenant Admins or Superusers can update user sites", stage: currentStage });
+    }
+
+    const { targetUserId, siteIds } = req.body || {};
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, error: "targetUserId is required", stage: "VALIDATION" });
+    }
+    if (!Array.isArray(siteIds)) {
+      return res.status(400).json({ success: false, error: "siteIds must be an array of site IDs", stage: "VALIDATION" });
+    }
+
+    currentStage = "TARGET_USER_LOOKUP";
+    const { data: targetUser, error: targetErr } = await supabaseAdmin
+      .from('users')
+      .select('id, email, role, tenant_id')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (targetErr || !targetUser) {
+      return res.status(404).json({ success: false, error: "Target user not found", stage: currentStage });
+    }
+
+    if (callerRoleUpper === 'TENANT_ADMIN' && targetUser.tenant_id !== callerProfile.tenantId) {
+      return res.status(403).json({ success: false, error: "Forbidden: You cannot modify users belonging to another tenant", stage: currentStage });
+    }
+
+    const targetTenantId = targetUser.tenant_id;
+    let validatedSiteIds: string[] = [];
+
+    if (siteIds.length > 0) {
+      let query = supabaseAdmin.from('sites').select('id, site_code, tenant_id');
+      if (targetTenantId) {
+        query = query.eq('tenant_id', targetTenantId);
+      }
+      const { data: tenantSites, error: siteCheckErr } = await query;
+      if (siteCheckErr) {
+        return res.status(500).json({ success: false, error: "Failed to validate site assignments", stage: currentStage });
+      }
+
+      const validIdToUuidMap = new Map<string, string>();
+      (tenantSites || []).forEach((s: any) => {
+        if (s.id) validIdToUuidMap.set(s.id, s.id);
+        if (s.site_code) validIdToUuidMap.set(s.site_code, s.id);
+      });
+
+      const resolvedSiteUuids: string[] = [];
+      const invalidSites: string[] = [];
+      for (const inputId of siteIds) {
+        const mappedUuid = validIdToUuidMap.get(String(inputId).trim());
+        if (mappedUuid) {
+          if (!resolvedSiteUuids.includes(mappedUuid)) {
+            resolvedSiteUuids.push(mappedUuid);
+          }
+        } else {
+          invalidSites.push(inputId);
+        }
+      }
+
+      if (invalidSites.length > 0) {
+        return res.status(403).json({
+          success: false,
+          error: `Cannot assign sites: invalid or unauthorized sites [${invalidSites.join(', ')}]`,
+          stage: currentStage
+        });
+      }
+      validatedSiteIds = resolvedSiteUuids;
+    }
+
+    // 1. Update site_ids directly on users profile table
+    currentStage = "USER_PROFILE_UPDATE";
+    const { error: userUpdateErr } = await supabaseAdmin
+      .from('users')
+      .update({
+        site_ids: validatedSiteIds,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', targetUserId);
+
+    if (userUpdateErr) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to update site assignments on user profile: ${userUpdateErr.message}`,
+        stage: currentStage
+      });
+    }
+
+    // 2. Sync to user_sites join table (with graceful fallback for trigger schema mismatch)
+    let userSitesWarning: string | null = null;
+    currentStage = "USER_SITES_DELETE";
+    const { error: deleteErr } = await supabaseAdmin
+      .from('user_sites')
+      .delete()
+      .eq('user_id', targetUserId);
+
+    if (deleteErr) {
+      console.warn('[update-user-sites] deleteErr:', deleteErr.message);
+    }
+
+    if (validatedSiteIds.length > 0) {
+      currentStage = "USER_SITES_INSERT";
+      const userSiteRows = validatedSiteIds.map((sId: string) => ({
+        user_id: targetUserId,
+        site_id: sId
+      }));
+
+      const { error: insertErr } = await supabaseAdmin
+        .from('user_sites')
+        .upsert(userSiteRows, { onConflict: 'user_id,site_id' });
+
+      if (insertErr) {
+        console.warn('[update-user-sites] user_sites insert warning:', insertErr.message);
+        if (insertErr.message?.includes('modified_date') || insertErr.code === '42703') {
+          userSitesWarning = 'Site assignments saved to user profile. Notice: Run migration_fix_user_sites.sql in Supabase SQL editor to sync the user_sites join table.';
+        } else {
+          return res.status(500).json({
+            success: false,
+            error: `Failed to insert user site assignments: ${insertErr.message}. Ensure the user_sites table migration is applied.`,
+            stage: currentStage
+          });
+        }
+      }
+    }
+
+    // Audit log
+    currentStage = "AUDIT_LOG_CREATE";
+    await supabaseAdmin.from('audit_logs').insert({
+      tenant_id: targetTenantId,
+      user_id: verifiedUid,
+      user_email: verifiedToken.email,
+      action: 'USER_SITES_UPDATE',
+      entity_type: 'UserProfile',
+      entity_id: targetUserId,
+      details: { targetEmail: targetUser.email, assignedSites: validatedSiteIds, warning: userSitesWarning }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `User site assignments updated successfully (${validatedSiteIds.length} sites assigned).`,
+      targetUserId,
+      siteIds: validatedSiteIds,
+      warning: userSitesWarning
+    });
+  } catch (err: any) {
+    console.error(`[Admin Update User Sites Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to update user sites", stage: currentStage });
+  }
+});
+
+// Admin Reset User Password Endpoint (Superuser or Tenant Admin)
+router.post("/admin/reset-user-password", async (req, res) => {
+  let currentStage = "INIT";
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header", stage: "AUTH_CHECK" });
+    }
+
+    const callerToken = authHeader.substring(7).trim();
+    currentStage = "TOKEN_VERIFICATION";
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+
+    currentStage = "CALLER_PROFILE_LOOKUP";
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found", stage: currentStage });
+    }
+
+    currentStage = "CALLER_AUTHORIZATION";
+    const callerProfile = callerRes.data;
+    const callerRoleUpper = (callerProfile.role || '').toUpperCase().trim();
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER' && callerRoleUpper !== 'TENANT_ADMIN') {
+      return res.status(403).json({ success: false, error: "Forbidden: Insufficient permissions to reset passwords", stage: currentStage });
+    }
+
+    currentStage = "VALIDATION";
+    const body = req.body || {};
+    const { userId, temporaryPassword } = body;
+
+    if (!userId || typeof userId !== 'string') {
+      return res.status(400).json({ success: false, error: "User ID is required", stage: currentStage });
+    }
+    if (!temporaryPassword || typeof temporaryPassword !== 'string' || temporaryPassword.trim().length < 8) {
+      return res.status(400).json({ success: false, error: "Temporary password must be at least 8 characters long", stage: currentStage });
+    }
+
+    currentStage = "TARGET_USER_LOOKUP";
+    const { data: targetUser, error: targetErr } = await supabaseAdmin
+      .from('users')
+      .select('id, email, tenant_id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (targetErr || !targetUser) {
+      return res.status(404).json({ success: false, error: "Target user not found", stage: currentStage });
+    }
+
+    if (callerRoleUpper === 'TENANT_ADMIN' && targetUser.tenant_id !== callerProfile.tenantId) {
+      return res.status(403).json({ success: false, error: "Forbidden: Tenant Admins can only reset passwords for users in their own tenant", stage: currentStage });
+    }
+
+    currentStage = "SUPABASE_AUTH_UPDATE";
+    const { error: updateAuthErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      password: temporaryPassword.trim(),
+      user_metadata: { requires_password_change: true }
+    });
+
+    if (updateAuthErr) {
+      return res.status(400).json({ success: false, error: `Failed to update auth password: ${updateAuthErr.message}`, stage: currentStage });
+    }
+
+    currentStage = "USER_PROFILE_UPDATE";
+    await supabaseAdmin
+      .from('users')
+      .update({
+        requires_password_change: true,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    currentStage = "AUDIT_LOG_CREATE";
+    await supabaseAdmin.from('audit_logs').insert({
+      tenant_id: targetUser.tenant_id,
+      user_id: verifiedUid,
+      user_email: verifiedToken.email,
+      action: 'RESET_USER_PASSWORD',
+      entity_type: 'UserProfile',
+      entity_id: userId,
+      details: { targetEmail: targetUser.email }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Temporary password reset successfully for ${targetUser.email}`,
+      temporaryPassword: temporaryPassword.trim()
+    });
+  } catch (err: any) {
+    console.error(`[Admin Reset Password Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to reset password", stage: currentStage });
+  }
+});
+
+// Admin Delete User Endpoint (Platform Superuser Only)
+router.post("/admin/delete-user", async (req, res) => {
+  let currentStage = "INIT";
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header", stage: "AUTH_CHECK" });
+    }
+
+    const callerToken = authHeader.substring(7).trim();
+    currentStage = "TOKEN_VERIFICATION";
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+
+    currentStage = "CALLER_PROFILE_LOOKUP";
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found", stage: currentStage });
+    }
+
+    currentStage = "CALLER_AUTHORIZATION";
+    const callerProfile = callerRes.data;
+    const callerRoleUpper = (callerProfile.role || '').toUpperCase().trim();
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER') {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can delete user accounts", stage: currentStage });
+    }
+
+    currentStage = "VALIDATION";
+    const body = req.body || {};
+    const { userId } = body;
+
+    if (!userId || typeof userId !== 'string') {
+      return res.status(400).json({ success: false, error: "User ID is required", stage: currentStage });
+    }
+
+    if (userId === verifiedUid) {
+      return res.status(400).json({ success: false, error: "Cannot delete your own active Platform Superuser account", stage: currentStage });
+    }
+
+    currentStage = "TARGET_USER_LOOKUP";
+    const { data: targetUser } = await supabaseAdmin
+      .from('users')
+      .select('id, email, role, tenant_id, display_name')
+      .eq('id', userId)
+      .maybeSingle();
+
+    // 1. Delete associated site links in user_sites table
+    currentStage = "USER_SITES_DELETE";
+    try {
+      await supabaseAdmin.from('user_sites').delete().eq('user_id', userId);
+    } catch (err: any) {
+      console.warn('[delete-user] user_sites delete non-fatal error:', err?.message);
+    }
+
+    // 2. Delete from public.users table
+    currentStage = "USER_PROFILE_DELETE";
+    const { error: profileDeleteErr } = await supabaseAdmin
+      .from('users')
+      .delete()
+      .eq('id', userId);
+
+    if (profileDeleteErr) {
+      return res.status(500).json({ success: false, error: `Failed to delete user profile from database: ${profileDeleteErr.message}`, stage: currentStage });
+    }
+
+    // 3. Delete from Supabase Auth
+    currentStage = "SUPABASE_AUTH_DELETE";
+    try {
+      const { error: authDeleteErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
+      if (authDeleteErr) {
+        console.warn(`[delete-user] Auth deletion notice for ${userId}:`, authDeleteErr.message);
+      }
+    } catch (authErr: any) {
+      console.warn(`[delete-user] Auth deletion exception for ${userId}:`, authErr?.message);
+    }
+
+    // 4. Record Audit Log
+    currentStage = "AUDIT_LOG_CREATE";
+    try {
+      await supabaseAdmin.from('audit_logs').insert({
+        tenant_id: targetUser?.tenant_id || null,
+        user_id: verifiedUid,
+        user_email: verifiedToken.email,
+        action: 'USER_DELETE',
+        entity_type: 'UserProfile',
+        entity_id: userId,
+        details: {
+          deletedEmail: targetUser?.email || userId,
+          deletedName: targetUser?.display_name,
+          deletedRole: targetUser?.role
+        }
+      });
+    } catch (auditErr: any) {
+      console.warn('[delete-user] Audit log insert warning:', auditErr?.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `User account (${targetUser?.email || userId}) deleted permanently from the database and authentication system.`,
+      deletedUserId: userId
+    });
+  } catch (err: any) {
+    console.error(`[Admin Delete User Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to delete user account", stage: currentStage });
   }
 });
 

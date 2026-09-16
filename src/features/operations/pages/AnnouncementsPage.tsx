@@ -6,6 +6,7 @@ import { Megaphone, AlertTriangle, Clock, Activity, CheckCircle, Ban, Edit, Plus
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
 import { hasPermission } from '../../../config/rolePermissions';
+import { subscribeToCollection } from '../../../services/dbService';
 
 export const AnnouncementsPage: React.FC = () => {
   const { tenantId, siteId } = useSiteContext();
@@ -13,6 +14,32 @@ export const AnnouncementsPage: React.FC = () => {
   const canManage = hasPermission(userProfile?.role, 'MANAGE_ANNOUNCEMENTS');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const unsub = subscribeToCollection<Announcement>(
+      'announcements',
+      [
+        { field: 'tenantId', op: '==', value: tenantId },
+        { field: 'siteId', op: '==', value: siteId }
+      ],
+      (data) => {
+        setAnnouncements(data);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error loading announcements:', err);
+        setLoading(false);
+      }
+    );
+
+    return () => unsub();
+  }, [tenantId, siteId]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);

@@ -85,58 +85,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
       return Array.from(sitesMap.values());
     }
 
-    // 2. Tenant Admin: query all active sites in their tenant
-    if (profile.role === 'TENANT_ADMIN') {
-      const targetTenantId = tenantId || 'TENANT_DEFAULT';
-      const sites = await querySitesWithTenant(targetTenantId);
-
-      // Look up tenant name
-      let tenantName = 'Tenant Organization';
-      if (targetTenantId && targetTenantId !== 'TENANT_DEFAULT' && targetTenantId !== 'GLOBAL') {
-        try {
-          const { data: tenantRow } = await supabase
-            .from('tenants')
-            .select('name')
-            .eq('id', targetTenantId)
-            .maybeSingle();
-          if (tenantRow?.name) {
-            tenantName = tenantRow.name;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      (sites || []).forEach((row: any) => {
-        const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
-        if (isActive) {
-          const key = `${targetTenantId}_${row.id}`;
-          sitesMap.set(key, {
-            tenantId: targetTenantId,
-            tenantName: row.tenants?.name || tenantName,
-            siteId: row.id,
-            siteName: row.name || row.code || row.id,
-            timezone: row.timezone || 'Europe/London',
-          });
-        }
-      });
-
-      // If no sites exist yet in this tenant, provision a tenant workspace setup site
-      // so Tenant Admins can always access administration, settings, and the onboarding wizard
-      if (sitesMap.size === 0) {
-        sitesMap.set(`${targetTenantId}_setup`, {
-          tenantId: targetTenantId,
-          tenantName,
-          siteId: 'SETUP_REQUIRED',
-          siteName: 'Primary Site (Setup Required)',
-          timezone: 'Europe/London',
-        });
-      }
-
-      return Array.from(sitesMap.values());
-    }
-
-    // 3. Operational roles (PLANNER, WAREHOUSE_OPERATOR, VIEWER, DISPLAY):
+    // 2. Resolve assigned site IDs for all other roles (including TENANT_ADMIN and operational roles)
     let userSiteIds = Array.isArray(profile.siteIds) ? profile.siteIds : [];
 
     if (userSiteIds.length === 0 && profile.uid) {
@@ -175,9 +124,14 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
     }
 
     (sites || []).forEach((row: any) => {
-      // If user has specific assigned siteIds, match on id or code;
-      // If user has no specific site restrictions, grant access to all active sites of their tenant.
-      const isAssigned = userSiteIds.length === 0 || userSiteIds.includes(row.id) || userSiteIds.includes(row.code);
+      // If user has specific assigned siteIds in user_sites, strictly enforce those;
+      // If user has no specific site restrictions (userSiteIds.length === 0):
+      //   - TENANT_ADMIN gets all active sites of their tenant.
+      //   - Operational roles get all active sites of their tenant.
+      const isAssigned = userSiteIds.length === 0 
+        ? true 
+        : (userSiteIds.includes(row.id) || userSiteIds.includes(row.code));
+
       const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
       if (isAssigned && isActive) {
         const key = `${targetTenantId}_${row.id}`;
@@ -190,6 +144,17 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
         });
       }
     });
+
+    // If Tenant Admin with NO assigned site restrictions and 0 sites exist in tenant, provision setup required site
+    if (profile.role === 'TENANT_ADMIN' && userSiteIds.length === 0 && sitesMap.size === 0) {
+      sitesMap.set(`${targetTenantId}_setup`, {
+        tenantId: targetTenantId,
+        tenantName,
+        siteId: 'SETUP_REQUIRED',
+        siteName: 'Primary Site (Setup Required)',
+        timezone: 'Europe/London',
+      });
+    }
 
     const results = Array.from(sitesMap.values());
     if (userSiteIds.length > 0 && results.length === 0) {

@@ -129,6 +129,9 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
       result.line_name = name;
     }
   } else if (tableName === 'sites') {
+    delete result.site_id;
+    delete result.siteId;
+    delete result.site;
     const code = result.code || result.site_code;
     const name = result.name || result.site_name;
     if (code !== undefined) {
@@ -139,6 +142,14 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
       result.name = name;
       result.site_name = name;
     }
+  } else if (tableName === 'tenants') {
+    delete result.site_id;
+    delete result.siteId;
+    delete result.site;
+  } else if (tableName === 'users') {
+    delete result.site_id;
+    delete result.siteId;
+    delete result.site;
   } else if (tableName === 'destinations') {
     const code = result.code || result.destination_code;
     const name = result.name || result.destination_name;

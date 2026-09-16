@@ -164,8 +164,13 @@ export const ConfigurationPage: React.FC = () => {
       tenantId: effectiveTenantId,
     };
 
-    if (siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
+    if (activeTab.siteScoped && siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
       payload.siteId = siteId;
+    }
+
+    if (activeTab.id === 'sites') {
+      delete payload.siteId;
+      delete payload.site_id;
     }
 
     // Ensure alias columns are satisfied for PostgreSQL constraints

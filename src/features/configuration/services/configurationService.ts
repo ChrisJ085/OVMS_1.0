@@ -32,29 +32,35 @@ export const createConfigItem = async <T extends { tenantId: string; siteId?: st
   codeValue: string
 ): Promise<ServiceResult<string>> => {
   try {
+    const isSitesTable = collectionName === 'sites' || collectionName === collections.SITES;
     const isUnique = await isUniqueCode(
       collectionName,
       data.tenantId,
-      data.siteId || '',
+      isSitesTable ? '' : (data.siteId || ''),
       codeField,
       trimCode(codeValue)
     );
     if (!isUnique) {
       return { success: false, error: `Code ${codeValue} already exists.` };
     }
+    const cleanData = { ...data };
+    if (isSitesTable) {
+      delete (cleanData as any).siteId;
+      delete (cleanData as any).site_id;
+    }
     const id = await createDocument<any>(collectionName, {
-      ...data,
+      ...cleanData,
       status: 'active'
     });
     
     await createAuditLog({
       tenantId: data.tenantId,
-      siteId: data.siteId || "",
+      siteId: isSitesTable ? id : (data.siteId || ""),
       eventType: "CONFIG_CREATE",
       entityType: collectionName,
       entityId: id,
       summary: "Created config item " + codeValue,
-      newValue: { ...data, status: "active" },
+      newValue: { ...cleanData, status: "active" },
       performedBy: (data as any).createdBy || "system",
       timestamp: new Date().toISOString()
     });

@@ -63,10 +63,9 @@ export const createProduct = async (
 
     // Synchronize legacy fields with first configuration
     const primaryConfig = data.configurations[0];
-    const { siteId: _unusedSiteId, ...productData } = data as any;
 
     const id = await createDocument<any>(COLLECTION_NAME, {
-      ...productData,
+      ...data,
       productCode: codeValue,
       description: trimDescription(data.description),
       unitOfMeasureId: primaryConfig.unitOfMeasureId,
@@ -134,8 +133,7 @@ export const updateProduct = async (
       }
     }
 
-    const { siteId: _unusedSiteId, ...updatePayload } = data as any;
-    await updateDocument(COLLECTION_NAME, id, updatePayload);
+    await updateDocument(COLLECTION_NAME, id, data);
     return { success: true };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -160,13 +158,19 @@ export const setProductStatus = async (
 
 export const subscribeToProducts = (
   tenantId: string,
-  _siteId: string,
+  siteId: string,
   onUpdate: (products: Product[]) => void,
   onError: (error: Error) => void
 ) => {
-  const constraints = [
-    { field: 'tenantId', op: '==' as const, value: tenantId }
-  ];
+  const constraints: any[] = [];
+
+  if (tenantId && tenantId !== 'GLOBAL') {
+    constraints.push({ field: 'tenantId', op: '==' as const, value: tenantId });
+  }
+
+  if (siteId && siteId !== 'GLOBAL' && siteId !== 'SETUP_REQUIRED') {
+    constraints.push({ field: 'siteId', op: '==' as const, value: siteId });
+  }
   
   return subscribeToCollection<Product>(
     COLLECTION_NAME,

@@ -55,6 +55,29 @@ export const isUniqueCode = async (
 
   const { data, error } = await dbQuery;
   if (error) {
+    // If the error is specifically "column ... does not exist" (Postgres code 42703),
+    // it likely means the table doesn't have a site_id column.
+    // In this case, we should log a warning instead of crashing, and treat it 
+    // as "not found" (or let the caller handle it based on requirements).
+    // Given the user wants to check for duplicates, we should return false 
+    // if we can't perform the site-scoped check safely.
+    if (error.code === '42703') {
+      console.warn(`[isUniqueCode] Table ${tableName} does not support site-scoped filtering (missing site_id). Falling back to global check.`);
+      // If we can't filter by site, re-run query without the site filter.
+      let globalQuery = supabase
+        .from(tableName)
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq(snakeCodeField, codeValue);
+      
+      const { data: globalData, error: globalError } = await globalQuery;
+      if (globalError) {
+        console.error(`[isUniqueCode] Error in global query for ${tableName}:`, globalError);
+        throw globalError;
+      }
+      return !globalData || globalData.length === 0;
+    }
+    
     console.error(`[isUniqueCode] Error querying table ${tableName}:`, error);
     throw error;
   }

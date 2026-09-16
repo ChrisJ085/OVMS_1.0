@@ -9,6 +9,7 @@ import { DataFreshnessHoverCard } from './DataFreshnessHoverCard';
 import { HelpButton } from '../../features/learning/components/HelpButton';
 import { ActivePageStarButton } from './ActivePageStarButton';
 import { useSidebar } from '../../contexts/SidebarContext';
+import { supabase } from '../../config/supabase';
 
 export const Header: React.FC = () => {
   const { userProfile, logout } = useAuth();
@@ -54,6 +55,50 @@ export const Header: React.FC = () => {
     }
   };
 
+  const TenantNameDisplay = ({ tenantId }: { tenantId: string }) => {
+    const { site, availableSites } = useSiteContext();
+    const siteTenantName = site?.tenantName || availableSites.find(s => s.tenantId === tenantId)?.tenantName;
+    const [name, setName] = React.useState<string>(() => {
+      if (siteTenantName && siteTenantName !== 'Tenant Organization') return siteTenantName;
+      return '';
+    });
+
+    React.useEffect(() => {
+      if (siteTenantName && siteTenantName !== 'Tenant Organization') {
+        setName(siteTenantName);
+        return;
+      }
+      const fetchName = async () => {
+        try {
+          const { data } = await supabase
+            .from('tenants')
+            .select('name, tenant_name, tenant_code')
+            .eq('id', tenantId)
+            .maybeSingle();
+          if (data) {
+            setName(data.tenant_name || data.name || data.tenant_code || 'Organization');
+          } else {
+            if (tenantId && !tenantId.includes('-')) {
+              setName(tenantId);
+            } else {
+              setName('Organization');
+            }
+          }
+        } catch {
+          setName('Organization');
+        }
+      };
+      fetchName();
+    }, [tenantId, siteTenantName]);
+
+    if (!name) return null;
+    return (
+      <span className="text-[10px] text-slate-500 font-medium hidden lg:inline">
+        Tenant: <span className="text-slate-300 font-semibold">{name}</span>
+      </span>
+    );
+  };
+
   return (
     <header className="h-16 bg-slate-950 border-b border-slate-800 flex items-center justify-between px-6 shrink-0 select-none">
       <div className="flex items-center gap-3 text-slate-300">
@@ -71,9 +116,7 @@ export const Header: React.FC = () => {
                   {roleLabels[userProfile.role] || userProfile.role}
                 </span>
                 {userProfile.tenantId && (
-                  <span className="text-[10px] text-slate-500 font-medium hidden lg:inline">
-                    Tenant: {userProfile.tenantId}
-                  </span>
+                  <TenantNameDisplay tenantId={userProfile.tenantId} />
                 )}
               </div>
             </div>

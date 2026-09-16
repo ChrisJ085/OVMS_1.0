@@ -38,7 +38,15 @@ import {
   Tag,
   Sliders,
   LineChart,
-  ListChecks
+  ListChecks,
+  RefreshCw,
+  Copy,
+  Check,
+  Eye,
+  EyeOff,
+  Mail,
+  ExternalLink,
+  Trash2
 } from 'lucide-react';
 import { UserProfile, UserRole, AccountStatus, Tenant } from '../../../types/auth';
 import { useAuth } from '../../auth/context/AuthContext';
@@ -72,6 +80,99 @@ const ONBOARDING_STEPS = [
   { id: 8, title: 'Planning Rules', icon: LineChart, description: 'Production planning constraints' },
   { id: 9, title: 'Readiness Review', icon: CheckCircle, description: 'Readiness checks & completion' }
 ];
+
+// Helper to generate strong system-generated temporary password
+const generateSecureTemporaryPassword = (): string => {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%*?";
+  
+  let pwd = "";
+  // 3 upper, 4 lower, 3 digits, 2 symbols = 12 chars
+  for (let i = 0; i < 3; i++) pwd += upper[Math.floor(Math.random() * upper.length)];
+  for (let i = 0; i < 4; i++) pwd += lower[Math.floor(Math.random() * lower.length)];
+  for (let i = 0; i < 3; i++) pwd += digits[Math.floor(Math.random() * digits.length)];
+  for (let i = 0; i < 2; i++) pwd += symbols[Math.floor(Math.random() * symbols.length)];
+  
+  return pwd.split('').sort(() => 0.5 - Math.random()).join('');
+};
+
+export interface ProvisionedWelcomeModalData {
+  email: string;
+  displayName: string;
+  temporaryPassword: string;
+  role: string;
+  tenantName: string;
+  assignedSites: string[];
+  loginUrl: string;
+  type?: 'PROVISION' | 'RESET';
+}
+
+const buildWelcomeEmailText = (data: ProvisionedWelcomeModalData): string => {
+  const isReset = data.type === 'RESET';
+  const sitesLine = data.assignedSites && data.assignedSites.length > 0
+    ? `Assigned Sites: ${data.assignedSites.join(', ')}\n`
+    : '';
+
+  if (isReset) {
+    return `Subject: OpsVis - Your Password Has Been Reset
+
+Hi ${data.displayName || 'there'},
+
+Your password for the Operational Visibility Management System (OpsVis) has been reset by your system administrator.
+
+Below are your updated account login credentials:
+--------------------------------------------------
+Portal URL: ${data.loginUrl}
+Username / Email: ${data.email}
+New Temporary Password: ${data.temporaryPassword}
+Role: ${data.role.replace(/_/g, ' ')}
+Organization: ${data.tenantName}
+${sitesLine}--------------------------------------------------
+
+SECURITY NOTICE:
+For security reasons, you will be prompted to set a new password upon your next log in.
+
+Getting Started:
+1. Visit ${data.loginUrl}
+2. Log in using your email address and the new temporary password above.
+3. You will be prompted to create your new secure personal password.
+
+If you did not request this password reset or have any questions, please contact your system administrator.
+
+Best regards,
+OpsVis Administration`;
+  }
+
+  return `Subject: Welcome to OpsVis - Your Account Login Credentials
+
+Hi ${data.displayName || 'there'},
+
+Your user account for the Operational Visibility Management System (OpsVis) has been created.
+
+Below are your account login credentials:
+--------------------------------------------------
+Portal URL: ${data.loginUrl}
+Username / Email: ${data.email}
+Temporary Password: ${data.temporaryPassword}
+Role: ${data.role.replace(/_/g, ' ')}
+Organization: ${data.tenantName}
+${sitesLine}--------------------------------------------------
+
+SECURITY NOTICE:
+For security reasons, you will be prompted to set a new password upon your initial log in.
+
+Getting Started:
+1. Visit ${data.loginUrl}
+2. Log in using your email address and the temporary password above.
+3. You will be prompted to create your new secure personal password.
+
+If you have any questions or require assistance, please contact your system administrator.
+
+Best regards,
+OpsVis Administration`;
+};
 
 export const AdminOverviewPage: React.FC = () => {
   const { userProfile, currentUser, user } = useAuth();
@@ -308,9 +409,29 @@ export const AdminOverviewPage: React.FC = () => {
   const [newUserJobTitle, setNewUserJobTitle] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('VIEWER');
   const [newUserTenantId, setNewUserTenantId] = useState('');
-  const [newUserTempPass, setNewUserTempPass] = useState('');
+  const [newUserTempPass, setNewUserTempPass] = useState(() => generateSecureTemporaryPassword());
+  const [showNewUserTempPass, setShowNewUserTempPass] = useState(true);
+  const [copiedFormTempPass, setCopiedFormTempPass] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
   const [creatingUserMsg, setCreatingUserMsg] = useState<string | null>(null);
+
+  // Welcome modal after provisioning / password reset state
+  const [provisionedUserModal, setProvisionedUserModal] = useState<ProvisionedWelcomeModalData | null>(null);
+  const [copiedWelcomeEmail, setCopiedWelcomeEmail] = useState(false);
+  const [copiedWelcomePass, setCopiedWelcomePass] = useState(false);
+
+  // Password reset modal states
+  const [resettingPasswordUser, setResettingPasswordUser] = useState<UserProfile | null>(null);
+  const [tempPassToReset, setTempPassToReset] = useState<string>('');
+  const [showTempPassToReset, setShowTempPassToReset] = useState(true);
+  const [copiedResetPass, setCopiedResetPass] = useState(false);
+  const [resettingPassLoading, setResettingPassLoading] = useState(false);
+  const [resetPassMsg, setResetPassMsg] = useState<string | null>(null);
+
+  // User deletion modal states (Platform Superuser Only)
+  const [deletingUser, setDeletingUser] = useState<UserProfile | null>(null);
+  const [deletingUserLoading, setDeletingUserLoading] = useState(false);
+  const [deletingUserMsg, setDeletingUserMsg] = useState<string | null>(null);
 
   // New Tenant form states
   const [newTenantName, setNewTenantName] = useState('');
@@ -321,12 +442,18 @@ export const AdminOverviewPage: React.FC = () => {
   const [availableSites, setAvailableSites] = useState<any[]>([]);
   const [selectedSites, setSelectedSites] = useState<string[]>([]);
 
+  // Managing Assigned Sites for Existing User Modal State
+  const [managingUserSites, setManagingUserSites] = useState<UserProfile | null>(null);
+  const [editingUserSitesList, setEditingUserSitesList] = useState<string[]>([]);
+  const [savingUserSites, setSavingUserSites] = useState(false);
+  const [manageSitesMsg, setManageSitesMsg] = useState<string | null>(null);
+
   // Fetch stats and site settings
   useEffect(() => {
     fetchOverviewStats();
   }, [tenantId, siteId]);
 
-  // Fetch Users Directory
+  // Fetch Users Directory with user_sites mapping
   const fetchUsers = async () => {
     if (!userProfile) return;
     setLoadingUsers(true);
@@ -338,12 +465,49 @@ export const AdminOverviewPage: React.FC = () => {
       } else {
         usersDocs = await getDocuments<UserProfile>('users', [where('tenantId', '==', userProfile.tenantId)]);
       }
+
+      // Fetch user site assignments from user_sites table
+      const userSitesMap: Record<string, string[]> = {};
+      try {
+        const { data: userSitesData } = await supabase.from('user_sites').select('user_id, site_id');
+        if (userSitesData) {
+          userSitesData.forEach((row: any) => {
+            if (!userSitesMap[row.user_id]) userSitesMap[row.user_id] = [];
+            userSitesMap[row.user_id].push(row.site_id);
+          });
+        }
+      } catch (siteErr) {
+        console.warn('Could not query user_sites table:', siteErr);
+      }
+
+      // Determine current user's assigned site IDs
+      const currentUserSitesFromMap = userSitesMap[userProfile.uid] || [];
+      const currentUserSitesFromProfile = Array.isArray(userProfile.siteIds) ? userProfile.siteIds : [];
+      const currentUserSiteIds = currentUserSitesFromMap.length > 0 ? currentUserSitesFromMap : currentUserSitesFromProfile;
       
       let list: UserProfile[] = [];
       usersDocs.forEach(data => {
         // Filter out platform superusers for non-superusers locally to avoid composite index requirement
         if (userProfile.role === 'PLATFORM_SUPERUSER' || data.role !== 'PLATFORM_SUPERUSER') {
-          list.push({ uid: data.id, ...data } as UserProfile);
+          const mappedSites = userSitesMap[data.id];
+          const directSites = (data as any).siteIds || (data as any).site_ids || [];
+          const userSiteIds = (mappedSites && mappedSites.length > 0) ? mappedSites : directSites;
+          
+          // Site-scoped user visibility:
+          // A user who isn't a PLATFORM_SUPERUSER should only be able to see users associated with the sites they are associated with.
+          if (userProfile.role !== 'PLATFORM_SUPERUSER' && currentUserSiteIds.length > 0) {
+            const isSelf = data.id === userProfile.uid;
+            const sharesSite = Array.isArray(userSiteIds) && userSiteIds.some((sId: string) => currentUserSiteIds.includes(sId));
+            if (!isSelf && !sharesSite) {
+              return; // Skip user who does not share any assigned sites with current user
+            }
+          }
+
+          list.push({
+            uid: data.id,
+            ...data,
+            siteIds: userSiteIds
+          } as UserProfile);
         }
       });
       setUsersList(list);
@@ -352,6 +516,49 @@ export const AdminOverviewPage: React.FC = () => {
       setUsersError('Failed to load user directory. Ensure you have authorized access.');
     } finally {
       setLoadingUsers(false);
+    }
+  };
+
+  const handleOpenManageSites = (targetUser: UserProfile) => {
+    setManagingUserSites(targetUser);
+    setEditingUserSitesList(targetUser.siteIds || []);
+    setManageSitesMsg(null);
+  };
+
+  const handleSaveUserSites = async () => {
+    if (!managingUserSites) return;
+    setSavingUserSites(true);
+    setManageSitesMsg(null);
+    try {
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+      const apiRes = await fetch('/api/admin/update-user-sites', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          targetUserId: managingUserSites.uid || managingUserSites.id,
+          siteIds: editingUserSitesList
+        })
+      });
+
+      const resData = await apiRes.json();
+      if (!apiRes.ok || !resData.success) {
+        throw new Error(resData.error || 'Failed to update site assignments');
+      }
+
+      setManageSitesMsg('Site assignments saved successfully!');
+      await fetchUsers();
+      setTimeout(() => {
+        setManagingUserSites(null);
+      }, 1200);
+    } catch (err: any) {
+      console.error('Error saving user sites:', err);
+      setManageSitesMsg(`Error: ${err.message || 'Failed to update sites'}`);
+    } finally {
+      setSavingUserSites(false);
     }
   };
 
@@ -394,27 +601,61 @@ export const AdminOverviewPage: React.FC = () => {
   }, [userProfile]);
 
   useEffect(() => {
-    const fetchSitesForProvisioning = async () => {
-      const targetTenantId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId : userProfile?.tenantId;
-      if (!targetTenantId) {
-        setAvailableSites([]);
-        setSelectedSites([]);
-        return;
-      }
+    const fetchSitesForAdmin = async () => {
+      if (!userProfile) return;
       try {
-        const sitesDocs = await getDocuments<any>('sites', [where('tenantId', '==', targetTenantId)]);
+        let sitesDocs: any[];
+        if (userProfile.role === 'PLATFORM_SUPERUSER') {
+          sitesDocs = await getDocuments<any>('sites');
+        } else if (userProfile.tenantId) {
+          sitesDocs = await getDocuments<any>('sites', [where('tenantId', '==', userProfile.tenantId)]);
+        } else {
+          sitesDocs = [];
+        }
+
+        // Determine current user's permitted site IDs
+        let currentUserAssignedSiteIds: string[] = [];
+        if (userProfile.role !== 'PLATFORM_SUPERUSER') {
+          try {
+            const { data: userSitesData } = await supabase.from('user_sites').select('site_id').eq('user_id', userProfile.uid);
+            if (userSitesData && userSitesData.length > 0) {
+              currentUserAssignedSiteIds = userSitesData.map((r: any) => r.site_id);
+            } else if (Array.isArray(userProfile.siteIds) && userProfile.siteIds.length > 0) {
+              currentUserAssignedSiteIds = userProfile.siteIds;
+            }
+          } catch (e) {
+            if (Array.isArray(userProfile.siteIds)) {
+              currentUserAssignedSiteIds = userProfile.siteIds;
+            }
+          }
+        }
+
         const sites: any[] = [];
         sitesDocs.forEach(data => {
-          const sId = data.siteId || data.siteCode || data.id;
-          sites.push({ id: data.id, siteId: sId, ...data });
+          const siteIdentifierMatches = currentUserAssignedSiteIds.length === 0 ||
+            currentUserAssignedSiteIds.includes(data.id) ||
+            currentUserAssignedSiteIds.includes(data.siteId) ||
+            currentUserAssignedSiteIds.includes(data.siteCode) ||
+            currentUserAssignedSiteIds.includes(data.code);
+
+          if (userProfile.role === 'PLATFORM_SUPERUSER' || siteIdentifierMatches) {
+            sites.push({
+              id: data.id,
+              siteId: data.id,
+              siteCode: data.siteCode || data.code || '',
+              siteName: data.siteName || data.name || data.siteCode || data.id,
+              tenantId: data.tenantId || data.tenant_id,
+              ...data
+            });
+          }
         });
         setAvailableSites(sites);
       } catch (err) {
-        console.error("Failed to load sites for provisioning:", err);
+        console.error("Failed to load sites for admin:", err);
       }
     };
-    fetchSitesForProvisioning();
-  }, [newUserTenantId, userProfile?.tenantId, userProfile?.role]);
+    fetchSitesForAdmin();
+  }, [userProfile]);
 
   // Handle Account Unlock
   const handleUnlockUser = async (targetUid: string) => {
@@ -460,35 +701,118 @@ export const AdminOverviewPage: React.FC = () => {
     fetchUsers();
   };
 
-  // Handle Password Reset to Temp Pass
-  const handleResetPassword = async (targetUid: string) => {
-    const tempPass = prompt('Enter new temporary password for user (minimum 8 characters):', '');
-    if (!tempPass) return;
-    if (tempPass.length < 8) {
-      alert('Password must be at least 8 characters long.');
+  // Handle Password Reset Modal Opening
+  const handleOpenResetPassword = (user: UserProfile) => {
+    setResettingPasswordUser(user);
+    setTempPassToReset(generateSecureTemporaryPassword());
+    setShowTempPassToReset(true);
+    setCopiedResetPass(false);
+    setResetPassMsg(null);
+  };
+
+  // Handle Confirming Password Reset via Backend API
+  const handleConfirmResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingPasswordUser) return;
+    if (!tempPassToReset || tempPassToReset.trim().length < 8) {
+      setResetPassMsg('Temporary password must be at least 8 characters long.');
       return;
     }
 
+    setResettingPassLoading(true);
+    setResetPassMsg(null);
     try {
-      const { error: updateErr } = await supabase
-        .from('users')
-        .update(toSnakeCase({
-          requiresPasswordChange: true,
-          accountStatus: 'ACTIVE',
-          failedLoginAttempts: 0,
-          failedAttemptWindowStartedAt: null,
-          lockedAt: null,
-          modifiedBy: userProfile?.uid || 'ADMIN',
-          modifiedDate: new Date().toISOString()
-        }))
-        .eq('id', targetUid);
-      if (updateErr) throw updateErr;
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+      const targetUid = resettingPasswordUser.uid || resettingPasswordUser.id;
 
-      alert(`User profile updated. Please instruct user to log in and change their password. Temporary password configured in profile reset: ${tempPass}`);
-    } catch (directErr: any) {
-      alert(`Reset failed: ${directErr.message}`);
+      const res = await fetch('/api/admin/reset-user-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          userId: targetUid,
+          temporaryPassword: tempPassToReset.trim()
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        throw new Error(resData.error || 'Failed to reset password');
+      }
+
+      // Capture information for notification modal
+      const targetTenantObj = tenantsList.find(t => t.id === resettingPasswordUser.tenantId);
+      const tenantName = targetTenantObj?.tenantName || (resettingPasswordUser.tenantId ? 'Assigned Organization' : 'Global (Superuser)');
+      const assignedSitesFormatted = (resettingPasswordUser.siteIds || []).map(sId => {
+        const s = availableSites.find(site => site.id === sId || site.siteId === sId);
+        return s ? `${s.siteName || s.name || sId} (${s.siteCode || s.code || sId})` : sId;
+      });
+
+      // Close reset prompt modal and immediately open credential copy modal with RESET type
+      setResettingPasswordUser(null);
+      setProvisionedUserModal({
+        email: resettingPasswordUser.email,
+        displayName: resettingPasswordUser.displayName || resettingPasswordUser.email,
+        temporaryPassword: tempPassToReset.trim(),
+        role: resettingPasswordUser.role,
+        tenantName,
+        assignedSites: assignedSitesFormatted,
+        loginUrl: 'https://www.opsvis.uk/',
+        type: 'RESET'
+      });
+
+      await fetchUsers();
+    } catch (err: any) {
+      console.error('Password reset failed:', err);
+      setResetPassMsg(`Error: ${err.message || 'Failed to reset password'}`);
+    } finally {
+      setResettingPassLoading(false);
     }
-    fetchUsers();
+  };
+
+  // Handle User Deletion Modal Opening (Superuser only)
+  const handleOpenDeleteUser = (user: UserProfile) => {
+    setDeletingUser(user);
+    setDeletingUserMsg(null);
+  };
+
+  // Handle Confirming User Deletion via Backend API
+  const handleConfirmDeleteUser = async () => {
+    if (!deletingUser) return;
+    setDeletingUserLoading(true);
+    setDeletingUserMsg(null);
+    try {
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+      const targetUid = deletingUser.uid || deletingUser.id;
+
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          userId: targetUid
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        throw new Error(resData.error || 'Failed to delete user account');
+      }
+
+      setDeletingUser(null);
+      await fetchUsers();
+    } catch (err: any) {
+      console.error('User deletion failed:', err);
+      setDeletingUserMsg(`Error: ${err.message || 'Failed to delete user account'}`);
+    } finally {
+      setDeletingUserLoading(false);
+    }
   };
 
   // Handle New User Provisioning
@@ -555,14 +879,39 @@ export const AdminOverviewPage: React.FC = () => {
         throw new Error(fullMsg);
       }
 
-      setCreatingUserMsg(`Success! ${apiData.message || `User account and database profile created for ${newUserEmail.toLowerCase().trim()}.`}`);
+      const provisionedEmail = newUserEmail.toLowerCase().trim();
+      const provisionedName = newUserDisplayName.trim();
+      const provisionedPass = newUserTempPass;
+      const provisionedRole = newUserRole;
+      const targetTenantObj = tenantsList.find(t => t.id === actualTenantId);
+      const tenantName = targetTenantObj?.tenantName || (actualTenantId ? 'Assigned Organization' : 'Global (Superuser)');
+      
+      const assignedSitesFormatted = sitesArray.map(sId => {
+        const s = availableSites.find(site => site.id === sId || site.siteId === sId);
+        return s ? `${s.siteName || s.name || sId} (${s.siteCode || s.code || sId})` : sId;
+      });
 
-      // Reset form
+      // Show welcome email modal with credentials
+      setProvisionedUserModal({
+        email: provisionedEmail,
+        displayName: provisionedName,
+        temporaryPassword: provisionedPass,
+        role: provisionedRole,
+        tenantName,
+        assignedSites: assignedSitesFormatted,
+        loginUrl: 'https://www.opsvis.uk/'
+      });
+      setCopiedWelcomeEmail(false);
+      setCopiedWelcomePass(false);
+
+      setCreatingUserMsg(`Success! ${apiData.message || `User account and database profile created for ${provisionedEmail}.`}`);
+
+      // Reset form with a newly generated password for the next user
       setNewUserEmail('');
       setNewUserDisplayName('');
       setNewUserJobTitle('');
       setSelectedSites([]);
-      setNewUserTempPass('');
+      setNewUserTempPass(generateSecureTemporaryPassword());
     } catch (apiErr: any) {
       console.error('Provisioning user failed:', apiErr);
       let errorText = apiErr.message || 'Failed to create user account.';
@@ -1330,9 +1679,27 @@ export const AdminOverviewPage: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-3 pr-2 text-xs text-slate-400">
-                            <div>Tenant: <span className="font-semibold">{user.tenantId || 'Global'}</span></div>
-                            <div className="mt-0.5 text-[10px] text-slate-500 max-w-[140px] truncate" title={user.siteIds && user.siteIds.length > 0 ? user.siteIds.map(id => availableSites.find(s => s.siteId === id || s.id === id)?.siteName || id).join(', ') : 'None'}>
-                              Sites: {user.siteIds && user.siteIds.length > 0 ? user.siteIds.map(id => availableSites.find(s => s.siteId === id || s.id === id)?.siteName || id).join(', ') : 'None'}
+                            <div>
+                              Tenant: <span className="font-semibold text-slate-300">{tenantsList.find(t => t.id === user.tenantId)?.tenantName || user.tenantId || 'Global'}</span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1 max-w-[200px]">
+                              {user.siteIds && user.siteIds.length > 0 ? (
+                                user.siteIds.map(sId => {
+                                  const matchedSite = availableSites.find(s => s.id === sId || s.siteId === sId);
+                                  const display = matchedSite ? `${matchedSite.siteName} (${matchedSite.siteCode || ''})` : sId;
+                                  return (
+                                    <span 
+                                      key={sId}
+                                      className="inline-flex items-center text-[10px] bg-slate-900 text-slate-300 px-1.5 py-0.5 rounded border border-slate-800 truncate"
+                                      title={display}
+                                    >
+                                      {matchedSite?.siteName || display}
+                                    </span>
+                                  );
+                                })
+                              ) : (
+                                <span className="text-[10px] text-slate-500 italic">No sites assigned</span>
+                              )}
                             </div>
                           </td>
                           <td className="py-3 pr-2">
@@ -1352,6 +1719,13 @@ export const AdminOverviewPage: React.FC = () => {
                             )}
                           </td>
                           <td className="py-3 text-right space-x-1 whitespace-nowrap">
+                            <button
+                              onClick={() => handleOpenManageSites(user)}
+                              className="p-1.5 rounded text-slate-400 border border-slate-800 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/20 transition-all cursor-pointer"
+                              title="Manage Assigned Sites"
+                            >
+                              <Building className="w-4 h-4" />
+                            </button>
                             {user.accountStatus === 'LOCKED' && (
                               <button
                                 onClick={() => handleUnlockUser(user.uid)}
@@ -1374,17 +1748,503 @@ export const AdminOverviewPage: React.FC = () => {
                               {user.accountStatus === 'ACTIVE' ? <UserMinus className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
                             </button>
                             <button
-                              onClick={() => handleResetPassword(user.uid)}
-                              className="p-1.5 rounded text-slate-400 border border-slate-800 hover:text-amber-500 hover:bg-amber-500/10 hover:border-amber-500/20 transition-all"
-                              title="Force Password Reset"
+                              onClick={() => handleOpenResetPassword(user)}
+                              className="p-1.5 rounded text-slate-400 border border-slate-800 hover:text-amber-500 hover:bg-amber-500/10 hover:border-amber-500/20 transition-all cursor-pointer"
+                              title="Reset Temporary Password"
                             >
                               <Key className="w-4 h-4" />
                             </button>
+                            {userProfile?.role === 'PLATFORM_SUPERUSER' && (
+                              <button
+                                onClick={() => handleOpenDeleteUser(user)}
+                                disabled={user.uid === userProfile.uid}
+                                className={`p-1.5 rounded transition-all border ${
+                                  user.uid === userProfile.uid
+                                    ? 'opacity-30 cursor-not-allowed text-slate-600 border-slate-800'
+                                    : 'text-slate-400 hover:text-red-400 hover:bg-red-500/10 border-slate-800 hover:border-red-500/20 cursor-pointer'
+                                }`}
+                                title={user.uid === userProfile.uid ? "Cannot delete your own active superuser account" : "Delete User Account"}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* Manage Assigned Sites Modal */}
+              {managingUserSites && (
+                <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <Building className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white leading-tight">Manage Assigned Sites</h3>
+                          <p className="text-xs text-slate-400 font-mono">{managingUserSites.email}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setManagingUserSites(null)}
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {manageSitesMsg && (
+                      <div className={`p-3 rounded-lg text-xs border ${
+                        manageSitesMsg.startsWith('Error') 
+                          ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+                          : 'bg-green-500/10 border-green-500/20 text-green-400'
+                      }`}>
+                        {manageSitesMsg}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                          Sites for {tenantsList.find(t => t.id === managingUserSites.tenantId)?.tenantName || 'Tenant'}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const allTenantSiteIds = availableSites
+                                .filter(s => !managingUserSites.tenantId || s.tenantId === managingUserSites.tenantId)
+                                .map(s => s.id);
+                              setEditingUserSitesList(allTenantSiteIds);
+                            }}
+                            className="text-[10px] text-amber-400 hover:underline cursor-pointer"
+                          >
+                            Select All
+                          </button>
+                          <span className="text-slate-600 text-xs">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setEditingUserSitesList([])}
+                            className="text-[10px] text-slate-400 hover:underline cursor-pointer"
+                          >
+                            Clear All
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                        {availableSites
+                          .filter(s => !managingUserSites.tenantId || s.tenantId === managingUserSites.tenantId)
+                          .map(site => {
+                            const isChecked = editingUserSitesList.includes(site.id);
+                            return (
+                              <label 
+                                key={site.id} 
+                                className="flex items-center justify-between p-2 rounded hover:bg-slate-900/60 cursor-pointer group"
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setEditingUserSitesList([...editingUserSitesList, site.id]);
+                                      } else {
+                                        setEditingUserSitesList(editingUserSitesList.filter(id => id !== site.id));
+                                      }
+                                    }}
+                                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-950 cursor-pointer"
+                                  />
+                                  <div>
+                                    <div className="text-xs font-semibold text-slate-200 group-hover:text-white">
+                                      {site.siteName || site.name}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono">
+                                      Code: {site.siteCode || site.code || site.id}
+                                    </div>
+                                  </div>
+                                </div>
+                                {isChecked && (
+                                  <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 font-medium">
+                                    Assigned
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          })}
+                        {availableSites.filter(s => !managingUserSites.tenantId || s.tenantId === managingUserSites.tenantId).length === 0 && (
+                          <div className="p-3 text-center text-xs text-slate-500 italic">
+                            No sites found for this tenant.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-800 pt-3">
+                      <button
+                        type="button"
+                        onClick={() => setManagingUserSites(null)}
+                        disabled={savingUserSites}
+                        className="px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveUserSites}
+                        disabled={savingUserSites}
+                        className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {savingUserSites ? 'Saving...' : 'Save Assignments'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Reset Password Modal */}
+              {resettingPasswordUser && (
+                <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <Key className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white leading-tight">Reset Temporary Password</h3>
+                          <p className="text-xs text-slate-400 font-mono">{resettingPasswordUser.email}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setResettingPasswordUser(null)}
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {resetPassMsg && (
+                      <div className={`p-3 rounded-lg text-xs border ${
+                        resetPassMsg.startsWith('Error') 
+                          ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+                          : 'bg-green-500/10 border-green-500/20 text-green-400'
+                      }`}>
+                        {resetPassMsg}
+                      </div>
+                    )}
+
+                    <form onSubmit={handleConfirmResetPassword} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                            New Temporary Password
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newP = generateSecureTemporaryPassword();
+                              setTempPassToReset(newP);
+                            }}
+                            className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Generate New
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type={showTempPassToReset ? "text" : "password"}
+                            value={tempPassToReset}
+                            onChange={(e) => setTempPassToReset(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 pl-3 pr-20 text-xs font-mono text-amber-300 tracking-wider focus:outline-none focus:border-amber-500"
+                            placeholder="Enter 8+ character password"
+                            required
+                            minLength={8}
+                          />
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setShowTempPassToReset(!showTempPassToReset)}
+                              className="p-1 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                              title={showTempPassToReset ? "Hide password" : "Show password"}
+                            >
+                              {showTempPassToReset ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(tempPassToReset);
+                                setCopiedResetPass(true);
+                                setTimeout(() => setCopiedResetPass(false), 2000);
+                              }}
+                              className="p-1 text-slate-400 hover:text-amber-400 transition-colors cursor-pointer"
+                              title="Copy temporary password"
+                            >
+                              {copiedResetPass ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Setting this password will update Supabase Auth and flag the account to require a password change on next login.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => setResettingPasswordUser(null)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={resettingPassLoading}
+                          className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {resettingPassLoading ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Resetting...
+                            </>
+                          ) : (
+                            <>
+                              <Key className="w-3.5 h-3.5" /> Reset & Notify
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Permanent User Deletion Confirmation Modal (Platform Superuser Only) */}
+              {deletingUser && (
+                <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-red-500/30 rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4">
+                    <div className="flex items-start justify-between border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20">
+                          <Trash2 className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white leading-tight">Delete User Account</h3>
+                          <p className="text-xs text-red-400/90 font-medium">Permanent Platform Action</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setDeletingUser(null)}
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {deletingUserMsg && (
+                      <div className="p-3 rounded-lg text-xs bg-red-500/10 border border-red-500/20 text-red-400">
+                        {deletingUserMsg}
+                      </div>
+                    )}
+
+                    <div className="p-3 bg-red-500/5 border border-red-500/15 rounded-lg text-xs text-slate-300 space-y-2 leading-relaxed">
+                      <p>
+                        Are you sure you want to permanently delete the user account for <strong className="text-white font-mono">{deletingUser.email}</strong>?
+                      </p>
+                      <p className="text-slate-400">
+                        This will remove the user from Supabase Authentication (<span className="font-mono text-slate-300">auth.users</span>), user profiles (<span className="font-mono text-slate-300">public.users</span>), and all site associations (<span className="font-mono text-slate-300">public.user_sites</span>).
+                      </p>
+                      <div className="text-[11px] text-red-400 font-semibold flex items-center gap-1.5 pt-1">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        This action cannot be undone.
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setDeletingUser(null)}
+                        disabled={deletingUserLoading}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmDeleteUser}
+                        disabled={deletingUserLoading}
+                        className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-950/40"
+                      >
+                        {deletingUserLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Deleting...
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-3.5 h-3.5" /> Permanently Delete
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Welcome / User Provisioned & Password Reset Credentials Modal */}
+              {provisionedUserModal && (
+                <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-5 my-8">
+                    {/* Header */}
+                    <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-xl bg-green-500/10 text-green-400 border border-green-500/20">
+                          <CheckCircle2 className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-white leading-snug">
+                            {provisionedUserModal.type === 'RESET' ? 'Password Reset Successfully' : 'User Provisioned Successfully'}
+                          </h3>
+                          <p className="text-xs text-slate-400">
+                            {provisionedUserModal.type === 'RESET' ? 'Temporary password updated for ' : 'Account created for '}
+                            <span className="text-amber-400 font-mono font-medium">{provisionedUserModal.email}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setProvisionedUserModal(null)}
+                        className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                        title="Close modal"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Quick Credentials Summary */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-950 border border-slate-800 rounded-lg text-xs">
+                      <div>
+                        <span className="text-slate-500 block uppercase text-[10px] font-semibold tracking-wider">Portal Login URL</span>
+                        <a
+                          href="https://www.opsvis.uk/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-amber-400 hover:underline inline-flex items-center gap-1 font-mono font-medium mt-0.5"
+                        >
+                          https://www.opsvis.uk/ <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block uppercase text-[10px] font-semibold tracking-wider">Temporary Password</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="font-mono text-amber-300 font-bold select-all bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                            {provisionedUserModal.temporaryPassword}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(provisionedUserModal.temporaryPassword);
+                              setCopiedWelcomePass(true);
+                              setTimeout(() => setCopiedWelcomePass(false), 2000);
+                            }}
+                            className="text-[11px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center gap-1 transition-colors cursor-pointer border border-slate-700"
+                            title="Copy temporary password"
+                          >
+                            {copiedWelcomePass ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                            {copiedWelcomePass ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block uppercase text-[10px] font-semibold tracking-wider">Assigned Role</span>
+                        <span className="text-slate-200 font-medium capitalize mt-0.5 block">
+                          {provisionedUserModal.role.replace(/_/g, ' ').toLowerCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block uppercase text-[10px] font-semibold tracking-wider">Assigned Sites</span>
+                        <span className="text-slate-200 mt-0.5 block truncate" title={provisionedUserModal.assignedSites.join(', ')}>
+                          {provisionedUserModal.assignedSites.length > 0 ? provisionedUserModal.assignedSites.join(', ') : 'All Tenant Sites'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Notice Banner */}
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300 flex items-start gap-2 leading-relaxed">
+                      <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-semibold text-amber-200">First Login Notice:</span> The user will be required to change this temporary password immediately upon their log in to <span className="font-mono text-amber-400">https://www.opsvis.uk/</span>.
+                      </div>
+                    </div>
+
+                    {/* Welcome / Reset Email Text Template */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5 text-amber-400" />
+                          {provisionedUserModal.type === 'RESET' ? 'Password Reset Email Template' : 'Welcome Email Template'}
+                        </label>
+                        <span className="text-[11px] text-slate-400">Ready to copy & paste into an email</span>
+                      </div>
+
+                      <div className="relative">
+                        <textarea
+                          readOnly
+                          rows={11}
+                          value={buildWelcomeEmailText(provisionedUserModal)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-300 leading-relaxed resize-none focus:outline-none focus:border-amber-500 select-all"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const text = buildWelcomeEmailText(provisionedUserModal);
+                            navigator.clipboard.writeText(text);
+                            setCopiedWelcomeEmail(true);
+                            setTimeout(() => setCopiedWelcomeEmail(false), 2500);
+                          }}
+                          className={`w-full sm:w-auto px-4 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            copiedWelcomeEmail 
+                              ? 'bg-green-600 text-white shadow-lg shadow-green-900/40' 
+                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-950/40'
+                          }`}
+                        >
+                          {copiedWelcomeEmail ? (
+                            <>
+                              <Check className="w-4 h-4" /> Copied Email Text!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" /> Copy Email Text
+                            </>
+                          )}
+                        </button>
+
+                        <a
+                          href={`mailto:${provisionedUserModal.email}?subject=${encodeURIComponent(provisionedUserModal.type === 'RESET' ? 'OpsVis - Your Password Has Been Reset' : 'Welcome to OpsVis - Your Account Login Credentials')}&body=${encodeURIComponent(buildWelcomeEmailText(provisionedUserModal).replace(/^Subject:.*\n\n/, ''))}`}
+                          className="w-full sm:w-auto px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-medium text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                        >
+                          <Mail className="w-3.5 h-3.5" /> Open in Mail App
+                        </a>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setProvisionedUserModal(null)}
+                        className="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold text-xs transition-colors cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </SectionCard>
@@ -1480,50 +2340,117 @@ export const AdminOverviewPage: React.FC = () => {
                 )}
 
                 <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Sites</label>
-                    {availableSites.length > 0 ? (
-                      <div className="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950 border border-slate-800 rounded-lg">
-                        {availableSites.map(site => {
-                          const siteVal = site.id || site.siteId;
-                          return (
-                          <label key={site.id} className="flex items-center gap-2 cursor-pointer group">
-                            <input
-                              type="checkbox"
-                              checked={selectedSites.includes(siteVal)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedSites([...selectedSites, siteVal]);
-                                } else {
-                                  setSelectedSites(selectedSites.filter(id => id !== siteVal));
-                                }
-                              }}
-                              className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-950"
-                            />
-                            <span className="text-sm text-slate-300 group-hover:text-slate-200">
-                              {site.siteName || site.name || siteVal} <span className="text-xs text-slate-500">({siteVal})</span>
-                            </span>
-                          </label>
-                        )})}
-                      </div>
-                    ) : (
-                      <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-500 italic">
-                        No sites available for the selected tenant.
-                      </div>
-                    )}
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Assign Sites</label>
+                      {(() => {
+                        const targetTId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId : userProfile?.tenantId;
+                        const filtered = availableSites.filter(s => !targetTId || s.tenantId === targetTId);
+                        if (filtered.length === 0) return null;
+                        return (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedSites(filtered.map(s => s.id))}
+                              className="text-[10px] text-amber-400 hover:underline cursor-pointer"
+                            >
+                              Select All
+                            </button>
+                            <span className="text-slate-600 text-xs">•</span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedSites([])}
+                              className="text-[10px] text-slate-400 hover:underline cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    {(() => {
+                      const targetTId = userProfile?.role === 'PLATFORM_SUPERUSER' ? newUserTenantId : userProfile?.tenantId;
+                      const filtered = availableSites.filter(s => !targetTId || s.tenantId === targetTId);
+                      return filtered.length > 0 ? (
+                        <div className="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950 border border-slate-800 rounded-lg">
+                          {filtered.map(site => {
+                            const siteVal = site.id;
+                            return (
+                            <label key={site.id} className="flex items-center gap-2 cursor-pointer group">
+                              <input
+                                type="checkbox"
+                                checked={selectedSites.includes(siteVal)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedSites([...selectedSites, siteVal]);
+                                  } else {
+                                    setSelectedSites(selectedSites.filter(id => id !== siteVal));
+                                  }
+                                }}
+                                className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-950 cursor-pointer"
+                              />
+                              <span className="text-sm text-slate-300 group-hover:text-slate-200">
+                                {site.siteName || site.name || siteVal} <span className="text-xs text-slate-500 font-mono">({site.siteCode || site.code || siteVal})</span>
+                              </span>
+                            </label>
+                          )})}
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-500 italic">
+                          No sites available for the selected tenant.
+                        </div>
+                      );
+                    })()}
                   </div>
 
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center">
                     <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Temporary Password</label>
-                    <span className="text-[10px] text-slate-500">Optional (auto-generates if blank)</span>
+                    <button
+                      type="button"
+                      onClick={() => setNewUserTempPass(generateSecureTemporaryPassword())}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Generate a new secure temporary password"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Generate New
+                    </button>
                   </div>
-                  <input
-                    type="text"
-                    value={newUserTempPass}
-                    onChange={e => setNewUserTempPass(e.target.value)}
-                    placeholder="Auto-generate secure password or enter min 8 chars"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"
-                  />
+                  <div className="relative flex items-center">
+                    <input
+                      type={showNewUserTempPass ? "text" : "password"}
+                      value={newUserTempPass}
+                      onChange={e => setNewUserTempPass(e.target.value)}
+                      placeholder="Enter or auto-generate password"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-3 pr-20 py-2 text-sm font-mono text-amber-300 placeholder-slate-600 focus:outline-none focus:border-amber-500"
+                    />
+                    <div className="absolute right-2 flex items-center gap-1 text-slate-400">
+                      <button
+                        type="button"
+                        onClick={() => setShowNewUserTempPass(!showNewUserTempPass)}
+                        className="p-1 hover:text-slate-200 transition-colors cursor-pointer rounded hover:bg-slate-800"
+                        title={showNewUserTempPass ? "Hide password" : "Show password"}
+                      >
+                        {showNewUserTempPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newUserTempPass) {
+                            navigator.clipboard.writeText(newUserTempPass);
+                            setCopiedFormTempPass(true);
+                            setTimeout(() => setCopiedFormTempPass(false), 2000);
+                          }
+                        }}
+                        className="p-1 hover:text-slate-200 transition-colors cursor-pointer rounded hover:bg-slate-800"
+                        title="Copy password"
+                      >
+                        {copiedFormTempPass ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-500/80" /> System-generated password (min 8 chars). Prompt user to change upon first login.
+                  </p>
                 </div>
 
                 <button
