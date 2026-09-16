@@ -46,7 +46,8 @@ import {
   EyeOff,
   Mail,
   ExternalLink,
-  Trash2
+  Trash2,
+  UserCog
 } from 'lucide-react';
 import { UserProfile, UserRole, AccountStatus, Tenant } from '../../../types/auth';
 import { useAuth } from '../../auth/context/AuthContext';
@@ -433,6 +434,12 @@ export const AdminOverviewPage: React.FC = () => {
   const [deletingUserLoading, setDeletingUserLoading] = useState(false);
   const [deletingUserMsg, setDeletingUserMsg] = useState<string | null>(null);
 
+  // User role change modal states
+  const [changingRoleUser, setChangingRoleUser] = useState<UserProfile | null>(null);
+  const [selectedNewRole, setSelectedNewRole] = useState<UserRole>('VIEWER');
+  const [changingRoleLoading, setChangingRoleLoading] = useState(false);
+  const [changingRoleMsg, setChangingRoleMsg] = useState<string | null>(null);
+
   // New Tenant form states
   const [newTenantName, setNewTenantName] = useState('');
   const [newTenantCode, setNewTenantCode] = useState('');
@@ -812,6 +819,78 @@ export const AdminOverviewPage: React.FC = () => {
       setDeletingUserMsg(`Error: ${err.message || 'Failed to delete user account'}`);
     } finally {
       setDeletingUserLoading(false);
+    }
+  };
+
+  // Check if current user has permission to change a target user's role
+  const canModifyRole = (target: UserProfile) => {
+    if (!userProfile) return false;
+    if (userProfile.role === 'PLATFORM_SUPERUSER') return true;
+    if (userProfile.role === 'TENANT_ADMIN') {
+      // Cannot modify PLATFORM_SUPERUSER accounts
+      if (target.role === 'PLATFORM_SUPERUSER') return false;
+      // Must belong to the same tenant
+      if (target.tenantId !== userProfile.tenantId) return false;
+      // Must share at least one assigned site with caller (unless admin has no site restrictions)
+      const currentUserSites = Array.isArray(userProfile.siteIds) ? userProfile.siteIds : [];
+      const targetUserSites = Array.isArray(target.siteIds) ? target.siteIds : [];
+      if (currentUserSites.length > 0) {
+        const isSelf = (target.uid || (target as any).id) === userProfile.uid;
+        const sharesSite = targetUserSites.some(sId => currentUserSites.includes(sId));
+        return isSelf || sharesSite;
+      }
+      return true;
+    }
+    return false;
+  };
+
+  // Handle Opening Change Role Modal
+  const handleOpenChangeRole = (user: UserProfile) => {
+    setChangingRoleUser(user);
+    setSelectedNewRole(user.role);
+    setChangingRoleMsg(null);
+  };
+
+  // Handle Confirming Role Change via Backend API
+  const handleConfirmChangeRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!changingRoleUser) return;
+    if (selectedNewRole === changingRoleUser.role) {
+      setChangingRoleMsg(`User already holds the ${selectedNewRole} role.`);
+      return;
+    }
+
+    setChangingRoleLoading(true);
+    setChangingRoleMsg(null);
+    try {
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+      const targetUid = changingRoleUser.uid || (changingRoleUser as any).id;
+
+      const res = await fetch('/api/admin/change-user-role', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          targetUserId: targetUid,
+          newRole: selectedNewRole
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        throw new Error(resData.error || 'Failed to update user role');
+      }
+
+      setChangingRoleUser(null);
+      await fetchUsers();
+    } catch (err: any) {
+      console.error('Role update failed:', err);
+      setChangingRoleMsg(`Error: ${err.message || 'Failed to update user role'}`);
+    } finally {
+      setChangingRoleLoading(false);
     }
   };
 
@@ -1674,9 +1753,21 @@ export const AdminOverviewPage: React.FC = () => {
                             {user.jobTitle && <div className="text-[10px] text-slate-500 mt-0.5">{user.jobTitle}</div>}
                           </td>
                           <td className="py-3 pr-2 font-mono text-xs">
-                            <span className="text-amber-500 bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">
-                              {user.role}
-                            </span>
+                            {canModifyRole(user) ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenChangeRole(user)}
+                                className="group inline-flex items-center gap-1.5 text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer text-left"
+                                title="Click to Change Role"
+                              >
+                                <span>{user.role}</span>
+                                <UserCog className="w-3 h-3 text-amber-500/60 group-hover:text-amber-400" />
+                              </button>
+                            ) : (
+                              <span className="text-amber-500 bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">
+                                {user.role}
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 pr-2 text-xs text-slate-400">
                             <div>
@@ -1726,6 +1817,15 @@ export const AdminOverviewPage: React.FC = () => {
                             >
                               <Building className="w-4 h-4" />
                             </button>
+                            {canModifyRole(user) && (
+                              <button
+                                onClick={() => handleOpenChangeRole(user)}
+                                className="p-1.5 rounded text-slate-400 border border-slate-800 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/20 transition-all cursor-pointer"
+                                title="Change User Role"
+                              >
+                                <UserCog className="w-4 h-4" />
+                              </button>
+                            )}
                             {user.accountStatus === 'LOCKED' && (
                               <button
                                 onClick={() => handleUnlockUser(user.uid)}
@@ -1773,6 +1873,142 @@ export const AdminOverviewPage: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* Change User Role Modal */}
+              {changingRoleUser && (
+                <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-2xl max-w-lg w-full p-5 space-y-4">
+                    <div className="flex items-start justify-between border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <UserCog className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white leading-tight">Change User Role</h3>
+                          <p className="text-xs text-slate-400 font-mono mt-0.5">{changingRoleUser.displayName || changingRoleUser.email}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setChangingRoleUser(null)}
+                        className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {changingRoleMsg && (
+                      <div className={`p-3 rounded-lg text-xs border ${
+                        changingRoleMsg.startsWith('Error') 
+                          ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+                          : 'bg-green-500/10 border-green-500/20 text-green-400'
+                      }`}>
+                        {changingRoleMsg}
+                      </div>
+                    )}
+
+                    {/* User Info Overview */}
+                    <div className="p-3 bg-slate-950 border border-slate-800/80 rounded-lg text-xs space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[10px] uppercase font-semibold text-slate-500 block">Email</span>
+                          <span className="text-slate-200 font-mono truncate block" title={changingRoleUser.email}>{changingRoleUser.email}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-semibold text-slate-500 block">Current Role</span>
+                          <span className="text-amber-400 font-mono font-semibold">{changingRoleUser.role}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-semibold text-slate-500 block">Tenant</span>
+                          <span className="text-slate-300 truncate block">
+                            {tenantsList.find(t => t.id === changingRoleUser.tenantId)?.tenantName || changingRoleUser.tenantId || 'Global / Platform'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-semibold text-slate-500 block">Assigned Sites</span>
+                          <span className="text-slate-300 truncate block" title={changingRoleUser.siteIds?.join(', ')}>
+                            {changingRoleUser.siteIds && changingRoleUser.siteIds.length > 0 
+                              ? changingRoleUser.siteIds.map(sId => {
+                                  const matchedSite = availableSites.find(s => s.id === sId || s.siteId === sId);
+                                  return matchedSite?.siteName || sId;
+                                }).join(', ')
+                              : 'All Tenant Sites / None'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Role Selection */}
+                    <form onSubmit={handleConfirmChangeRole} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                          <span>Select New Role</span>
+                          <span className="text-[10px] text-slate-500 font-normal">
+                            Authorized by {userProfile?.role === 'PLATFORM_SUPERUSER' ? 'Platform Superuser' : 'Tenant Admin'}
+                          </span>
+                        </label>
+
+                        <select
+                          value={selectedNewRole}
+                          onChange={(e) => setSelectedNewRole(e.target.value as UserRole)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-amber-500"
+                        >
+                          {userProfile?.role === 'PLATFORM_SUPERUSER' && (
+                            <option value="PLATFORM_SUPERUSER">PLATFORM_SUPERUSER — Full Cross-Tenant & Platform Superuser</option>
+                          )}
+                          <option value="TENANT_ADMIN">TENANT_ADMIN — Tenant & Site Administrator</option>
+                          <option value="PLANNER">PLANNER — Operational Planning & Wave Management</option>
+                          <option value="WAREHOUSE_OPERATOR">WAREHOUSE_OPERATOR — Task Execution & Operations</option>
+                          <option value="VIEWER">VIEWER — Read-Only Dashboard & Reports</option>
+                          <option value="DISPLAY">DISPLAY — Wall Terminal Display Screen</option>
+                        </select>
+                      </div>
+
+                      {/* Informational callouts */}
+                      {userProfile?.role === 'TENANT_ADMIN' && (
+                        <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-[11px] text-slate-400 flex items-start gap-2">
+                          <Info className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <span>Tenant Admins can assign any operational or site admin role within their assigned site(s). Tenant Admins cannot promote users to Platform Superuser.</span>
+                        </div>
+                      )}
+
+                      {changingRoleUser.role === 'TENANT_ADMIN' && selectedNewRole !== 'TENANT_ADMIN' && (
+                        <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-[11px] text-amber-300 flex items-start gap-2">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-semibold text-amber-200">Sole Admin Invariant:</span> If this user is the only TENANT_ADMIN assigned to any of their sites, the server will block the role change until another user is designated as TENANT_ADMIN for that site.
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => setChangingRoleUser(null)}
+                          disabled={changingRoleLoading}
+                          className="px-3.5 py-1.5 rounded-lg border border-slate-800 text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={changingRoleLoading || selectedNewRole === changingRoleUser.role}
+                          className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-lg shadow-amber-950/40"
+                        >
+                          {changingRoleLoading ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Updating Role...
+                            </>
+                          ) : (
+                            <>
+                              <UserCog className="w-3.5 h-3.5" /> Update Role
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
                 </div>
               )}
 

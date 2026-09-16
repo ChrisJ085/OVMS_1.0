@@ -31,6 +31,7 @@ export function useSiteOnboarding() {
       tenantId === 'GLOBAL' ||
       siteId === 'GLOBAL' ||
       siteId === 'SETUP_REQUIRED' ||
+      tenantId === 'TENANT_DEFAULT' ||
       !isValidUuid(tenantId) ||
       !isValidUuid(siteId)
     ) {
@@ -60,9 +61,16 @@ export function useSiteOnboarding() {
                 setLoading(false);
               }
             } catch (err: any) {
-              console.error('Failed to initialize onboarding record:', err);
+              console.warn('Could not initialize onboarding record:', err);
               if (active) {
-                setError(err.message || 'Initialization failed');
+                setOnboarding({
+                  tenantId,
+                  siteId,
+                  status: 'NOT_STARTED',
+                  currentStep: 0,
+                  completedSteps: [],
+                  skippedOptionalSteps: []
+                });
                 setLoading(false);
               }
             }
@@ -81,9 +89,9 @@ export function useSiteOnboarding() {
           }
         }
       } catch (err: any) {
-        console.error('Error fetching onboarding:', err);
+        console.warn('Error fetching onboarding:', err);
         if (active) {
-          setError(err.message || 'Fetch failed');
+          setOnboarding(null);
           setLoading(false);
         }
       }

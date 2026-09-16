@@ -53,6 +53,7 @@ const isInvalidTarget = (tenantId: string, siteId: string): boolean => {
     tenantId === 'GLOBAL' ||
     siteId === 'GLOBAL' ||
     siteId === 'SETUP_REQUIRED' ||
+    tenantId === 'TENANT_DEFAULT' ||
     !isValidUuid(tenantId) ||
     !isValidUuid(siteId)
   );
@@ -69,13 +70,13 @@ export const getSiteOnboarding = async (tenantId: string, siteId: string): Promi
       .maybeSingle();
 
     if (error) {
-      console.error('Error fetching site onboarding:', error);
+      console.warn('Error fetching site onboarding:', error.message || error);
       return null;
     }
     if (!data) return null;
     return toCamelCase<SiteOnboarding>(data);
   } catch (err) {
-    console.error('Error fetching site onboarding:', err);
+    console.warn('Error fetching site onboarding:', err);
     return null;
   }
 };
@@ -102,14 +103,20 @@ export const initializeSiteOnboarding = async (
     return data;
   }
 
-  const { error } = await supabase
-    .from('site_onboarding')
-    .insert(toSnakeCase(data));
+  try {
+    const { error } = await supabase
+      .from('site_onboarding')
+      .insert(toSnakeCase(data));
 
-  if (error) {
-    console.error('Failed to initialize onboarding record:', error);
-    throw error;
+    if (error) {
+      console.warn('Failed to initialize onboarding record in database:', error.message || error);
+      return data;
+    }
+  } catch (err) {
+    console.warn('Exception initializing onboarding record:', err);
+    return data;
   }
+
   return data;
 };
 

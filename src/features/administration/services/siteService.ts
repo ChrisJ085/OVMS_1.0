@@ -56,7 +56,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
       const sites = await querySitesWithTenant(null);
 
       (sites || []).forEach((row: any) => {
-        const tId = row.tenant_id || tenantId || 'GLOBAL';
+        const tId = row.tenant_id || 'GLOBAL';
         const isActive = row.status === 'active' || row.status === 'ACTIVE' || row.status == null;
         if (isActive) {
           const key = `${tId}_${row.id}`;
@@ -73,7 +73,7 @@ export async function fetchUserPermittedSites(profile: UserProfile): Promise<Sit
       if (sitesMap.size === 0) {
         return [
           {
-            tenantId: tenantId || 'GLOBAL',
+            tenantId: 'GLOBAL',
             tenantName: 'Platform Global',
             siteId: 'GLOBAL',
             siteName: 'Global System',

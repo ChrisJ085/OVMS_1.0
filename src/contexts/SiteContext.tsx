@@ -117,7 +117,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!sites || sites.length === 0) {
         if (isSuperuser) {
           const globalSite: Site = {
-            tenantId: userProfile.tenantId || 'GLOBAL',
+            tenantId: 'GLOBAL',
             tenantName: 'Platform Global',
             siteId: 'GLOBAL',
             siteName: 'Global System',
@@ -156,9 +156,13 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       let selectedSite: Site | null = null;
       const savedSite = getStoredSite();
       if (savedSite && savedSite.siteId !== 'GLOBAL' && savedSite.siteId !== 'SETUP_REQUIRED') {
-        const isPermitted = isSuperuser || candidates.some(s => s.tenantId === savedSite.tenantId && s.siteId === savedSite.siteId);
-        if (isPermitted) {
-          selectedSite = candidates.find(s => s.siteId === savedSite.siteId) || savedSite;
+        const matchedCandidate = candidates.find(
+          s => s.siteId === savedSite.siteId && (s.tenantId === savedSite.tenantId || isSuperuser)
+        );
+        if (matchedCandidate) {
+          selectedSite = matchedCandidate;
+        } else {
+          localStorage.removeItem(NEW_LOCAL_STORAGE_KEY);
         }
       }
 
@@ -178,7 +182,7 @@ export const SiteProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const isTenantAdmin = userProfile.role === 'TENANT_ADMIN';
       if (isSuperuser) {
         const globalSite: Site = {
-          tenantId: userProfile.tenantId || 'GLOBAL',
+          tenantId: 'GLOBAL',
           tenantName: 'Platform Global',
           siteId: 'GLOBAL',
           siteName: 'Global System',

@@ -649,6 +649,244 @@ router.post("/admin/update-user-sites", async (req, res) => {
   }
 });
 
+// Admin Change User Role Endpoint (Superuser or Tenant Admin)
+router.post("/admin/change-user-role", async (req, res) => {
+  let currentStage = "INIT";
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header", stage: "AUTH_CHECK" });
+    }
+
+    const callerToken = authHeader.substring(7).trim();
+    currentStage = "TOKEN_VERIFICATION";
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+
+    currentStage = "CALLER_PROFILE_LOOKUP";
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found", stage: currentStage });
+    }
+
+    const callerProfile = callerRes.data;
+    const callerRoleUpper = (callerProfile.role || '').toUpperCase().trim();
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER' && callerRoleUpper !== 'TENANT_ADMIN') {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Tenant Admins or Platform Superusers can modify user roles", stage: currentStage });
+    }
+
+    currentStage = "VALIDATION";
+    const body = req.body || {};
+    const { targetUserId, newRole } = body;
+
+    if (!targetUserId || typeof targetUserId !== 'string') {
+      return res.status(400).json({ success: false, error: "targetUserId is required", stage: currentStage });
+    }
+
+    const VALID_ROLES = ['PLATFORM_SUPERUSER', 'TENANT_ADMIN', 'PLANNER', 'WAREHOUSE_OPERATOR', 'VIEWER', 'DISPLAY'];
+    const normalizedNewRole = (newRole || '').toUpperCase().trim();
+    if (!VALID_ROLES.includes(normalizedNewRole)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid role specified '${newRole}'. Allowed roles: ${VALID_ROLES.join(', ')}`,
+        stage: currentStage
+      });
+    }
+
+    currentStage = "TARGET_USER_LOOKUP";
+    const { data: targetUser, error: targetErr } = await supabaseAdmin
+      .from('users')
+      .select('*, user_sites(site_id)')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (targetErr || !targetUser) {
+      return res.status(404).json({ success: false, error: "Target user profile not found", stage: currentStage });
+    }
+
+    const targetCurrentRole = (targetUser.role || '').toUpperCase().trim();
+
+    // 1. Role modification scope & restriction checks for TENANT_ADMIN
+    if (callerRoleUpper === 'TENANT_ADMIN') {
+      // A TENANT_ADMIN cannot promote anyone (or themselves) to PLATFORM_SUPERUSER
+      if (normalizedNewRole === 'PLATFORM_SUPERUSER') {
+        return res.status(403).json({
+          success: false,
+          error: "Forbidden: Tenant Admins cannot grant Platform Superuser privileges or promote users to PLATFORM_SUPERUSER.",
+          stage: "ROLE_PERMISSION_CHECK"
+        });
+      }
+
+      // A TENANT_ADMIN cannot modify a user who is currently a PLATFORM_SUPERUSER
+      if (targetCurrentRole === 'PLATFORM_SUPERUSER') {
+        return res.status(403).json({
+          success: false,
+          error: "Forbidden: Tenant Admins cannot alter Platform Superuser accounts.",
+          stage: "ROLE_PERMISSION_CHECK"
+        });
+      }
+
+      // Target user must belong to caller's tenant
+      if (targetUser.tenant_id !== callerProfile.tenantId) {
+        return res.status(403).json({
+          success: false,
+          error: "Forbidden: Tenant Admins can only modify users belonging to their own tenant.",
+          stage: "TENANT_AUTHORIZATION"
+        });
+      }
+
+      // Target user must share at least one assigned site with caller (unless caller has full tenant scope)
+      const callerSiteIds = callerProfile.siteIds || [];
+      const targetSiteIds = (Array.isArray(targetUser.user_sites) && targetUser.user_sites.length > 0)
+        ? targetUser.user_sites.map((us: any) => us.site_id)
+        : (Array.isArray(targetUser.site_ids) ? targetUser.site_ids : []);
+
+      if (callerSiteIds.length > 0) {
+        const isSelf = targetUserId === verifiedUid;
+        const sharesSite = targetSiteIds.some((sId: string) => callerSiteIds.includes(sId));
+        if (!isSelf && !sharesSite) {
+          return res.status(403).json({
+            success: false,
+            error: "Forbidden: You can only modify user roles for users assigned to your site(s).",
+            stage: "SITE_AUTHORIZATION"
+          });
+        }
+      }
+    }
+
+    // 2. Sole Platform Superuser Demotion Guard
+    if (targetCurrentRole === 'PLATFORM_SUPERUSER' && normalizedNewRole !== 'PLATFORM_SUPERUSER') {
+      const { count: superuserCount } = await supabaseAdmin
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'PLATFORM_SUPERUSER')
+        .neq('id', targetUserId);
+
+      if (!superuserCount || superuserCount === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Cannot remove PLATFORM_SUPERUSER role: This user is the only Platform Superuser on the system. There must be at least one active Platform Superuser.",
+          stage: "SUPERUSER_GUARD"
+        });
+      }
+    }
+
+    // 3. Sole TENANT_ADMIN Protection Guard (Applies to both PLATFORM_SUPERUSER and TENANT_ADMIN)
+    // "a PLATFORM_SUPERUSER cannot change remove TENANT_ADMIN roles from a user if there is only that user as the only TENANT_ADMIN for that site, there must be another."
+    if (targetCurrentRole === 'TENANT_ADMIN' && normalizedNewRole !== 'TENANT_ADMIN') {
+      const targetSiteIds: string[] = (Array.isArray(targetUser.user_sites) && targetUser.user_sites.length > 0)
+        ? targetUser.user_sites.map((us: any) => us.site_id)
+        : (Array.isArray(targetUser.site_ids) ? targetUser.site_ids : []);
+
+      // Fetch all other TENANT_ADMIN users in this tenant
+      let adminQuery = supabaseAdmin
+        .from('users')
+        .select('id, email, display_name, role, site_ids, user_sites(site_id), account_status')
+        .eq('role', 'TENANT_ADMIN')
+        .neq('id', targetUserId);
+
+      if (targetUser.tenant_id) {
+        adminQuery = adminQuery.eq('tenant_id', targetUser.tenant_id);
+      }
+
+      const { data: otherAdmins } = await adminQuery;
+      const activeOtherAdmins = (otherAdmins || []).filter(
+        (a: any) => a.account_status !== 'ARCHIVED' && a.account_status !== 'DISABLED'
+      );
+
+      if (targetSiteIds.length > 0) {
+        // Check every site assigned to this target user
+        for (const sId of targetSiteIds) {
+          const hasOtherAdminForSite = activeOtherAdmins.some((admin: any) => {
+            const adminSites = (Array.isArray(admin.user_sites) && admin.user_sites.length > 0)
+              ? admin.user_sites.map((us: any) => us.site_id)
+              : (Array.isArray(admin.site_ids) ? admin.site_ids : []);
+            // Tenant admin with empty sites has tenant-wide admin scope, or explicitly assigned to this site
+            return adminSites.length === 0 || adminSites.includes(sId);
+          });
+
+          if (!hasOtherAdminForSite) {
+            const { data: siteInfo } = await supabaseAdmin
+              .from('sites')
+              .select('id, site_name, site_code')
+              .eq('id', sId)
+              .maybeSingle();
+
+            const siteLabel = siteInfo?.site_name ? `${siteInfo.site_name} (${siteInfo.site_code || sId})` : sId;
+            return res.status(400).json({
+              success: false,
+              error: `Cannot remove TENANT_ADMIN role: ${targetUser.display_name || targetUser.email} is the only TENANT_ADMIN for site "${siteLabel}". There must be another TENANT_ADMIN assigned to this site before this role can be removed.`,
+              stage: "TENANT_ADMIN_GUARD"
+            });
+          }
+        }
+      } else {
+        // Target has no specific site restrictions (tenant-wide TENANT_ADMIN)
+        if (activeOtherAdmins.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: `Cannot remove TENANT_ADMIN role: ${targetUser.display_name || targetUser.email} is the only TENANT_ADMIN in this tenant. Another user must be designated as TENANT_ADMIN first.`,
+            stage: "TENANT_ADMIN_GUARD"
+          });
+        }
+      }
+    }
+
+    // 4. Update the user role in public.users
+    currentStage = "USER_ROLE_UPDATE";
+    const nowIso = new Date().toISOString();
+    const { error: updateErr } = await supabaseAdmin
+      .from('users')
+      .update({
+        role: normalizedNewRole,
+        updated_at: nowIso
+      })
+      .eq('id', targetUserId);
+
+    if (updateErr) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to update user role in database: ${updateErr.message}`,
+        stage: currentStage
+      });
+    }
+
+    // 5. Record Audit Log
+    currentStage = "AUDIT_LOG_CREATE";
+    try {
+      await supabaseAdmin.from('audit_logs').insert({
+        tenant_id: targetUser.tenant_id || null,
+        user_id: verifiedUid,
+        user_email: verifiedToken.email,
+        action: 'USER_ROLE_CHANGE',
+        entity_type: 'UserProfile',
+        entity_id: targetUserId,
+        details: {
+          targetEmail: targetUser.email,
+          targetDisplayName: targetUser.display_name,
+          previousRole: targetUser.role,
+          newRole: normalizedNewRole,
+          modifiedByRole: callerRoleUpper
+        },
+        timestamp: nowIso
+      });
+    } catch (auditErr: any) {
+      console.warn('[change-user-role] Audit log warning:', auditErr?.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Role for ${targetUser.display_name || targetUser.email} successfully changed from ${targetUser.role} to ${normalizedNewRole}`,
+      targetUserId,
+      previousRole: targetUser.role,
+      newRole: normalizedNewRole
+    });
+  } catch (err: any) {
+    console.error(`[Admin Change User Role Error] Stage: ${currentStage}:`, err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to update user role", stage: currentStage });
+  }
+});
+
 // Admin Reset User Password Endpoint (Superuser or Tenant Admin)
 router.post("/admin/reset-user-password", async (req, res) => {
   let currentStage = "INIT";
@@ -805,6 +1043,13 @@ router.post("/admin/delete-user", async (req, res) => {
       .eq('id', userId);
 
     if (profileDeleteErr) {
+      if (profileDeleteErr.message?.includes('audit_logs') || profileDeleteErr.message?.includes('immutable')) {
+        return res.status(500).json({
+          success: false,
+          error: `Database Policy Conflict: The audit_logs table contains foreign key constraints that prevent deleting this user. Please execute the migration script 'docs/migration_fix_audit_logs_and_deletion.sql' in your Supabase SQL Editor to drop the audit_logs foreign key constraints.`,
+          stage: currentStage
+        });
+      }
       return res.status(500).json({ success: false, error: `Failed to delete user profile from database: ${profileDeleteErr.message}`, stage: currentStage });
     }
 
@@ -967,6 +1212,184 @@ router.post("/admin/provision-tenant", async (req, res) => {
   }
 });
 
+// Helper function to execute full background/synchronous deletion of tenant and its child resources
+async function executeTenantDeletion(tenantId: string, jobId: string | null, verifiedUid?: string, verifiedEmail?: string) {
+  let totalDocsDeleted = 0;
+  let totalUsersDeleted = 0;
+  const failures: string[] = [];
+
+  const updateJob = async (status: string, stage: string, extra: Record<string, any> = {}) => {
+    if (!jobId) return;
+    try {
+      await supabaseAdmin
+        .from('tenant_deletion_jobs')
+        .update({
+          status,
+          current_stage: stage,
+          documents_deleted: totalDocsDeleted,
+          users_deleted: totalUsersDeleted,
+          failures,
+          updated_at: new Date().toISOString(),
+          ...extra
+        })
+        .eq('id', jobId);
+    } catch (e) {
+      console.warn('[executeTenantDeletion] Job update warning:', e);
+    }
+  };
+
+  try {
+    // 0. Fetch tenant details beforehand for final permanent audit logging
+    let targetTenantName = 'Unknown';
+    let targetTenantCode = '';
+    try {
+      const { data: tenantData } = await supabaseAdmin
+        .from('tenants')
+        .select('name, tenant_name, tenant_code')
+        .eq('id', tenantId)
+        .maybeSingle();
+      if (tenantData) {
+        targetTenantName = tenantData.tenant_name || tenantData.name || targetTenantName;
+        targetTenantCode = tenantData.tenant_code || '';
+      }
+    } catch (tFetchErr) {
+      console.warn('[executeTenantDeletion] Could not fetch tenant metadata:', tFetchErr);
+    }
+
+    await updateJob('IN_PROGRESS', 'PURGING_USERS');
+
+    // 1. Fetch all users belonging to this tenant
+    const { data: tenantUsers } = await supabaseAdmin
+      .from('users')
+      .select('id, email, role')
+      .eq('tenant_id', tenantId);
+
+    if (tenantUsers && tenantUsers.length > 0) {
+      for (const u of tenantUsers) {
+        // PLATFORM_SUPERUSER does not belong to a single tenant and must never be deleted with a tenant
+        if (u.role === 'PLATFORM_SUPERUSER') {
+          try {
+            await supabaseAdmin
+              .from('users')
+              .update({ tenant_id: null, updated_at: new Date().toISOString() })
+              .eq('id', u.id);
+          } catch (spErr: any) {
+            console.warn(`[executeTenantDeletion] Error unlinking superuser ${u.email}:`, spErr?.message);
+          }
+          continue;
+        }
+
+        try {
+          await supabaseAdmin.from('user_sites').delete().eq('user_id', u.id);
+          await supabaseAdmin.from('user_favorites').delete().eq('user_id', u.id);
+          await supabaseAdmin.from('users').delete().eq('id', u.id);
+          await supabaseAdmin.auth.admin.deleteUser(u.id);
+          totalUsersDeleted++;
+          totalDocsDeleted++;
+        } catch (uErr: any) {
+          console.warn(`[executeTenantDeletion] Error removing user ${u.email}:`, uErr?.message);
+          failures.push(`User ${u.email}: ${uErr?.message}`);
+        }
+      }
+    }
+
+    // 2. Cascade delete records from all operational tables containing tenant_id (audit_logs is preserved)
+    const collections = [
+      'inventory_transactions',
+      'inventory_balances',
+      'inventory_snapshots',
+      'priority_events',
+      'priorities',
+      'exceptions',
+      'announcements',
+      'planning_rules',
+      'promotions',
+      'promotion_product_rules',
+      'recommendation_runs',
+      'recommendations',
+      'production_plan_imports',
+      'production_plan_entries',
+      'production_events',
+      'northfleet_sto_imports',
+      'northfleet_sto_requirements',
+      'site_settings',
+      'site_onboarding',
+      'products',
+      'pallets',
+      'sites'
+    ];
+
+    for (const coll of collections) {
+      await updateJob('IN_PROGRESS', `PURGING_${coll.toUpperCase()}`);
+      try {
+        await supabaseAdmin
+          .from(coll)
+          .delete()
+          .eq('tenant_id', tenantId);
+        totalDocsDeleted++;
+      } catch (collErr: any) {
+        console.warn(`[executeTenantDeletion] Exception on ${coll}:`, collErr.message);
+      }
+    }
+
+    // 3. Delete tenant itself
+    await updateJob('IN_PROGRESS', 'PURGING_TENANT');
+    const { error: tenantDelErr } = await supabaseAdmin
+      .from('tenants')
+      .delete()
+      .eq('id', tenantId);
+
+    if (tenantDelErr) {
+      failures.push(`Tenant record: ${tenantDelErr.message}`);
+      throw tenantDelErr;
+    }
+
+    totalDocsDeleted++;
+
+    // 4. Record Immutable Audit Log that Tenant was deleted
+    const completedTimestamp = new Date().toISOString();
+    try {
+      await supabaseAdmin.from('audit_logs').insert({
+        tenant_id: null,
+        site_id: null,
+        user_id: verifiedUid || null,
+        user_email: verifiedEmail || 'system',
+        action: 'TENANT_DELETED',
+        entity_type: 'Tenant',
+        entity_id: tenantId,
+        details: {
+          tenantId,
+          tenantName: targetTenantName,
+          tenantCode: targetTenantCode,
+          deletedByUid: verifiedUid || null,
+          deletedByEmail: verifiedEmail || null,
+          totalUsersDeleted,
+          totalDocsDeleted,
+          deletedAt: completedTimestamp,
+          status: 'COMPLETED'
+        },
+        timestamp: completedTimestamp
+      });
+    } catch (auditErr: any) {
+      console.warn('[executeTenantDeletion] Audit log insert warning:', auditErr?.message);
+    }
+
+    // 5. Mark job as COMPLETED
+    await updateJob('COMPLETED', 'FINISHED', {
+      completed_at: completedTimestamp
+    });
+
+    console.log(`[executeTenantDeletion] Successfully deleted tenant ${tenantId}.`);
+    return { success: true, totalDocsDeleted, totalUsersDeleted };
+  } catch (err: any) {
+    console.error(`[executeTenantDeletion] Error deleting tenant ${tenantId}:`, err?.message || err);
+    await updateJob('FAILED', 'FAILED', {
+      failures: [...failures, err?.message || 'Deletion execution failed']
+    });
+    return { success: false, error: err?.message || 'Deletion execution failed' };
+  }
+}
+
 // Tenant Deletion Endpoint (Superuser Only)
 router.post("/tenant-deletion", async (req, res) => {
   let currentStage = "INIT";
@@ -982,7 +1405,6 @@ router.post("/tenant-deletion", async (req, res) => {
     const verifiedUid = verifiedToken.uid;
 
     currentStage = "CALLER_AUTHORIZATION";
-    // Authoritative UID identity check
     const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
@@ -993,7 +1415,7 @@ router.post("/tenant-deletion", async (req, res) => {
       return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can delete tenants" });
     }
 
-    const { tenantId, tenantName } = req.body || {};
+    const { tenantId, tenantName, forceImmediate } = req.body || {};
     if (!tenantId || typeof tenantId !== 'string') {
       return res.status(400).json({ success: false, error: "Valid tenantId is required" });
     }
@@ -1002,7 +1424,7 @@ router.post("/tenant-deletion", async (req, res) => {
     const nowIso = new Date().toISOString();
 
     // Mark tenant as DELETION_PENDING
-    const { error: tenantErr } = await supabaseAdmin
+    await supabaseAdmin
       .from('tenants')
       .update({
         status: 'DELETION_PENDING',
@@ -1010,13 +1432,8 @@ router.post("/tenant-deletion", async (req, res) => {
       })
       .eq('id', tenantId);
 
-    if (tenantErr) {
-      console.warn('[Tenant Deletion] Failed to update tenant status:', tenantErr.message);
-      return res.status(500).json({ success: false, error: "Failed to update tenant status" });
-    }
-
-    // Persist deletion job record with accurate status DELETION_PENDING
-    const { error: jobErr } = await supabaseAdmin
+    // Persist deletion job record
+    await supabaseAdmin
       .from('tenant_deletion_jobs')
       .insert({
         id: jobId,
@@ -1025,38 +1442,114 @@ router.post("/tenant-deletion", async (req, res) => {
         requested_by: verifiedUid,
         requested_by_email: verifiedToken.email || 'unknown',
         requested_at: nowIso,
-        status: 'DELETION_PENDING',
-        current_stage: 'INITIATED',
+        status: 'IN_PROGRESS',
+        current_stage: 'INITIATING',
         retry_count: 0
       });
 
-    if (jobErr) {
-      console.warn('[Tenant Deletion] Failed to record deletion job:', jobErr.message);
-    }
-
-    // Insert Audit Log
+    // Insert Audit Log (with tenant_id: null to prevent foreign key cascade conflicts upon tenant purge)
     await supabaseAdmin.from('audit_logs').insert({
-      tenant_id: tenantId,
+      tenant_id: null,
+      site_id: null,
       user_id: verifiedUid,
       user_email: verifiedToken.email,
       action: 'TENANT_DELETION_INITIATED',
       entity_type: 'Tenant',
       entity_id: tenantId,
-      details: { tenantName, jobId, initiatedBy: verifiedUid },
+      details: { tenantId, tenantName, jobId, initiatedBy: verifiedUid, initiatedByEmail: verifiedToken.email },
       timestamp: nowIso
     });
 
-    // Accurately model and report status as DELETION_PENDING
-    return res.status(200).json({
-      success: true,
-      jobId,
-      tenantId,
-      status: 'DELETION_PENDING',
-      message: `Tenant deletion initiated and pending for ${tenantName || tenantId}`
-    });
+    if (forceImmediate) {
+      const execResult = await executeTenantDeletion(tenantId, jobId, verifiedUid, verifiedToken.email);
+      return res.status(200).json({
+        success: execResult.success,
+        jobId,
+        tenantId,
+        status: execResult.success ? 'COMPLETED' : 'FAILED',
+        error: execResult.error,
+        message: `Tenant deletion executed for ${tenantName || tenantId}`
+      });
+    } else {
+      // Run in background and respond immediately with job ID
+      executeTenantDeletion(tenantId, jobId, verifiedUid, verifiedToken.email).catch(e => {
+        console.error('[tenant-deletion background error]:', e);
+      });
+
+      return res.status(200).json({
+        success: true,
+        jobId,
+        tenantId,
+        status: 'IN_PROGRESS',
+        message: `Tenant deletion initiated for ${tenantName || tenantId}`
+      });
+    }
   } catch (err: any) {
     console.error(`[Tenant Deletion Error] Stage: ${currentStage}:`, err?.message || err);
     return res.status(500).json({ success: false, error: "Internal server error during tenant deletion" });
+  }
+});
+
+// Cancel Tenant Deletion / Restore to Active (Superuser Only)
+router.post("/admin/cancel-tenant-deletion", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Missing or invalid Authorization header" });
+    }
+
+    const callerToken = authHeader.substring(7).trim();
+    const verifiedToken = await safeVerifyCallerToken(callerToken);
+    const verifiedUid = verifiedToken.uid;
+
+    const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
+    if (!callerRes.exists || !callerRes.data) {
+      return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
+    }
+
+    const callerRoleUpper = (callerRes.data.role || '').toUpperCase().trim();
+    if (callerRoleUpper !== 'PLATFORM_SUPERUSER') {
+      return res.status(403).json({ success: false, error: "Forbidden: Only Platform Superusers can manage tenants" });
+    }
+
+    const { tenantId } = req.body || {};
+    if (!tenantId) {
+      return res.status(400).json({ success: false, error: "tenantId is required" });
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // Restore tenant status to active
+    const { error: updateErr } = await supabaseAdmin
+      .from('tenants')
+      .update({
+        status: 'active',
+        updated_at: nowIso
+      })
+      .eq('id', tenantId);
+
+    if (updateErr) {
+      return res.status(500).json({ success: false, error: `Failed to restore tenant: ${updateErr.message}` });
+    }
+
+    // Cancel any active jobs
+    await supabaseAdmin
+      .from('tenant_deletion_jobs')
+      .update({
+        status: 'CANCELLED',
+        current_stage: 'CANCELLED_BY_ADMIN',
+        updated_at: nowIso
+      })
+      .eq('tenant_id', tenantId)
+      .eq('status', 'DELETION_PENDING');
+
+    return res.status(200).json({
+      success: true,
+      message: `Tenant status successfully restored to active.`
+    });
+  } catch (err: any) {
+    console.error('[Cancel Tenant Deletion Error]:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || "Failed to cancel tenant deletion" });
   }
 });
 
@@ -1072,7 +1565,6 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
     const verifiedToken = await safeVerifyCallerToken(callerToken);
     const verifiedUid = verifiedToken.uid;
 
-    // Authoritative UID identity check
     const callerRes = await safeGetUserProfile(verifiedUid, verifiedToken.email);
     if (!callerRes.exists || !callerRes.data) {
       return res.status(403).json({ success: false, error: "Forbidden: Caller profile not found" });
@@ -1088,58 +1580,41 @@ router.post("/tenant-deletion/:jobId/retry", async (req, res) => {
       return res.status(400).json({ success: false, error: "jobId is required" });
     }
 
-    // Look up deletion job in database
     const { data: jobRow, error: jobFetchErr } = await supabaseAdmin
       .from('tenant_deletion_jobs')
       .select('*')
       .eq('id', jobId)
       .maybeSingle();
 
-    if (jobFetchErr) {
-      return res.status(500).json({ success: false, error: "Failed to query deletion job" });
-    }
-
-    if (!jobRow) {
+    if (jobFetchErr || !jobRow) {
       return res.status(404).json({ success: false, error: "Tenant deletion job not found" });
     }
 
     const nowIso = new Date().toISOString();
     const newRetryCount = (jobRow.retry_count || 0) + 1;
 
-    // Update job state
-    const { error: updateErr } = await supabaseAdmin
+    await supabaseAdmin
       .from('tenant_deletion_jobs')
       .update({
-        status: 'DELETION_PENDING',
+        status: 'IN_PROGRESS',
         current_stage: 'RETRY_INITIATED',
         retry_count: newRetryCount,
         updated_at: nowIso
       })
       .eq('id', jobId);
 
-    if (updateErr) {
-      return res.status(500).json({ success: false, error: "Failed to update deletion job status" });
-    }
-
-    // Audit log
-    await supabaseAdmin.from('audit_logs').insert({
-      tenant_id: jobRow.tenant_id,
-      user_id: verifiedUid,
-      user_email: verifiedToken.email,
-      action: 'TENANT_DELETION_RETRY_REQUESTED',
-      entity_type: 'TenantDeletionJob',
-      entity_id: jobId,
-      details: { retryCount: newRetryCount },
-      timestamp: nowIso
+    // Run deletion execution
+    executeTenantDeletion(jobRow.tenant_id, jobId, verifiedUid, verifiedToken.email).catch(e => {
+      console.error('[Tenant Deletion Retry Execution Error]:', e);
     });
 
     return res.status(200).json({
       success: true,
       jobId,
       tenantId: jobRow.tenant_id,
-      status: 'DELETION_PENDING',
+      status: 'IN_PROGRESS',
       retryCount: newRetryCount,
-      message: `Tenant deletion retry recorded for job ${jobId}`
+      message: `Tenant deletion retry initiated for job ${jobId}`
     });
   } catch (err: any) {
     console.error('[Tenant Deletion Retry Error]:', err?.message || err);

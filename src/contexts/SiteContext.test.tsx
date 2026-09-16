@@ -22,6 +22,17 @@ vi.mock('../features/auth/context/AuthContext', () => ({
   useAuth: () => mockAuth,
 }));
 
+vi.mock('../config/supabase', () => ({
+  supabase: {
+    channel: vi.fn(() => ({
+      on: vi.fn().mockReturnThis(),
+      subscribe: vi.fn().mockReturnValue({}),
+      unsubscribe: vi.fn()
+    })),
+    removeChannel: vi.fn()
+  }
+}));
+
 // Helper Consumer Component to read from SiteContext
 const TestConsumer: React.FC = () => {
   const { siteReady, siteLoading, siteError, siteId, tenantId, availableSites, setSite } = useSiteContext();

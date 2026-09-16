@@ -953,7 +953,7 @@ CREATE TABLE public.site_settings (
 -- 34. Site Onboarding
 CREATE TABLE public.site_onboarding (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
     site_id UUID NOT NULL REFERENCES public.sites(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'NOT_STARTED',
     current_step INTEGER DEFAULT 0,
@@ -981,9 +981,9 @@ CREATE TABLE public.site_onboarding (
 -- 35. Audit Logs
 CREATE TABLE public.audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE,
-    site_id UUID REFERENCES public.sites(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    tenant_id UUID,
+    site_id UUID,
+    user_id UUID,
     user_email TEXT,
     action TEXT NOT NULL,
     entity_type TEXT NOT NULL,
