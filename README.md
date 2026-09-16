@@ -10,39 +10,59 @@ OVMS is engineered to:
 1. **Bridge Planning and Execution**: Dynamically translate planning goals, promotion calendars, and inventory states into prioritized, actionable warehouse tasks.
 2. **Mitigate Out-of-Stock Vulnerabilities**: Identify potential stockout and delivery issues before they impact execution using a built-in operational decision engine.
 3. **Enhance Floor Visibility**: Broadcast real-time queue states, active alerts, and communication announcements via auto-rotating widescreen TV displays (TV Dashboard).
-4. **Isolate Tenancy & Roles**: Enforce strict data isolation between multiple warehouse sites and tenants, supporting distinct permissions for Admins, Planners, Operators, Viewers, and TV Displays.
+4. **Isolate Tenancy & Roles**: Enforce strict data isolation between multiple warehouse sites and tenants, supporting distinct permissions for Platform Superusers, Tenant Admins, Planners, Operators, Viewers, and TV Displays.
 
 ---
 
-## Technology Stack
+## Technology Stack & Architecture
 
-The application is built on a modern full-stack web architecture:
+The application is built on a high-performance full-stack web and database architecture:
 
-* **Frontend**:
-  * **React 19** with functional hooks
-  * **TypeScript** for strict compile-time type safety
-  * **Vite** as a lightning-fast build tool and dev server
-  * **Tailwind CSS** for clean, responsive, utility-first styling
-  * **Motion** (`motion/react`) for smooth fluid layouts and page transitions
-  * **Lucide React** for consistent icon representation
+### 1. Frontend & Client Layer
+* **React 19** with modern functional components, hooks, and clean state boundaries
+* **TypeScript** for strict compile-time type safety across domain models and data transfers
+* **Vite** for fast module bundling, dev server execution, and production builds
+* **Tailwind CSS** for responsive, utility-first styling and theme tokens
+* **Motion** (`motion/react`) for smooth page transitions and interactive micro-animations
+* **Lucide React** for consistent, accessible iconography
+* **Supabase JS Client** (`@supabase/supabase-js`) for reactive PostgreSQL querying and Realtime WebSocket subscriptions
 
-* **Backend & Persistence**:
-  * **Google Cloud Firestore (Firebase)** for low-latency real-time synchronization
-  * **Firebase Authentication** with temporary password enforcement
-  * **Firestore Security Rules** ensuring cross-tenant boundaries and role-based write rules are enforced directly at the database layer
+### 2. Database & Persistence Layer (Supabase PostgreSQL)
+* **PostgreSQL Engine**: Relational schema hosting operational entities including tenants, sites, users, inventory balances, movements, master items, locations, operational priorities, exceptions, announcements, KPIs, and audit logs.
+* **Row-Level Security (RLS)**: Fine-grained security policies enforced directly at the database engine level (`docs/supabase_rls.sql`), guaranteeing complete tenant isolation and site-level authorization.
+* **Internal Security Helper Functions (`ovms_internal`)**: Optimized SQL routines evaluating caller context:
+  * `ovms_internal.auth_uid()` & `ovms_internal.get_user_role()`
+  * `ovms_internal.is_platform_superuser()` & `ovms_internal.is_tenant_admin()`
+  * `ovms_internal.has_site_access(site_uuid)`
+* **Immutable Audit Trail**: Database-level trigger (`trg_audit_logs_immutable`) guaranteeing tamper-proof, non-deletable audit log records for forensic compliance.
+* **Realtime Channels**: Instant broadcast of changes across displays and client sessions for live warehouse execution and priority queue updates.
 
-* **Testing & Quality Assurance**:
-  * **Vitest** for blistering fast unit and integration tests
-  * **React Testing Library** for robust DOM-based UI component verification
-  * **Firebase Rules Unit Testing** for programmatic validation of security policies inside a local emulator
+### 3. Backend Service & Server API
+* **Express.js API Layer** (`server.ts` & `src/server/apiApp.ts`) running on Node.js
+* **Elevated Supabase Admin Client**: Authenticated via `SUPABASE_SECRET_KEY` for secured administrative operations:
+  * Asynchronous tenant deletion workflows with background status polling and cascade cleanup
+  * Superuser role preservation and safety guardrails
+  * Secure user provisioning and administrative account management
+* **Google Gemini AI Integration** (`@google/genai`): Server-side AI integration for intelligent operational summaries, pattern recognition, and decision support.
+
+### 4. Testing & Quality Assurance
+* **Vitest**: Blazing-fast unit and integration test runner
+* **React Testing Library**: DOM-level component and integration verification
+* **RLS & Security Regression Testing**: Automated test suites verifying database policies, authorization matrix rules, and API permission boundaries
+* **TypeScript Quality Gate**: Zero-error typecheck validation (`npm run lint` / `npm run typecheck`)
 
 ---
 
-## Current Project Status
+## Role-Based Access Control (RBAC)
 
-* **Core Application**: Fully functional with support for dynamic priorities, promotions, exceptions tracking, user role management, and audit logging.
-* **Testing Coverage**: Comprehensive test coverage encompassing UI rendering, route guard verification, state machines, date-parsers, and Firestore security rule correctness (39+ security rules scenarios verified).
-* **Continuous Integration (CI)**: Integrated via GitHub Actions `.github/workflows/ci.yml` verifying TypeScript compiler integrity, Vitest tests, and Firestore rules in a clean, sandboxed emulator.
+| Role | Scope | Permissions & Capabilities |
+| :--- | :--- | :--- |
+| **PLATFORM_SUPERUSER** | Global / Platform-wide | Cross-tenant administration, tenant provisioning/deletion, global audit access, all operational permissions. Does not require a tenant association. |
+| **TENANT_ADMIN** | Tenant-wide | Manage tenant sites, users, master data, configurations, and tenant-level audit logs. |
+| **PLANNER** | Assigned Sites | Create and manage production plans, operational priorities, and inventory adjustments. |
+| **WAREHOUSE_OPERATOR** | Assigned Sites | View and execute site priorities, report exceptions, update execution progress. |
+| **VIEWER** | Assigned Sites | Read-only access to operational overview, reports, and dashboards. |
+| **DISPLAY** | Single Site / TV | Dedicated kiosk/display mode for full-screen rotating operational TV dashboards. |
 
 ---
 
@@ -50,69 +70,70 @@ The application is built on a modern full-stack web architecture:
 
 ### Prerequisites
 
-* **Node.js**: v20 or newer is highly recommended.
-* **Java Runtime Environment (JRE)**: Java 21+ (required to run the Firestore local emulator suite).
+* **Node.js**: v20 or newer is recommended.
+* **Supabase Project / PostgreSQL Database**: Configured with the schema and RLS policies from `/docs`.
 
 ### 1. Installation
 
-Install project dependencies deterministically using `npm`:
+Install project dependencies deterministically:
 ```bash
 npm ci
 ```
 
-### 2. Run Locally
+### 2. Environment Configuration
 
-Start the Vite development server locally on port `3000`:
+Create a `.env` file at the project root based on `.env.example`:
+```env
+# Application URL
+APP_URL="http://localhost:3000"
+
+# Supabase Client & Server Config
+VITE_SUPABASE_URL="https://your-project.supabase.co/rest/v1/"
+VITE_SUPABASE_PUBLISHABLE_KEY="your-supabase-publishable-key"
+SUPABASE_URL="https://your-project.supabase.co/rest/v1/"
+SUPABASE_PUBLISHABLE_KEY="your-supabase-publishable-key"
+SUPABASE_SECRET_KEY="your-supabase-service-role-secret-key"
+
+# Gemini AI (Optional / Server-Side)
+GEMINI_API_KEY="your-gemini-api-key"
+```
+
+### 3. Run Locally
+
+Start the full-stack server (Express + Vite middleware) on port `3000`:
 ```bash
 npm run dev
 ```
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### 3. Run Testing Suites
+### 4. Database Setup & Migrations
 
-OVMS has two main testing layers:
+The SQL schema, migrations, and security rules are documented in `/docs`:
+* `docs/supabase_schema.sql`: Full table definitions and indexes
+* `docs/supabase_rls.sql`: Row-Level Security policies and helper functions
+* `docs/full_reset_and_recreate.sql`: Complete consolidated database reset and recreation script
 
-#### A. Run Unit & UI Tests
-To execute standard Vitest and React component test suites without starting the emulator:
+### 5. Running Tests & Quality Checks
+
 ```bash
+# Run all unit, integration, and security tests
 npm run test
-```
 
-#### B. Run Firestore Security Rules Tests
-To spin up a local Firestore Emulator instance, compile `firestore.rules`, and run the security suite:
-```bash
-npm run test:rules
-```
+# Run typecheck and linting
+npm run lint
 
-### 4. Run Unified Pre-Push Validation
-
-To run full checks locally exactly as they would run on GitHub Actions CI:
-
-#### Full Validation (Requires Java)
-Runs typecheck, unit tests, security rule emulator tests, and production build:
-```bash
-npm run validate:full
-```
-
-#### Standard Validation (No Java dependency)
-Runs typecheck, unit tests, and production build, bypassing the emulator rules checks:
-```bash
+# Run unified full pre-push validation (typecheck + test + build)
 npm run validate
 ```
 
-### 5. Build for Production
+### 6. Build for Production
 
-Compile TypeScript and build optimized static assets in the `dist/` directory:
+Compile TypeScript and bundle the frontend and server entrypoints for production:
 ```bash
 npm run build
 ```
+The compiled server output is written to `dist/server.cjs` and static assets to `dist/`. Launch with:
+```bash
+npm start
+```
 
----
-
-## Configuration & Environment
-
-Create a `.env` file at the root based on `.env.example`. Environment configuration parameters include:
-* Firebase project identifier
-* Firestore database endpoint mapping
-
-All sensitive API tokens and credentials are kept entirely server-side or bound securely via platform configuration profiles to prevent leakages.

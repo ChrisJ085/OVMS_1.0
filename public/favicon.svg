@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <defs>
+    <linearGradient id="ovms-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b1a"/>
+      <stop offset="100%" stop-color="#d94300"/>
+    </linearGradient>
+    <linearGradient id="ovms-top" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ffe2d1"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Base Rounded Container with Brand Gradient -->
+  <rect width="32" height="32" rx="7" fill="url(#ovms-bg)"/>
+  
+  <!-- Subtle inner border for contrast -->
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1"/>
+
+  <!-- Isometric Operations Box / Visual Management Monogram -->
+  <g transform="translate(16, 16.5)" filter="url(#shadow)">
+    <!-- Top Face (White/Highlight) -->
+    <path d="M 0 -8 L 7.5 -3.5 L 0 1 L -7.5 -3.5 Z" fill="url(#ovms-top)" opacity="0.98"/>
+    
+    <!-- Left Face (Deep Orange Shadow) -->
+    <path d="M -7.5 -3.5 L 0 1 L 0 9 L -7.5 4.5 Z" fill="#7a2200" opacity="0.85"/>
+    
+    <!-- Right Face (Medium Shadow) -->
+    <path d="M 0 1 L 7.5 -3.5 L 7.5 4.5 L 0 9 Z" fill="#ab3300" opacity="0.95"/>
+
+    <!-- Dynamic Operational Pulse Line across top face -->
+    <path d="M -4.5 -3.5 L -1.5 -1.8 L 0.5 -4 L 2.5 -2.5 L 5 -3.8" stroke="#ff5a00" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
