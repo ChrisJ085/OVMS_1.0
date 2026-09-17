@@ -37,7 +37,7 @@ export const MissingProductResolution: React.FC<MissingProductResolutionProps> =
 }) => {
   const [code, setCode] = useState(productCode);
   const [description, setDescription] = useState(sapDescription);
-  const [categoryId, setCategoryId] = useState('general');
+  const [categoryId, setCategoryId] = useState('');
   const [configurations, setConfigurations] = useState<ProductConfiguration[]>([
     { unitOfMeasureId: 'CS', casesPerPallet: null, unitsPerCase: null }
   ]);
@@ -53,12 +53,15 @@ export const MissingProductResolution: React.FC<MissingProductResolutionProps> =
   useEffect(() => {
     const unsubCategories = subscribeToCollection<ProductCategory>(
       collections.PRODUCT_CATEGORIES,
-      [where('tenantId', '==', tenantId), where('siteId', '==', '')],
+      [where('tenantId', '==', tenantId)],
       (items) => {
-        setCategories(items);
-        const active = items.filter(c => c.status === 'active');
-        if (active.length > 0 && categoryId === 'general') {
-          setCategoryId(active[0].id);
+        const filtered = items
+          .filter(c => !c.siteId || c.siteId === '' || c.siteId === siteId)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setCategories(filtered);
+        const active = filtered.filter(c => c.status === 'active');
+        if (active.length > 0) {
+          setCategoryId(prev => prev || active[0].id);
         }
       },
       console.error
@@ -86,7 +89,7 @@ export const MissingProductResolution: React.FC<MissingProductResolutionProps> =
       unsubCategories();
       unsubUnits();
     };
-  }, [tenantId]);
+  }, [tenantId, siteId]);
 
   const handleConfigChange = (index: number, field: keyof ProductConfiguration, value: any) => {
     const newConfigs = [...configurations];

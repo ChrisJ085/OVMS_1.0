@@ -1,7 +1,9 @@
 import { isUniqueCode, trimCode, trimDescription } from '../../../validation';
-import { Product } from '../../../types/product';
+import { Product, ProductConfiguration } from '../../../types/product';
 import { ServiceResult } from '../../../types/common';
 import { getDocument, getDocuments, createDocument, updateDocument, deactivateDocument, subscribeToCollection } from '../../../services/dbService';
+import { areProductCodesEqual } from '../../../utils/productCodeNormalizer';
+import { logAuditEvent } from '../../../services/auditService';
 
 const COLLECTION_NAME = 'products';
 
@@ -182,4 +184,162 @@ export const subscribeToProducts = (
     },
     onError
   );
+};
+
+export interface BulkProductItemInput {
+  productCode: string;
+  description: string;
+  categoryId: string;
+  configurations?: ProductConfiguration[];
+  unitOfMeasureId?: string;
+  casesPerPallet?: number | null;
+  unitsPerCase?: number | null;
+  defaultDestinationId?: string | null;
+  operationallyRelevant?: boolean;
+  notes?: string;
+  action?: 'create' | 'update' | 'skip';
+}
+
+export interface BulkProductBatchParams {
+  tenantId: string;
+  siteId: string;
+  items: BulkProductItemInput[];
+  ifExistsAction?: 'update' | 'skip';
+  performedBy?: string;
+}
+
+export interface BulkProductBatchResult {
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  errors: { productCode: string; error: string }[];
+}
+
+export const bulkCreateOrUpdateProducts = async (
+  params: BulkProductBatchParams
+): Promise<ServiceResult<BulkProductBatchResult>> => {
+  const { tenantId, siteId, items, ifExistsAction = 'skip', performedBy = 'System' } = params;
+  
+  if (!items || items.length === 0) {
+    return { success: false, error: 'No product items provided for bulk upload.' };
+  }
+
+  try {
+    // Fetch all existing products for this tenant to check codes
+    const existingProducts = await getDocuments<Product>(COLLECTION_NAME, [
+      { field: 'tenantId', op: '==' as const, value: tenantId }
+    ]);
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const errors: { productCode: string; error: string }[] = [];
+
+    for (const item of items) {
+      try {
+        const rawCode = trimCode(item.productCode);
+        if (!rawCode) {
+          failedCount++;
+          errors.push({ productCode: item.productCode || 'UNKNOWN', error: 'Product code is empty.' });
+          continue;
+        }
+
+        const existing = existingProducts.find(p =>
+          areProductCodesEqual(rawCode, p.productCode)
+        );
+
+        const configs: ProductConfiguration[] = item.configurations && item.configurations.length > 0
+          ? item.configurations
+          : [{
+              unitOfMeasureId: item.unitOfMeasureId || '',
+              casesPerPallet: item.casesPerPallet ?? null,
+              unitsPerCase: item.unitsPerCase ?? null
+            }];
+
+        const primaryConfig = configs[0] || { unitOfMeasureId: '', casesPerPallet: null, unitsPerCase: null };
+
+        if (existing) {
+          const actionToTake = item.action || ifExistsAction;
+          if (actionToTake === 'skip') {
+            skippedCount++;
+            continue;
+          }
+
+          // Update existing product
+          await updateDocument(COLLECTION_NAME, existing.id, {
+            description: trimDescription(item.description) || existing.description,
+            categoryId: item.categoryId || existing.categoryId,
+            unitOfMeasureId: primaryConfig.unitOfMeasureId || existing.unitOfMeasureId,
+            casesPerPallet: primaryConfig.casesPerPallet !== null ? primaryConfig.casesPerPallet : existing.casesPerPallet,
+            unitsPerCase: primaryConfig.unitsPerCase !== null ? primaryConfig.unitsPerCase : existing.unitsPerCase,
+            configurations: configs,
+            defaultDestinationId: item.defaultDestinationId !== undefined ? item.defaultDestinationId : existing.defaultDestinationId,
+            operationallyRelevant: item.operationallyRelevant !== undefined ? item.operationallyRelevant : existing.operationallyRelevant,
+            notes: item.notes !== undefined ? item.notes : (existing.notes || ''),
+            siteId: existing.siteId || siteId,
+          });
+          updatedCount++;
+        } else {
+          // Create new product
+          await createDocument<any>(COLLECTION_NAME, {
+            tenantId,
+            siteId,
+            productCode: rawCode,
+            code: rawCode,
+            description: trimDescription(item.description) || `Product ${rawCode}`,
+            categoryId: item.categoryId || '',
+            unitOfMeasureId: primaryConfig.unitOfMeasureId || '',
+            casesPerPallet: primaryConfig.casesPerPallet,
+            unitsPerCase: primaryConfig.unitsPerCase,
+            configurations: configs,
+            defaultDestinationId: item.defaultDestinationId || null,
+            operationallyRelevant: item.operationallyRelevant !== undefined ? item.operationallyRelevant : true,
+            notes: item.notes || '',
+            status: 'active'
+          });
+          createdCount++;
+        }
+      } catch (itemErr: any) {
+        failedCount++;
+        errors.push({
+          productCode: item.productCode,
+          error: itemErr?.message || 'Failed to process item'
+        });
+      }
+    }
+
+    if (createdCount > 0 || updatedCount > 0) {
+      try {
+        await logAuditEvent({
+          tenantId,
+          siteId,
+          eventType: 'PRODUCT_CREATE',
+          entityType: 'Product',
+          entityId: 'BULK_UPLOAD',
+          summary: `Bulk uploaded ${createdCount} products (${updatedCount} updated, ${skippedCount} skipped)`,
+          performedBy
+        });
+      } catch (auditErr) {
+        console.warn('Failed to log bulk product audit event:', auditErr);
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        createdCount,
+        updatedCount,
+        skippedCount,
+        failedCount,
+        errors
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error during bulk product upload.'
+    };
+  }
 };

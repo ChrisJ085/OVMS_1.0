@@ -1415,130 +1415,132 @@ export const AdminOverviewPage: React.FC = () => {
             </div>
           </SectionCard>
 
-          {/* Application Environment Mode & Data Provisioning */}
-          <SectionCard title="Application Mode & Environment Configuration">
-            <div className="space-y-5">
-              {/* Mode Switch Row */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/60 border border-slate-800">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-sm font-semibold text-slate-200">Active Mode:</span>
-                    {isDevelopmentMode ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                        <Settings2 className="w-3.5 h-3.5 animate-pulse" />
-                        Development (Sandbox)
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        Production
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    {isDevelopmentMode
-                      ? 'Development mode displays the Sandbox banner and enables developer data provisioning tools across the platform.'
-                      : 'Production mode runs with standard live presentation and hides developer indicator badges.'}
-                  </p>
-                </div>
-
-                {/* Interactive Mode Switch */}
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-xs font-medium text-slate-400">
-                    {isDevelopmentMode ? 'Switch to Production' : 'Switch to Development'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={toggleMode}
-                    role="switch"
-                    aria-checked={isDevelopmentMode}
-                    aria-label="Toggle Development and Production mode"
-                    className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
-                      isDevelopmentMode ? 'bg-amber-500' : 'bg-slate-700'
-                    }`}
-                  >
-                    <span className="sr-only">Toggle Development and Production mode</span>
-                    <span
-                      aria-hidden="true"
-                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-slate-950 shadow ring-0 transition duration-200 ease-in-out ${
-                        isDevelopmentMode ? 'translate-x-7 bg-white' : 'translate-x-0 bg-slate-300'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              {/* Data Seeding & Provisioning Actions */}
-              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                      <Database className="w-4 h-4 text-amber-500" />
-                      Data Provisioning & Seed Tools
-                    </h4>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Load baseline master configuration or comprehensive UAT datasets for tenant verification and testing.
+          {/* Application Environment Mode & Data Provisioning (Restricted to PLATFORM_SUPERUSER) */}
+          {userProfile?.role === 'PLATFORM_SUPERUSER' && (
+            <SectionCard title="Application Mode & Environment Configuration">
+              <div className="space-y-5">
+                {/* Mode Switch Row */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-sm font-semibold text-slate-200">Active Mode:</span>
+                      {isDevelopmentMode ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          <Settings2 className="w-3.5 h-3.5 animate-pulse" />
+                          Development (Sandbox)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          Production
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      {isDevelopmentMode
+                        ? 'Development mode displays the Sandbox banner and enables developer data provisioning tools across the platform.'
+                        : 'Production mode runs with standard live presentation and hides developer indicator badges.'}
                     </p>
                   </div>
-                </div>
 
-                {seedFeedback && (
-                  <div
-                    className={`p-3 rounded-lg text-xs flex items-center justify-between border ${
-                      seedFeedback.type === 'success'
-                        ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
-                        : 'bg-red-950/40 border-red-800/60 text-red-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {seedFeedback.type === 'success' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      ) : (
-                        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-                      )}
-                      <span>{seedFeedback.message}</span>
-                    </div>
+                  {/* Interactive Mode Switch */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs font-medium text-slate-400">
+                      {isDevelopmentMode ? 'Switch to Production' : 'Switch to Development'}
+                    </span>
                     <button
-                      onClick={() => setSeedFeedback(null)}
-                      className="text-slate-400 hover:text-slate-200 ml-2 shrink-0"
+                      type="button"
+                      onClick={toggleMode}
+                      role="switch"
+                      aria-checked={isDevelopmentMode}
+                      aria-label="Toggle Development and Production mode"
+                      className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
+                        isDevelopmentMode ? 'bg-amber-500' : 'bg-slate-700'
+                      }`}
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <span className="sr-only">Toggle Development and Production mode</span>
+                      <span
+                        aria-hidden="true"
+                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-slate-950 shadow ring-0 transition duration-200 ease-in-out ${
+                          isDevelopmentMode ? 'translate-x-7 bg-white' : 'translate-x-0 bg-slate-300'
+                        }`}
+                      />
                     </button>
                   </div>
-                )}
+                </div>
 
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleLoadDevConfig}
-                    disabled={seedingConfig || seedingUat}
-                    className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                  >
-                    {seedingConfig ? (
-                      <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                    ) : (
-                      <Settings className="w-3.5 h-3.5 text-slate-400" />
-                    )}
-                    Load Development Configuration
-                  </button>
+                {/* Data Seeding & Provisioning Actions */}
+                <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                        <Database className="w-4 h-4 text-amber-500" />
+                        Data Provisioning & Seed Tools
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Load baseline master configuration or comprehensive UAT datasets for tenant verification and testing.
+                      </p>
+                    </div>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={handleLoadUatData}
-                    disabled={seedingConfig || seedingUat}
-                    className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-amber-950 bg-amber-500 hover:bg-amber-400 border border-transparent rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                  >
-                    {seedingUat ? (
-                      <RotateCcw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Database className="w-3.5 h-3.5" />
-                    )}
-                    Load UAT Example Data
-                  </button>
+                  {seedFeedback && (
+                    <div
+                      className={`p-3 rounded-lg text-xs flex items-center justify-between border ${
+                        seedFeedback.type === 'success'
+                          ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                          : 'bg-red-950/40 border-red-800/60 text-red-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {seedFeedback.type === 'success' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                        )}
+                        <span>{seedFeedback.message}</span>
+                      </div>
+                      <button
+                        onClick={() => setSeedFeedback(null)}
+                        className="text-slate-400 hover:text-slate-200 ml-2 shrink-0"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleLoadDevConfig}
+                      disabled={seedingConfig || seedingUat}
+                      className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      {seedingConfig ? (
+                        <RotateCcw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                      ) : (
+                        <Settings className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                      Load Development Configuration
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleLoadUatData}
+                      disabled={seedingConfig || seedingUat}
+                      className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-amber-950 bg-amber-500 hover:bg-amber-400 border border-transparent rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      {seedingUat ? (
+                        <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Database className="w-3.5 h-3.5" />
+                      )}
+                      Load UAT Example Data
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </SectionCard>
+            </SectionCard>
+          )}
 
           {loading ? (
             <div className="p-8 text-center text-slate-400">Loading overview...</div>

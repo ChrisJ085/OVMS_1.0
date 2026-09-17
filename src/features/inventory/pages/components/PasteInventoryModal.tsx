@@ -101,10 +101,14 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
     const unsubCategories = subscribeToCollection<ProductCategory>(
       collections.PRODUCT_CATEGORIES,
       [
-        { field: 'tenantId', op: '==', value: tenantId },
-        { field: 'siteId', op: '==', value: '' }
+        { field: 'tenantId', op: '==', value: tenantId }
       ],
-      setCategories,
+      (items) => {
+        const filtered = items
+          .filter(c => !c.siteId || c.siteId === '' || c.siteId === siteId)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setCategories(filtered);
+      },
       console.error
     );
 
@@ -231,8 +235,8 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
     setQuickAddForm({
       productCode: rawCode.toUpperCase(),
       description: rawDesc || `Product ${rawCode}`,
-      categoryId: activeCategories.length > 0 ? activeCategories[0].id : 'default',
-      unitOfMeasureId: defaultUom ? defaultUom.id : 'CS',
+      categoryId: activeCategories.length > 0 ? activeCategories[0].id : '',
+      unitOfMeasureId: defaultUom ? defaultUom.id : '',
       casesPerPallet: '100',
       unitsPerCase: '1',
       defaultDestinationId: '',
@@ -246,6 +250,16 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
 
     if (!quickAddForm.productCode.trim() || !quickAddForm.description.trim()) {
       setQuickAddError('Product Code and Description are required.');
+      return;
+    }
+
+    if (!quickAddForm.categoryId || quickAddForm.categoryId === 'default') {
+      setQuickAddError('Please select a valid product category.');
+      return;
+    }
+
+    if (!quickAddForm.unitOfMeasureId) {
+      setQuickAddError('Please select a unit of measure.');
       return;
     }
 
@@ -270,7 +284,7 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
         siteId,
         productCode: quickAddForm.productCode.toUpperCase().trim(),
         description: quickAddForm.description.trim(),
-        categoryId: quickAddForm.categoryId || 'default',
+        categoryId: quickAddForm.categoryId,
         unitOfMeasureId: quickAddForm.unitOfMeasureId,
         casesPerPallet: casesPerPalletNum,
         unitsPerCase: unitsPerCaseNum,
@@ -600,26 +614,34 @@ export const PasteInventoryModal: React.FC<PasteInventoryModalProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-slate-300">Category *</label>
                   <select
+                    required
                     value={quickAddForm.categoryId}
                     onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, categoryId: e.target.value } : null)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
                   >
-                    {categories.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                    <option value="" disabled>Select a category</option>
+                    {categories
+                      .filter(c => c.status === 'active' || c.id === quickAddForm.categoryId)
+                      .map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
                   </select>
                 </div>
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-slate-300">Unit of Measure *</label>
                   <select
+                    required
                     value={quickAddForm.unitOfMeasureId}
                     onChange={(e) => setQuickAddForm(prev => prev ? { ...prev, unitOfMeasureId: e.target.value } : null)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-brand-500"
                   >
-                    {units.map(u => (
-                      <option key={u.id} value={u.id}>{u.code} - {u.name}</option>
-                    ))}
+                    <option value="" disabled>Select unit of measure</option>
+                    {units
+                      .filter(u => u.status === 'active' || u.id === quickAddForm.unitOfMeasureId)
+                      .map(u => (
+                        <option key={u.id} value={u.id}>{u.code} - {u.name}</option>
+                      ))}
                   </select>
                 </div>
               </div>

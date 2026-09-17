@@ -12,7 +12,7 @@ DROP FUNCTION IF EXISTS public.has_tenant_access(UUID);
 DROP FUNCTION IF EXISTS public.is_platform_superuser();
 DROP FUNCTION IF EXISTS public.get_auth_user();
 
--- 3. Define Internal Security Functions (Pinned search_path, fully qualified)
+-- 3. Define Internal Security Functions (Pinned search_path = '', fully qualified schema names)
 CREATE OR REPLACE FUNCTION ovms_internal.get_auth_user()
 RETURNS public.users AS $$
 DECLARE
@@ -21,7 +21,7 @@ BEGIN
     SELECT * INTO u FROM public.users WHERE id = auth.uid() LIMIT 1;
     RETURN u;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp STABLE;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' STABLE;
 
 CREATE OR REPLACE FUNCTION ovms_internal.is_platform_superuser()
 RETURNS BOOLEAN AS $$
@@ -31,7 +31,7 @@ BEGIN
     u := ovms_internal.get_auth_user();
     RETURN u IS NOT NULL AND u.role = 'PLATFORM_SUPERUSER' AND (u.account_status = 'ACTIVE' OR u.account_status = 'active');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp STABLE;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' STABLE;
 
 CREATE OR REPLACE FUNCTION ovms_internal.has_tenant_access(target_tenant_id UUID)
 RETURNS BOOLEAN AS $$
@@ -44,7 +44,7 @@ BEGIN
     IF u.role = 'PLATFORM_SUPERUSER' THEN RETURN TRUE; END IF;
     RETURN u.tenant_id = target_tenant_id AND (u.account_status = 'ACTIVE' OR u.account_status = 'active');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp STABLE;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' STABLE;
 
 CREATE OR REPLACE FUNCTION ovms_internal.is_tenant_admin(target_tenant_id UUID)
 RETURNS BOOLEAN AS $$
@@ -57,7 +57,7 @@ BEGIN
     IF u.role = 'PLATFORM_SUPERUSER' THEN RETURN TRUE; END IF;
     RETURN u.role = 'TENANT_ADMIN' AND u.tenant_id = target_tenant_id AND (u.account_status = 'ACTIVE' OR u.account_status = 'active');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp STABLE;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' STABLE;
 
 CREATE OR REPLACE FUNCTION ovms_internal.has_site_access(target_tenant_id UUID, target_site_id UUID)
 RETURNS BOOLEAN AS $$
@@ -73,7 +73,7 @@ BEGIN
     ) INTO site_exists;
     RETURN site_exists;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp STABLE;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' STABLE;
 
 -- 4. Triggers to Prevent Privilege Escalation
 
@@ -85,8 +85,8 @@ BEGIN
     END IF;
 
     IF ovms_internal.is_tenant_admin(OLD.tenant_id) THEN
-        IF NEW.role = 'PLATFORM_SUPERUSER' THEN
-            RAISE EXCEPTION 'Tenant Admins cannot grant PLATFORM_SUPERUSER role';
+        IF NEW.role IN ('PLATFORM_SUPERUSER', 'TENANT_ADMIN') AND OLD.role NOT IN ('PLATFORM_SUPERUSER', 'TENANT_ADMIN') THEN
+            RAISE EXCEPTION 'Tenant Admins cannot grant PLATFORM_SUPERUSER or TENANT_ADMIN roles';
         END IF;
         IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id THEN
             RAISE EXCEPTION 'Tenant Admins cannot move users between tenants';
@@ -96,24 +96,20 @@ BEGIN
 
     IF OLD.id = auth.uid() THEN
         -- Prevent arbitrary users from elevating privileges or modifying sensitive fields
+        NEW.id := OLD.id;
+        NEW.email := OLD.email;
         NEW.role := OLD.role;
         NEW.tenant_id := OLD.tenant_id;
         NEW.account_status := OLD.account_status;
         NEW.failed_login_attempts := OLD.failed_login_attempts;
-        NEW.failed_attempt_window_started_at := OLD.failed_attempt_window_started_at;
         NEW.locked_at := OLD.locked_at;
-
-        -- Normal users can clear their password change flag, but not set it
-        IF NEW.requires_password_change = TRUE AND OLD.requires_password_change = FALSE THEN
-            NEW.requires_password_change := FALSE;
-        END IF;
-        
+        NEW.requires_password_change := OLD.requires_password_change;
         RETURN NEW;
     END IF;
 
     RAISE EXCEPTION 'Unauthorized update to users table';
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 DROP TRIGGER IF EXISTS users_prevent_escalation_trg ON public.users;
 CREATE TRIGGER users_prevent_escalation_trg
@@ -121,13 +117,37 @@ BEFORE UPDATE ON public.users
 FOR EACH ROW
 EXECUTE FUNCTION ovms_internal.trg_users_prevent_escalation();
 
--- Audit Logs Immutable Trigger
+CREATE OR REPLACE FUNCTION ovms_internal.trg_users_prevent_insert_escalation()
+RETURNS trigger AS $$
+BEGIN
+    IF ovms_internal.is_platform_superuser() THEN
+        RETURN NEW;
+    END IF;
+
+    IF ovms_internal.is_tenant_admin(NEW.tenant_id) THEN
+        IF NEW.role IN ('PLATFORM_SUPERUSER', 'TENANT_ADMIN') THEN
+            RAISE EXCEPTION 'Tenant Admins cannot create PLATFORM_SUPERUSER or TENANT_ADMIN accounts';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    RAISE EXCEPTION 'Unauthorized insert to users table';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
+
+DROP TRIGGER IF EXISTS users_prevent_insert_escalation_trg ON public.users;
+CREATE TRIGGER users_prevent_insert_escalation_trg
+BEFORE INSERT ON public.users
+FOR EACH ROW
+EXECUTE FUNCTION ovms_internal.trg_users_prevent_insert_escalation();
+
+-- Audit Logs Immutable Trigger & Sensitive Action Verification
 CREATE OR REPLACE FUNCTION ovms_internal.trg_audit_logs_immutable()
 RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION 'Audit logs are immutable and cannot be modified or deleted.';
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 DROP TRIGGER IF EXISTS audit_logs_immutable_update_trg ON public.audit_logs;
 CREATE TRIGGER audit_logs_immutable_update_trg
@@ -139,8 +159,20 @@ CREATE TRIGGER audit_logs_immutable_delete_trg
 BEFORE DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION ovms_internal.trg_audit_logs_immutable();
 
--- 5. Revoke Excessive Grants
--- Revoke all permissions on all tables from authenticated users, then explicitly grant ONLY what is needed
+-- 5. Projection Tables
+CREATE TABLE IF NOT EXISTS public.display_priorities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    site_id UUID NOT NULL,
+    priority_id UUID NOT NULL,
+    title TEXT NOT NULL,
+    level TEXT NOT NULL,
+    status TEXT NOT NULL,
+    due_date TIMESTAMPTZ,
+    synced_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 6. Revoke Excessive Grants & Apply Explicit Least Privilege
 DO $$ 
 DECLARE
     r RECORD;
@@ -149,14 +181,49 @@ BEGIN
     LOOP
         EXECUTE 'REVOKE ALL ON public.' || quote_ident(r.tablename) || ' FROM authenticated;';
         EXECUTE 'REVOKE ALL ON public.' || quote_ident(r.tablename) || ' FROM anon;';
-        -- Explicit grants:
-        EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON public.' || quote_ident(r.tablename) || ' TO authenticated;';
+        EXECUTE 'REVOKE ALL ON public.' || quote_ident(r.tablename) || ' FROM public;';
     END LOOP;
 END $$;
 
--- 6. Apply Explicit RLS Policies
+-- Explicit least-privilege table grants:
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.tenants TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sites TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.users TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_sites TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_favorites TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.units_of_measure TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.destinations TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_categories TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.storage_areas TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.production_lines TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.action_types TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.priority_levels TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.products TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.locations TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.inventory_balances TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.planning_rules TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.promotions TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.recommendations TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.priorities TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.display_priorities TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.announcements TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.operational_exceptions TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.production_plan_imports TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.production_plan_entries TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.site_settings TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.site_onboarding TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sessions TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.tenant_deletion_jobs TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_deletion_receipts TO authenticated;
 
--- Clear existing policies (requires looping since we are replacing all)
+-- Event logs & historical operational tables: SELECT and INSERT only (no UPDATE/DELETE granted to authenticated)
+GRANT SELECT, INSERT ON public.audit_logs TO authenticated;
+GRANT SELECT, INSERT ON public.inventory_movements TO authenticated;
+GRANT SELECT, INSERT ON public.production_events TO authenticated;
+GRANT SELECT, INSERT ON public.priority_events TO authenticated;
+
+-- 7. Apply Explicit RLS Policies
+
 DO $$ 
 DECLARE 
     r RECORD; 
@@ -184,16 +251,16 @@ CREATE POLICY "Sites: Delete" ON public.sites FOR DELETE USING (ovms_internal.is
 -- Table: users
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users: Select" ON public.users FOR SELECT USING (id = auth.uid() OR ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "Users: Insert" ON public.users FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR (ovms_internal.is_tenant_admin(tenant_id) AND role != 'PLATFORM_SUPERUSER'));
+CREATE POLICY "Users: Insert" ON public.users FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR (ovms_internal.is_tenant_admin(tenant_id) AND role NOT IN ('PLATFORM_SUPERUSER', 'TENANT_ADMIN')));
 CREATE POLICY "Users: Update" ON public.users FOR UPDATE USING (id = auth.uid() OR ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "Users: Delete" ON public.users FOR DELETE USING (ovms_internal.is_platform_superuser() OR (ovms_internal.is_tenant_admin(tenant_id) AND role != 'PLATFORM_SUPERUSER' AND id != auth.uid()));
+CREATE POLICY "Users: Delete" ON public.users FOR DELETE USING (ovms_internal.is_platform_superuser() OR (ovms_internal.is_tenant_admin(tenant_id) AND role NOT IN ('PLATFORM_SUPERUSER', 'TENANT_ADMIN') AND id != auth.uid()));
 
 -- Table: user_sites
 ALTER TABLE public.user_sites ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "UserSites: Select" ON public.user_sites FOR SELECT USING (user_id = auth.uid() OR ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT tenant_id FROM public.users WHERE id = public.user_sites.user_id LIMIT 1)));
-CREATE POLICY "UserSites: Insert" ON public.user_sites FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT tenant_id FROM public.users WHERE id = public.user_sites.user_id LIMIT 1)));
-CREATE POLICY "UserSites: Update" ON public.user_sites FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT tenant_id FROM public.users WHERE id = public.user_sites.user_id LIMIT 1)));
-CREATE POLICY "UserSites: Delete" ON public.user_sites FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT tenant_id FROM public.users WHERE id = public.user_sites.user_id LIMIT 1)));
+CREATE POLICY "UserSites: Select" ON public.user_sites FOR SELECT USING (user_id = auth.uid() OR ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT u.tenant_id FROM public.users u WHERE u.id = user_id)));
+CREATE POLICY "UserSites: Insert" ON public.user_sites FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR (ovms_internal.is_tenant_admin((SELECT u.tenant_id FROM public.users u WHERE u.id = user_id)) AND EXISTS (SELECT 1 FROM public.sites s WHERE s.id = site_id AND s.tenant_id = (SELECT u.tenant_id FROM public.users u WHERE u.id = user_id))));
+CREATE POLICY "UserSites: Update" ON public.user_sites FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT u.tenant_id FROM public.users u WHERE u.id = user_id)));
+CREATE POLICY "UserSites: Delete" ON public.user_sites FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin((SELECT u.tenant_id FROM public.users u WHERE u.id = user_id)));
 
 -- Table: action_types
 ALTER TABLE public.action_types ENABLE ROW LEVEL SECURITY;
@@ -237,25 +304,39 @@ CREATE POLICY "PriorityLevels: Insert" ON public.priority_levels FOR INSERT WITH
 CREATE POLICY "PriorityLevels: Update" ON public.priority_levels FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "PriorityLevels: Delete" ON public.priority_levels FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- Table: audit_logs
+-- Table: audit_logs (Immutable)
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "AuditLogs: Select" ON public.audit_logs FOR SELECT USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "AuditLogs: Insert" ON public.audit_logs FOR INSERT WITH CHECK (ovms_internal.has_tenant_access(tenant_id));
--- Update and Delete are blocked by trigger anyway
+CREATE POLICY "AuditLogs: Insert" ON public.audit_logs FOR INSERT WITH CHECK (
+    ovms_internal.has_tenant_access(tenant_id)
+    AND (
+        action NOT IN ('SECURITY_OVERRIDE', 'TENANT_DELETION_INITIATED')
+        OR ovms_internal.is_platform_superuser()
+    )
+);
+CREATE POLICY "AuditLogs: Update" ON public.audit_logs FOR UPDATE USING (FALSE);
+CREATE POLICY "AuditLogs: Delete" ON public.audit_logs FOR DELETE USING (FALSE);
 
 -- Table: priorities
 ALTER TABLE public.priorities ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Priorities: Select" ON public.priorities FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "Priorities: Select" ON public.priorities FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "Priorities: Insert" ON public.priorities FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "Priorities: Update" ON public.priorities FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "Priorities: Delete" ON public.priorities FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- Table: priority_events
+-- Table: display_priorities (Projection for DISPLAY role)
+ALTER TABLE public.display_priorities ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "DisplayPriorities: Select" ON public.display_priorities FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "DisplayPriorities: Insert" ON public.display_priorities FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "DisplayPriorities: Update" ON public.display_priorities FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "DisplayPriorities: Delete" ON public.display_priorities FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+
+-- Table: priority_events (Immutable)
 ALTER TABLE public.priority_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "PriorityEvents: Select" ON public.priority_events FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
 CREATE POLICY "PriorityEvents: Insert" ON public.priority_events FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "PriorityEvents: Update" ON public.priority_events FOR UPDATE USING (FALSE); -- Events should be immutable
-CREATE POLICY "PriorityEvents: Delete" ON public.priority_events FOR DELETE USING (FALSE); -- Events should be immutable
+CREATE POLICY "PriorityEvents: Update" ON public.priority_events FOR UPDATE USING (FALSE);
+CREATE POLICY "PriorityEvents: Delete" ON public.priority_events FOR DELETE USING (FALSE);
 
 -- Table: inventory_balances
 ALTER TABLE public.inventory_balances ENABLE ROW LEVEL SECURITY;
@@ -264,14 +345,14 @@ CREATE POLICY "InventoryBalances: Insert" ON public.inventory_balances FOR INSER
 CREATE POLICY "InventoryBalances: Update" ON public.inventory_balances FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "InventoryBalances: Delete" ON public.inventory_balances FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- Table: inventory_movements
+-- Table: inventory_movements (Immutable)
 ALTER TABLE public.inventory_movements ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "InventoryMovements: Select" ON public.inventory_movements FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
 CREATE POLICY "InventoryMovements: Insert" ON public.inventory_movements FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "InventoryMovements: Update" ON public.inventory_movements FOR UPDATE USING (FALSE);
 CREATE POLICY "InventoryMovements: Delete" ON public.inventory_movements FOR DELETE USING (FALSE);
 
--- Table: production_events
+-- Table: production_events (Immutable)
 ALTER TABLE public.production_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "ProductionEvents: Select" ON public.production_events FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
 CREATE POLICY "ProductionEvents: Insert" ON public.production_events FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
@@ -306,12 +387,12 @@ CREATE POLICY "Announcements: Insert" ON public.announcements FOR INSERT WITH CH
 CREATE POLICY "Announcements: Update" ON public.announcements FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "Announcements: Delete" ON public.announcements FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- Table: exceptions
-ALTER TABLE public.exceptions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Exceptions: Select" ON public.exceptions FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "Exceptions: Insert" ON public.exceptions FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "Exceptions: Update" ON public.exceptions FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "Exceptions: Delete" ON public.exceptions FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+-- Table: operational_exceptions
+ALTER TABLE public.operational_exceptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "OperationalExceptions: Select" ON public.operational_exceptions FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+CREATE POLICY "OperationalExceptions: Insert" ON public.operational_exceptions FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "OperationalExceptions: Update" ON public.operational_exceptions FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "OperationalExceptions: Delete" ON public.operational_exceptions FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: production_plan_imports
 ALTER TABLE public.production_plan_imports ENABLE ROW LEVEL SECURITY;
@@ -341,26 +422,6 @@ CREATE POLICY "SiteOnboarding: Insert" ON public.site_onboarding FOR INSERT WITH
 CREATE POLICY "SiteOnboarding: Update" ON public.site_onboarding FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "SiteOnboarding: Delete" ON public.site_onboarding FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- View: site_recommendation_runs (View on recommendation_runs)
--- Views do not support ENABLE ROW LEVEL SECURITY in Postgres; set security_invoker = true so the underlying recommendation_runs RLS policies apply.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'site_recommendation_runs') THEN
-    ALTER VIEW public.site_recommendation_runs SET (security_invoker = true);
-  END IF;
-END $$;
-
--- Table: recommendation_runs
-ALTER TABLE IF EXISTS public.recommendation_runs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "RecommendationRuns: Select" ON public.recommendation_runs;
-DROP POLICY IF EXISTS "RecommendationRuns: Insert" ON public.recommendation_runs;
-DROP POLICY IF EXISTS "RecommendationRuns: Update" ON public.recommendation_runs;
-DROP POLICY IF EXISTS "RecommendationRuns: Delete" ON public.recommendation_runs;
-CREATE POLICY "RecommendationRuns: Select" ON public.recommendation_runs FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "RecommendationRuns: Insert" ON public.recommendation_runs FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "RecommendationRuns: Update" ON public.recommendation_runs FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "RecommendationRuns: Delete" ON public.recommendation_runs FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-
 -- Table: sessions
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Sessions: Select" ON public.sessions FOR SELECT USING (user_id = auth.uid() OR ovms_internal.is_platform_superuser());
@@ -381,4 +442,3 @@ CREATE POLICY "PlatformDeletionReceipts: Select" ON public.platform_deletion_rec
 CREATE POLICY "PlatformDeletionReceipts: Insert" ON public.platform_deletion_receipts FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser());
 CREATE POLICY "PlatformDeletionReceipts: Update" ON public.platform_deletion_receipts FOR UPDATE USING (ovms_internal.is_platform_superuser());
 CREATE POLICY "PlatformDeletionReceipts: Delete" ON public.platform_deletion_receipts FOR DELETE USING (ovms_internal.is_platform_superuser());
-

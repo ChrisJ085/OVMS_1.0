@@ -5,13 +5,14 @@ import { DataTable } from '../../../components/ui/DataTable';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Upload } from 'lucide-react';
 import { subscribeToProducts, setProductStatus } from '../services/productService';
 import { Product } from '../../../types/product';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductCategory, UnitOfMeasure, Destination } from '../../../types/configuration';
 import { ProductModal } from './components/ProductModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
+import { BulkProductUploadModal } from './components/BulkProductUploadModal';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { subscribeToCollection } from '../../../services/dbService';
 
@@ -32,6 +33,7 @@ export const ProductsPage: React.FC = () => {
 
   const [modalState, setModalState] = useState<{isOpen: boolean, item?: Product}>({ isOpen: false });
   const [detailModalState, setDetailModalState] = useState<{isOpen: boolean, item?: Product}>({ isOpen: false });
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [actionItem, setActionItem] = useState<{item: Product, action: 'deactivate' | 'reactivate'} | null>(null);
 
   useEffect(() => {
@@ -54,7 +56,12 @@ export const ProductsPage: React.FC = () => {
       [
         { field: 'tenantId', op: '==', value: tenantId }
       ],
-      setCategories,
+      (items) => {
+        const filtered = items
+          .filter(c => !c.siteId || c.siteId === '' || c.siteId === siteId)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setCategories(filtered);
+      },
       console.error
     );
 
@@ -204,13 +211,22 @@ export const ProductsPage: React.FC = () => {
       <SectionCard 
         title="Products"
         actions={
-          <button 
-            onClick={() => setModalState({ isOpen: true })}
-            className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Add Product
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setBulkModalOpen(true)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-md transition-colors"
+            >
+              <Upload className="w-4 h-4 text-brand-400" />
+              Bulk Upload
+            </button>
+            <button 
+              onClick={() => setModalState({ isOpen: true })}
+              className="flex items-center gap-2 text-sm font-medium text-slate-900 bg-brand-500 px-3 py-1.5 rounded-md hover:bg-brand-400 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add Product
+            </button>
+          </div>
         }
       >
         <div className="flex flex-col md:flex-row gap-4 mb-6">
@@ -296,6 +312,15 @@ export const ProductsPage: React.FC = () => {
         getCategoryName={getCategoryName}
         getUnitName={getUnitName}
         getDestinationName={getDestinationName}
+      />
+
+      <BulkProductUploadModal
+        isOpen={bulkModalOpen}
+        onClose={() => setBulkModalOpen(false)}
+        existingProducts={products}
+        categories={categories}
+        units={units}
+        destinations={destinations}
       />
     </div>
   );

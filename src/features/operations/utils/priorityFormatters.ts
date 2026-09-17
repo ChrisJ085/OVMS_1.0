@@ -2,7 +2,15 @@ import { Destination, ActionType, PriorityLevel } from '../../../types/configura
 
 export const isRawId = (str: string | null | undefined): boolean => {
   if (!str) return false;
-  return /^[a-zA-Z0-9]{16,30}$/.test(str.trim());
+  const s = str.trim();
+  // Alphanumeric with length between 16 and 40 (covers Firebase push IDs, MongoDB ObjectIds, etc)
+  if (/^[a-zA-Z0-9_-]{16,40}$/.test(s)) return true;
+  // Standard UUID format (with or without hyphens)
+  if (/^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$/.test(s)) return true;
+  if (/^[a-fA-F0-9]{32}$/.test(s)) return true;
+  // Prefix keys (e.g. prio_xxx)
+  if (/^(prio|dest|uom|cat|act|user|site|tenant|prod)_[a-zA-Z0-9_-]+$/.test(s)) return true;
+  return false;
 };
 
 export const getDestinationLabel = (
