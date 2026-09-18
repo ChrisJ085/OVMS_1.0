@@ -10,6 +10,19 @@ export const isValidUuid = (val: any): boolean => {
 
 export const isUuidField = (fieldName: string): boolean => {
   const f = fieldName.toLowerCase();
+  const nonUuidFields = [
+    'unit_of_measure_id',
+    'default_import_uom_id',
+    'entity_id',
+    'deletion_job_id',
+    'unitofmeasureid',
+    'defaultimportuomid',
+    'entityid',
+    'deletionjobid'
+  ];
+  if (nonUuidFields.includes(f)) {
+    return false;
+  }
   return f === 'id' || f.endsWith('_id') || f.endsWith('id');
 };
 
@@ -180,17 +193,36 @@ function enrichWithActiveSite(data: Record<string, any>, tableName?: string): Re
 
 function sanitizeUuidFields(data: Record<string, any>): Record<string, any> {
   const result = { ...data };
+  const nonUuidFields = [
+    'unit_of_measure_id',
+    'default_import_uom_id',
+    'entity_id',
+    'deletion_job_id',
+    'site_ids'
+  ];
   for (const key of Object.keys(result)) {
     const val = result[key];
-    if (val !== undefined && val !== null && val !== '') {
-      if ((key.endsWith('_id') || key === 'id') && key !== 'tenant_id' && key !== 'site_id') {
-        if (typeof val === 'string' && !isValidUuid(val)) {
+    const isIdField = (key.endsWith('_id') || key === 'id') && key !== 'tenant_id' && key !== 'site_id';
+    if (isIdField) {
+      if (val === '' || val === undefined) {
+        result[key] = null;
+      } else if (val !== null && !nonUuidFields.includes(key.toLowerCase())) {
+        if (!isValidUuid(val)) {
           result[key] = null;
         }
       }
     }
   }
   return result;
+}
+
+export function notifyCollectionChange(collectionName: string) {
+  const tableName = getTableName(collectionName);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('ovms:collection_changed', {
+      detail: { collectionName, tableName }
+    }));
+  }
 }
 
 export const createDocument = async <T extends BaseDocument>(
@@ -238,6 +270,7 @@ export const createDocument = async <T extends BaseDocument>(
     throw new Error(`Failed to create document in ${tableName}: ${error.message}`);
   }
 
+  notifyCollectionChange(collectionName);
   return inserted.id;
 };
 
@@ -295,6 +328,7 @@ export const createDocuments = async <T extends BaseDocument>(
     }
   }
 
+  notifyCollectionChange(collectionName);
   return insertedIds;
 };
 
@@ -364,6 +398,8 @@ export const setDocument = async (
     console.error(`[Supabase setDocument] Error upserting ${tableName}/${id}:`, error);
     throw new Error(`Failed to set document ${id} in ${tableName}: ${error.message}`);
   }
+
+  notifyCollectionChange(collectionName);
 };
 
 export const updateDocument = async (
@@ -413,6 +449,7 @@ export const updateDocument = async (
         console.error(`[Supabase updateDocument] Error updating composite ${tableName}/${id}:`, error);
         throw new Error(`Failed to update document ${id} in ${tableName}: ${error.message}`);
       }
+      notifyCollectionChange(collectionName);
       return;
     }
   }
@@ -430,6 +467,8 @@ export const updateDocument = async (
     console.error(`[Supabase updateDocument] Error updating ${tableName}/${id}:`, error);
     throw new Error(`Failed to update document ${id} in ${tableName}: ${error.message}`);
   }
+
+  notifyCollectionChange(collectionName);
 };
 
 export const deleteDocument = async (
@@ -451,6 +490,7 @@ export const deleteDocument = async (
         console.error(`[Supabase deleteDocument] Error deleting composite ${tableName}/${id}:`, error);
         throw new Error(`Failed to delete document ${id} from ${tableName}: ${error.message}`);
       }
+      notifyCollectionChange(collectionName);
       return;
     }
   }
@@ -468,6 +508,8 @@ export const deleteDocument = async (
     console.error(`[Supabase deleteDocument] Error deleting ${tableName}/${id}:`, error);
     throw new Error(`Failed to delete document ${id} from ${tableName}: ${error.message}`);
   }
+
+  notifyCollectionChange(collectionName);
 };
 
 export const deactivateDocument = async (
@@ -573,6 +615,27 @@ export const subscribeToCollection = <T = any>(
 
   fetchAndNotify();
 
+  // Instant in-app reactivity for local document changes
+  const handleLocalChange = (e: Event) => {
+    const detail = (e as CustomEvent)?.detail;
+    if (!detail) {
+      fetchAndNotify();
+      return;
+    }
+    const targetTable = getTableName(detail.collectionName || detail.tableName || '');
+    if (
+      detail.collectionName === collectionName ||
+      detail.tableName === tableName ||
+      targetTable === tableName
+    ) {
+      fetchAndNotify();
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ovms:collection_changed', handleLocalChange);
+  }
+
   // Create unique native channel
   const channel = supabase
     .channel(`sub_coll_${tableName}_${Math.random().toString(36).slice(2, 8)}`)
@@ -595,6 +658,9 @@ export const subscribeToCollection = <T = any>(
   });
 
   return () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('ovms:collection_changed', handleLocalChange);
+    }
     supabase.removeChannel(channel);
   };
 };

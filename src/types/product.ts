@@ -8,7 +8,9 @@ export interface ProductConfiguration {
 
 export interface Product extends BaseDocument {
   productCode: string;
+  code?: string;
   description: string;
+  name?: string;
   categoryId: string;
   // Legacy fields for backward compatibility, synchronized with configurations[0]
   unitOfMeasureId: string;

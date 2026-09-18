@@ -93,8 +93,11 @@ export const ProductsPage: React.FC = () => {
 
   const confirmAction = async () => {
     if (!actionItem || !actionItem.item.id) return;
+    const targetId = actionItem.item.id;
+    const newStatus = actionItem.action === 'reactivate' ? 'active' : 'inactive';
     try {
-      await setProductStatus(actionItem.item.id, actionItem.action === 'reactivate');
+      setProducts(prev => prev.map(p => p.id === targetId ? { ...p, status: newStatus } : p));
+      await setProductStatus(targetId, actionItem.action === 'reactivate');
     } catch (err: any) {
       alert(err.message || 'Action failed');
     } finally {
@@ -160,9 +163,8 @@ export const ProductsPage: React.FC = () => {
       header: 'Modified Date', 
       accessor: (row: Product) => {
         if (!row.modifiedDate) return '-';
-        // handle firestore timestamp
-        const date = (row.modifiedDate as any).toDate ? (row.modifiedDate as any).toDate() : new Date();
-        return date.toLocaleDateString();
+        const date = (row.modifiedDate as any).toDate ? (row.modifiedDate as any).toDate() : new Date(row.modifiedDate);
+        return isNaN(date.getTime()) ? '-' : date.toLocaleDateString();
       }
     },
     {
@@ -299,6 +301,17 @@ export const ProductsPage: React.FC = () => {
       <ProductModal
         isOpen={modalState.isOpen}
         onClose={() => setModalState({ isOpen: false })}
+        onSuccess={(savedProduct) => {
+          setProducts(prev => {
+            const index = prev.findIndex(p => p.id === savedProduct.id);
+            if (index >= 0) {
+              const updatedList = [...prev];
+              updatedList[index] = { ...updatedList[index], ...savedProduct };
+              return updatedList;
+            }
+            return [savedProduct, ...prev].sort((a, b) => a.productCode.localeCompare(b.productCode));
+          });
+        }}
         item={modalState.item}
         categories={categories}
         units={units}
@@ -317,6 +330,16 @@ export const ProductsPage: React.FC = () => {
       <BulkProductUploadModal
         isOpen={bulkModalOpen}
         onClose={() => setBulkModalOpen(false)}
+        onSuccess={() => {
+          if (tenantId && siteId) {
+            subscribeToProducts(
+              tenantId,
+              siteId,
+              (items) => setProducts(items),
+              (err) => console.error(err)
+            );
+          }
+        }}
         existingProducts={products}
         categories={categories}
         units={units}

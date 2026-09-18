@@ -187,16 +187,26 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
     const weight = result.numeric_weight ?? result.level ?? result.weight ?? 1;
     result.numeric_weight = weight;
   } else if (tableName === 'products') {
-    const code = result.code || result.product_code || result.sku_code;
-    const name = result.name || result.description || result.product_name;
+    const code = result.product_code || result.code || result.sku_code;
+    const desc = result.description !== undefined ? result.description : (result.name || result.product_name);
     if (code !== undefined) {
       result.code = code;
       result.product_code = code;
     }
-    if (name !== undefined) {
-      result.name = name;
-      result.description = name;
+    if (desc !== undefined) {
+      result.name = desc;
+      result.description = desc;
     }
+    // Delete cross-populated UI-only/alias fields to prevent database schema/constraint errors (especially site_code, which is a UUID in the database)
+    delete result.site_code;
+    delete result.site_name;
+    delete result.line_code;
+    delete result.line_name;
+    delete result.area_code;
+    delete result.area_name;
+    delete result.destination_code;
+    delete result.destination_name;
+    delete result.label;
   } else if (tableName === 'units_of_measure') {
     const code = result.code;
     const name = result.name || result.description || result.label || code;
@@ -260,6 +270,8 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
     delete result.inactive_destination_ids;
 
     result.data_quality_rules = dataQualityRules;
+  } else if (tableName === 'priority_events') {
+    delete result.status;
   } else if (tableName === 'recommendation_runs') {
     if (!result.id && result.tenant_id && result.site_id) {
       result.id = `${result.tenant_id}_${result.site_id}`;

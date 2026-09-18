@@ -87,8 +87,12 @@ export const updateProduct = async (
   tenantId: string
 ): Promise<ServiceResult<void>> => {
   try {
-    const currentProduct = await getProduct(id);
-    if (!currentProduct) return { success: false, error: 'Product not found' };
+    let currentProduct: Product | null = null;
+    try {
+      currentProduct = await getProduct(id);
+    } catch (e) {
+      console.warn('Could not fetch current product for diff:', e);
+    }
 
     if (data.productCode) {
       const codeValue = trimCode(data.productCode);
@@ -97,10 +101,12 @@ export const updateProduct = async (
         return { success: false, error: `A product with code "${codeValue}" already exists.` };
       }
       data.productCode = codeValue;
+      data.code = codeValue;
     }
     
     if (data.description !== undefined) {
       data.description = trimDescription(data.description);
+      data.name = data.description;
     }
 
     if (data.configurations) {
@@ -109,10 +115,10 @@ export const updateProduct = async (
       }
       
       for (const config of data.configurations) {
-        if (config.casesPerPallet !== null && config.casesPerPallet <= 0) {
+        if (config.casesPerPallet !== null && config.casesPerPallet !== undefined && config.casesPerPallet <= 0) {
           return { success: false, error: 'Cases per pallet must be greater than 0.' };
         }
-        if (config.unitsPerCase !== null && config.unitsPerCase <= 0) {
+        if (config.unitsPerCase !== null && config.unitsPerCase !== undefined && config.unitsPerCase <= 0) {
           return { success: false, error: 'Units per case must be greater than 0.' };
         }
       }
@@ -122,7 +128,7 @@ export const updateProduct = async (
       data.unitOfMeasureId = primaryConfig.unitOfMeasureId;
       data.casesPerPallet = primaryConfig.casesPerPallet;
       data.unitsPerCase = primaryConfig.unitsPerCase;
-    } else if (currentProduct.configurations && currentProduct.configurations.length > 0) {
+    } else if (currentProduct?.configurations && currentProduct.configurations.length > 0) {
       if (data.casesPerPallet !== undefined || data.unitOfMeasureId !== undefined || data.unitsPerCase !== undefined) {
         const updatedConfigs = [...currentProduct.configurations];
         updatedConfigs[0] = {

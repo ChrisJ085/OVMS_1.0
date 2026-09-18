@@ -20,7 +20,12 @@ export const getDestinationLabel = (
 ): string => {
   if (!id) return '-';
   if (snapshot && !isRawId(snapshot)) return snapshot;
-  const match = destinations.find(d => d.id === id || d.destinationCode === id || d.destinationName === id);
+  const targetId = id.trim().toLowerCase();
+  const match = destinations.find(d => 
+    (d.id && d.id.toLowerCase() === targetId) || 
+    (d.destinationCode && d.destinationCode.toLowerCase() === targetId) || 
+    (d.destinationName && d.destinationName.toLowerCase() === targetId)
+  );
   if (match) {
     return match.destinationName 
       ? `${match.destinationName} (${match.destinationCode})` 
@@ -35,7 +40,12 @@ export const getDestinationCodeLabel = (
   snapshot?: string
 ): string => {
   if (!id) return '-';
-  const match = destinations.find(d => d.id === id || d.destinationCode === id || d.destinationName === id);
+  const targetId = id.trim().toLowerCase();
+  const match = destinations.find(d => 
+    (d.id && d.id.toLowerCase() === targetId) || 
+    (d.destinationCode && d.destinationCode.toLowerCase() === targetId) || 
+    (d.destinationName && d.destinationName.toLowerCase() === targetId)
+  );
   if (match && match.destinationCode) {
     return match.destinationCode.toUpperCase();
   }
@@ -54,7 +64,12 @@ export const getActionTypeLabel = (
 ): string => {
   if (!id) return '-';
   if (snapshot && !isRawId(snapshot)) return snapshot;
-  const match = actionTypes.find(a => a.id === id || a.code === id || a.label === id);
+  const targetId = id.trim().toLowerCase();
+  const match = actionTypes.find(a => 
+    (a.id && a.id.toLowerCase() === targetId) || 
+    (a.code && a.code.toLowerCase() === targetId) || 
+    (a.label && a.label.toLowerCase() === targetId)
+  );
   if (match) {
     return match.label || match.code;
   }
@@ -68,11 +83,21 @@ export const getPriorityLevelLabel = (
 ): string => {
   if (!id) return 'NORMAL';
   if (snapshot && !isRawId(snapshot)) return snapshot.toUpperCase();
-  const match = priorityLevels.find(l => l.id === id || l.code === id || l.label === id);
+  const targetId = id.trim().toLowerCase();
+  const match = priorityLevels.find(l => 
+    (l.id && l.id.toLowerCase() === targetId) || 
+    (l.code && l.code.toLowerCase() === targetId) || 
+    (l.label && l.label.toLowerCase() === targetId)
+  );
   if (match) {
     return (match.label || match.code || 'NORMAL').toUpperCase();
   }
   if (isRawId(id)) {
+    // If it is a raw ID (UUID) and we couldn't match it, let's look for common keyword indicators
+    const idLower = id.toLowerCase();
+    if (idLower.includes('critical')) return 'CRITICAL';
+    if (idLower.includes('urgent') || idLower.includes('high')) return 'URGENT';
+    if (idLower.includes('low')) return 'LOW';
     return 'NORMAL';
   }
   return id.replace(/_/g, ' ').toUpperCase();

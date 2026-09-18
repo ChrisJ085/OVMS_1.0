@@ -51,10 +51,9 @@ export const logPriorityEvent = async (
   note: string,
   performedBy: string
 ) => {
-  const event: Omit<PriorityEvent, 'id'> = {
+  const event: Omit<PriorityEvent, 'id' | 'status'> = {
     tenantId,
     siteId,
-    status: 'active',
     priorityId,
     eventType,
     previousStatus,
@@ -70,9 +69,12 @@ export const logPriorityEvent = async (
     modifiedDate: new Date().toISOString()
   };
 
+  const snakePayload = toSnakeCase(event);
+  delete (snakePayload as any).status;
+
   const { error } = await supabase
     .from('priority_events')
-    .insert(toSnakeCase(event));
+    .insert(snakePayload);
 
   if (error) {
     console.error('Error logging priority event:', error);

@@ -12,6 +12,7 @@ import { Plus, Trash2 } from 'lucide-react';
 interface ProductModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSuccess?: (savedProduct: Product) => void;
   item?: Product;
   categories: ProductCategory[];
   units: UnitOfMeasure[];
@@ -19,7 +20,7 @@ interface ProductModalProps {
 }
 
 export const ProductModal: React.FC<ProductModalProps> = ({ 
-  isOpen, onClose, item, categories, units, destinations 
+  isOpen, onClose, onSuccess, item, categories, units, destinations 
 }) => {
   const { tenantId, siteId } = useSiteContext();
   const { userProfile } = useAuth();
@@ -29,19 +30,51 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     configurations: []
   });
   const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      setErrorMessage(null);
       if (item) {
-        setFormData({ ...item });
+        // Map configurations to ensure unitOfMeasureId is matched by id or code
+        const configs = (item.configurations && item.configurations.length > 0)
+          ? item.configurations.map(c => {
+              const matched = units.find(u => u.id === c.unitOfMeasureId || u.code === c.unitOfMeasureId);
+              return {
+                ...c,
+                unitOfMeasureId: matched ? matched.id : (c.unitOfMeasureId || (units[0]?.id || ''))
+              };
+            })
+          : [
+              {
+                unitOfMeasureId: (() => {
+                  const matched = units.find(u => u.id === item.unitOfMeasureId || u.code === item.unitOfMeasureId);
+                  return matched ? matched.id : (item.unitOfMeasureId || (units.find(u => u.status === 'active')?.id || units[0]?.id || ''));
+                })(),
+                casesPerPallet: item.casesPerPallet ?? null,
+                unitsPerCase: item.unitsPerCase ?? null
+              }
+            ];
+
+        setFormData({
+          ...item,
+          productCode: item.productCode || item.code || '',
+          code: item.productCode || item.code || '',
+          description: item.description || item.name || '',
+          name: item.description || item.name || '',
+          categoryId: item.categoryId || '',
+          configurations: configs
+        });
       } else {
         const activeCategories = categories.filter(c => c.status === 'active');
         const activeUnits = units.filter(u => u.status === 'active');
-        const initialUomId = activeUnits.length > 0 ? activeUnits[0].id : '';
+        const initialUomId = activeUnits.length > 0 ? activeUnits[0].id : (units[0]?.id || '');
         
         setFormData({
           productCode: '',
+          code: '',
           description: '',
+          name: '',
           siteId,
           categoryId: activeCategories.length > 0 ? activeCategories[0].id : '',
           configurations: [
@@ -53,12 +86,21 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         });
       }
     }
-  }, [isOpen, item, categories, units, siteId]);
+  }, [isOpen, item?.id]);
 
   if (!isOpen) return null;
 
   const handleChange = (field: keyof Product, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const next = { ...prev, [field]: value };
+      if (field === 'description') {
+        next.name = value;
+      }
+      if (field === 'productCode') {
+        next.code = value;
+      }
+      return next;
+    });
   };
 
   const handleConfigChange = (index: number, field: keyof ProductConfiguration, value: any) => {
@@ -69,7 +111,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
   const addConfiguration = () => {
     const activeUnits = units.filter(u => u.status === 'active');
-    const initialUomId = activeUnits.length > 0 ? activeUnits[0].id : '';
+    const initialUomId = activeUnits.length > 0 ? activeUnits[0].id : (units[0]?.id || '');
     setFormData(prev => ({
       ...prev,
       configurations: [
@@ -88,15 +130,56 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+
+    const codeValue = formData.productCode?.trim();
+    if (!codeValue) {
+      setErrorMessage('Product Code is required.');
+      return;
+    }
+
+    const descValue = formData.description?.trim();
+    if (!descValue) {
+      setErrorMessage('Description is required.');
+      return;
+    }
+
+    if (!formData.configurations || formData.configurations.length === 0) {
+      setErrorMessage('At least one configuration is required.');
+      return;
+    }
+
+    for (const config of formData.configurations) {
+      if (!config.unitOfMeasureId) {
+        setErrorMessage('All configurations must have a Unit of Measure.');
+        return;
+      }
+      if (config.casesPerPallet !== null && config.casesPerPallet !== undefined && config.casesPerPallet <= 0) {
+        setErrorMessage('Cases per pallet must be greater than 0.');
+        return;
+      }
+      if (config.unitsPerCase !== null && config.unitsPerCase !== undefined && config.unitsPerCase <= 0) {
+        setErrorMessage('Units per case must be greater than 0.');
+        return;
+      }
+    }
+
     setSubmitting(true);
     
     let result;
     const isUpdate = !!item?.id;
     if (isUpdate) {
-      result = await updateProduct(item.id, { ...formData, siteId: formData.siteId || item.siteId || siteId }, tenantId);
+      result = await updateProduct(item.id, { 
+        ...formData, 
+        categoryId: formData.categoryId || null,
+        defaultDestinationId: formData.defaultDestinationId || null,
+        siteId: formData.siteId || item.siteId || siteId 
+      }, tenantId);
     } else {
       result = await createProduct({
         ...formData,
+        categoryId: formData.categoryId || null,
+        defaultDestinationId: formData.defaultDestinationId || null,
         tenantId,
         siteId,
       } as Omit<Product, 'id' | 'status' | 'createdDate' | 'modifiedDate'>);
@@ -122,9 +205,29 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         console.warn('Failed to log product audit event:', auditErr);
       }
 
+      if (onSuccess) {
+        const fullProduct: Product = {
+          ...item,
+          ...formData,
+          id: isUpdate ? item!.id : (result.data || ''),
+          productCode: formData.productCode || item?.productCode || '',
+          description: formData.description || item?.description || '',
+          status: formData.status || item?.status || 'active',
+          configurations: formData.configurations || item?.configurations || [],
+          casesPerPallet: formData.configurations?.[0]?.casesPerPallet ?? item?.casesPerPallet ?? null,
+          unitsPerCase: formData.configurations?.[0]?.unitsPerCase ?? item?.unitsPerCase ?? null,
+          unitOfMeasureId: formData.configurations?.[0]?.unitOfMeasureId || item?.unitOfMeasureId || '',
+          categoryId: formData.categoryId || item?.categoryId || '',
+          defaultDestinationId: formData.defaultDestinationId || item?.defaultDestinationId || null,
+          operationallyRelevant: formData.operationallyRelevant !== undefined ? formData.operationallyRelevant : (item?.operationallyRelevant ?? true),
+          notes: formData.notes !== undefined ? formData.notes : (item?.notes ?? ''),
+        } as Product;
+        onSuccess(fullProduct);
+      }
+
       onClose();
     } else {
-      alert(result.error);
+      setErrorMessage(result.error || 'Failed to save product');
     }
   };
 
@@ -140,8 +243,13 @@ export const ProductModal: React.FC<ProductModalProps> = ({
           </button>
         </div>
         
-        <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
+        <form onSubmit={handleSubmit} noValidate className="flex flex-col overflow-hidden">
           <div className="p-5 space-y-6 overflow-y-auto">
+            {errorMessage && (
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-md text-sm text-red-400">
+                {errorMessage}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <FormField 
                 label="Product Code" 
@@ -151,14 +259,13 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               />
               
               <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-slate-300">Category *</label>
+                <label className="text-sm font-medium text-slate-300">Category</label>
                 <select 
                   value={formData.categoryId || ''} 
-                  onChange={(e) => handleChange('categoryId', e.target.value)}
+                  onChange={(e) => handleChange('categoryId', e.target.value || null)}
                   className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-slate-600"
-                  required
                 >
-                  <option value="" disabled>Select a category</option>
+                  <option value="">Select a category (Optional)</option>
                   {categories
                     .filter(c => c.status === 'active' || c.id === formData.categoryId)
                     .map(c => (
@@ -211,9 +318,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                           required
                         >
                           {units
-                            .filter(u => u.status === 'active' || u.id === config.unitOfMeasureId)
+                            .filter(u => u.status === 'active' || u.id === config.unitOfMeasureId || u.code === config.unitOfMeasureId)
                             .map(u => (
-                            <option key={u.id} value={u.id}>{u.name}</option>
+                            <option key={u.id} value={u.id}>{u.name || u.code}</option>
                           ))}
                         </select>
                       </div>
