@@ -5,6 +5,9 @@ import { Recommendation } from '../types/recommendation';
 import { OperationalException, ExceptionSeverity } from '../types/exception';
 import { Announcement } from '../types/announcement';
 import { ProductionPlanImport, ProductionPlanEntry, ProductionEvent } from '../types/production';
+import { Snp87PlanningImport, Snp87PlanningRow } from '../types/snp87';
+import { getActiveSnp87Snapshot } from '../features/planning/services/snp87ImportService';
+import { ConfirmedProductionVisual } from '../features/planning/components/snp87/ConfirmedProductionVisual';
 import { SiteSettings } from '../types/settings';
 import { Product } from '../types/product';
 import { Destination, ActionType, PriorityLevel } from '../types/configuration';
@@ -20,6 +23,7 @@ import { useSiteOnboarding } from '../hooks/useSiteOnboarding';
 import { resetSiteOnboarding } from '../features/configuration/services/siteOnboardingService';
 import { Sparkles, RotateCcw } from 'lucide-react';
 import { getDocuments, subscribeToCollection, where } from '../services/dbService';
+import { normalizeProductCode, areProductCodesEqual } from '../utils/productCodeNormalizer';
 import { 
   Activity,
   AlertTriangle,
@@ -130,6 +134,8 @@ export const OperationalOverviewPage: React.FC = () => {
   const [latestImport, setLatestImport] = useState<ProductionPlanImport | null>(null);
   const [productionEntries, setProductionEntries] = useState<ProductionPlanEntry[]>([]);
   const [productionEvents, setProductionEvents] = useState<ProductionEvent[]>([]);
+  const [snp87Snapshot, setSnp87Snapshot] = useState<Snp87PlanningImport | null>(null);
+  const [snp87Rows, setSnp87Rows] = useState<Snp87PlanningRow[]>([]);
   const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
   const [activePromotionsCount, setActivePromotionsCount] = useState<number>(0);
   const [activeSessionsCount, setActiveSessionsCount] = useState<number>(0);
@@ -462,6 +468,15 @@ export const OperationalOverviewPage: React.FC = () => {
         setActiveSessionsCount(0);
       }
 
+      // 4h. Active SNP87 Planning Snapshot & Confirmed Production
+      try {
+        const { importSummary, rows } = await getActiveSnp87Snapshot(tenantId, siteId);
+        setSnp87Snapshot(importSummary);
+        setSnp87Rows(rows);
+      } catch (err: any) {
+        console.warn('Failed to load active SNP87 snapshot on dashboard:', err);
+      }
+
       setLoading(false);
     };
 
@@ -531,12 +546,10 @@ export const OperationalOverviewPage: React.FC = () => {
       ['ACTIVE', 'SCHEDULED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(p.priorityStatus)
     );
 
-    const urgentPris = activePris.filter(
-      (p) =>
-        p.priorityLevelId?.toUpperCase().includes('URGENT') ||
-        p.priorityLevelId?.toUpperCase().includes('HIGH') ||
-        p.priorityLevelId === 'prio_urgent'
-    ).length;
+    const urgentPris = activePris.filter((p) => {
+      const l = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel).toUpperCase();
+      return l.includes('URGENT') || l.includes('CRITICAL');
+    }).length;
 
     const blockedWork = priorities.filter((p) => p.priorityStatus === 'BLOCKED').length;
 
@@ -1110,7 +1123,7 @@ export const OperationalOverviewPage: React.FC = () => {
 
                       const productMatch = products.find(prod => 
                         (p.productId && prod.id === p.productId) || 
-                        (prod.productCode === p.productCodeSnapshot)
+                        (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
                       );
                       const cpp = productMatch?.casesPerPallet || 
                         productMatch?.configurations?.[0]?.casesPerPallet || 
@@ -1120,12 +1133,13 @@ export const OperationalOverviewPage: React.FC = () => {
                       const actionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel);
                       const destLabel = getDestinationLabel(p.destinationId, destinations, p.destinationLabel);
 
-                      const isUrgent = levelLabel.toUpperCase().includes('URGENT') || levelLabel.toUpperCase().includes('HIGH');
+                      const isUrgent = levelLabel.toUpperCase().includes('URGENT') || levelLabel.toUpperCase().includes('CRITICAL');
+                      const isHigh = levelLabel.toUpperCase().includes('HIGH');
 
                       return (
                         <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
                           <td className="py-3 px-3">
-                            <div className="font-semibold text-slate-200">{p.productCodeSnapshot}</div>
+                            <div className="font-semibold text-slate-200">{normalizeProductCode(p.productCodeSnapshot)}</div>
                             <div className="text-[11px] text-slate-500 truncate max-w-[150px]">
                               {p.descriptionSnapshot}
                             </div>
@@ -1150,7 +1164,9 @@ export const OperationalOverviewPage: React.FC = () => {
                             <span
                               className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                                 isUrgent
-                                  ? 'bg-red-950 text-red-300 border border-red-800'
+                                  ? 'bg-red-950 text-red-300 border border-red-800 font-bold'
+                                  : isHigh
+                                  ? 'bg-amber-950 text-amber-300 border border-amber-800'
                                   : 'bg-slate-800 text-slate-300'
                               }`}
                             >
@@ -1221,7 +1237,7 @@ export const OperationalOverviewPage: React.FC = () => {
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-slate-200 text-sm">
-                              {r.productCodeSnapshot}
+                              {normalizeProductCode(r.productCodeSnapshot)}
                             </span>
                             <span className="text-xs text-slate-400">• {r.descriptionSnapshot}</span>
                           </div>
@@ -1258,26 +1274,26 @@ export const OperationalOverviewPage: React.FC = () => {
             </SectionCard>
           )}
 
-          {/* Panel 3: Production Today & Scheduling */}
+          {/* Panel 3: Confirmed Production & SAP Planning Visualizer */}
           <SectionCard
-            title="Production Today"
-            description="Active line status and planned SAP production schedule"
+            title="SAP Confirmed Production & Schedule"
+            description="Committed manufacturing output and line status from SAP SNP87"
             actions={
               !panelErrors.production && (
                 <button
-                  onClick={() => navigate('/planning/production')}
-                  className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                  onClick={() => navigate('/planning/production-plan')}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1"
                 >
-                  Full Schedule <ArrowRight className="w-3 h-3" />
+                  SAP Planning <ArrowRight className="w-3 h-3" />
                 </button>
               )
             }
           >
             {/* Notice constraint: Planned production is NOT inventory */}
-            <div className="bg-slate-900/90 border border-amber-500/30 rounded p-3 mb-4 text-xs text-amber-300/90 flex items-center gap-2">
-              <Info className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="bg-slate-900/90 border border-emerald-500/30 rounded p-3 mb-4 text-xs text-emerald-300/90 flex items-center gap-2">
+              <Info className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>
-                <strong>Operational Note:</strong> Planned production runs represent upcoming manufacturing schedule and are strictly separate from physical inventory balances.
+                <strong>Operational Note:</strong> Confirmed production runs represent upcoming manufacturing supply and are strictly separate from physical inventory balances.
               </span>
             </div>
 
@@ -1285,6 +1301,15 @@ export const OperationalOverviewPage: React.FC = () => {
               <div className="bg-red-950/40 border border-red-900/60 rounded-lg p-3 text-xs text-red-300/95 flex items-center gap-2">
                 <AlertOctagon className="w-4 h-4 text-red-400 shrink-0" />
                 <span>{panelErrors.production}</span>
+              </div>
+            ) : snp87Rows.length > 0 || snp87Snapshot ? (
+              <div className="space-y-4">
+                <ConfirmedProductionVisual
+                  rows={snp87Rows}
+                  activeSnapshot={snp87Snapshot}
+                  products={products}
+                  showNavigationButton={true}
+                />
               </div>
             ) : !latestImport ? (
               <div className="text-center py-6 text-slate-500 text-sm">
@@ -1294,9 +1319,9 @@ export const OperationalOverviewPage: React.FC = () => {
                   <div className="mt-3">
                     <button
                       onClick={() => navigate('/planning/production-plan')}
-                      className="px-4 py-2 bg-amber-500 text-slate-950 rounded text-xs font-semibold hover:bg-amber-600 transition-colors"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition-colors shadow-sm"
                     >
-                      Import MPPS7 Plan
+                      Import SNP87 Plan
                     </button>
                   </div>
                 )}

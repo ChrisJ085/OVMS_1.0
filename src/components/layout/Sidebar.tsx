@@ -58,7 +58,7 @@ const ALL_NAVIGATION: NavGroup[] = [
       { label: 'Recommendation Workspace', path: '/planning/recommendations', icon: Target, iconName: 'Target', permission: 'VIEW_RECOMMENDATIONS' },
       { label: 'Northfleet STO Requirements', path: '/planning/northfleet-sto', icon: Truck, iconName: 'Truck', permission: 'VIEW_RECOMMENDATIONS' },
       { label: 'Product Planning Rules', path: '/planning/rules', icon: FileBox, iconName: 'FileBox', permission: 'MANAGE_PLANNING_RULES' },
-      { label: 'Production Plan', path: '/planning/production-plan', icon: FileText, iconName: 'FileText', permission: 'VIEW_PRODUCTION_PLAN' },
+      { label: 'SAP Planning', path: '/planning/production-plan', icon: FileText, iconName: 'FileText', permission: 'VIEW_PRODUCTION_PLAN' },
       { label: 'Promotions', path: '/planning/promotions', icon: Megaphone, iconName: 'Megaphone', permission: 'MANAGE_PROMOTIONS' },
     ],
   },

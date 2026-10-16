@@ -192,9 +192,37 @@ export const fetchSystemDataFreshness = async (
       }
     })(),
 
-    // 3. Production Plan
+    // 3. SAP Planning (SNP87 primary, legacy productionPlanImports fallback)
     (async () => {
       try {
+        let snpImports = await getDocuments<any>('snp87PlanningImports', [
+          { field: 'tenantId', op: '==', value: tenantId },
+          { field: 'siteId', op: '==', value: siteId }
+        ]);
+        if (!snpImports || snpImports.length === 0) {
+          snpImports = await getDocuments<any>('snp87Imports', [
+            { field: 'tenantId', op: '==', value: tenantId },
+            { field: 'siteId', op: '==', value: siteId }
+          ]);
+        }
+        if (snpImports.length > 0) {
+          snpImports.sort((a, b) => {
+            const tA = toEpochMillis(a.importedAt || a.createdDate) || 0;
+            const tB = toEpochMillis(b.importedAt || b.createdDate) || 0;
+            return tB - tA;
+          });
+          const latest = snpImports[0];
+          const latestEpoch = toEpochMillis(latest.importedAt || latest.createdDate);
+          return {
+            latestEpoch,
+            updatedBy: latest.importedBy || null,
+            fileName: latest.sourceReportName || 'SAP SNP87 Plan',
+            rowCount: latest.validRowCount || latest.totalRowCount || 0,
+            status: latest.status || 'ACTIVE'
+          };
+        }
+
+        // Legacy fallback: check productionPlanImports
         const imports = await getDocuments<any>('productionPlanImports', [
           { field: 'tenantId', op: '==', value: tenantId },
           { field: 'siteId', op: '==', value: siteId }
@@ -210,7 +238,7 @@ export const fetchSystemDataFreshness = async (
           return {
             latestEpoch,
             updatedBy: latest.uploadedBy || null,
-            fileName: latest.fileName || 'SAP MPPS7 Plan',
+            fileName: latest.fileName || 'SAP SNP87 Plan',
             rowCount: latest.recognisedRows || latest.totalSourceRows || 0,
             status: latest.status || 'COMMITTED'
           };
@@ -241,7 +269,7 @@ export const fetchSystemDataFreshness = async (
           status: 'ACTIVE'
         };
       } catch (err) {
-        console.warn('Error fetching production plan freshness:', err);
+        console.warn('Error fetching planning freshness:', err);
         return { latestEpoch: null, updatedBy: null, fileName: null, rowCount: 0, status: null };
       }
     })(),
@@ -316,13 +344,42 @@ export const fetchSystemDataFreshness = async (
     details: { recordCount: invResult.count, sourceType: invResult.source || undefined }
   };
 
-  // Build Item 2: STO Requirements
+  // Weekly schedule check helper (Production Plan on Monday, STO on Thursday)
+  const getMostRecentWeekdayEpoch = (currentEpoch: number, targetDayOfWeek: number): number => {
+    const d = new Date(currentEpoch);
+    const day = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    let diff = targetDayOfWeek - day;
+    if (diff > 0) {
+      diff -= 7;
+    }
+    d.setDate(d.getDate() + diff);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+
+  const recentMondayEpoch = getMostRecentWeekdayEpoch(nowEpoch, 1); // Monday
+  const recentThursdayEpoch = getMostRecentWeekdayEpoch(nowEpoch, 4); // Thursday
+
+  const planUpdatedThisWeek = planResult.latestEpoch && planResult.latestEpoch >= recentMondayEpoch;
+  const stoUpdatedThisWeek = stoResult.latestEpoch && stoResult.latestEpoch >= recentThursdayEpoch;
+
+  const getWeeklyStatus = (latestEpoch: number | null, updatedThisWeek: boolean) => {
+    if (latestEpoch === null) {
+      return { status: 'MISSING' as FreshnessStatus, statusLabel: 'No Data' };
+    }
+    if (updatedThisWeek) {
+      return { status: 'FRESH' as FreshnessStatus, statusLabel: 'Current Week' };
+    }
+    const ageMin = Math.max(0, Math.floor((nowEpoch - latestEpoch) / 60000));
+    if (ageMin <= 14400) { // up to 10 days
+      return { status: 'AGING' as FreshnessStatus, statusLabel: 'Weekly Update Due' };
+    }
+    return { status: 'STALE' as FreshnessStatus, statusLabel: 'Overdue' };
+  };
+
+  // Build Item 2: STO Requirements (Weekly update on Thursday)
   const stoAgeMin = stoResult.latestEpoch ? Math.max(0, Math.floor((nowEpoch - stoResult.latestEpoch) / 60000)) : null;
-  const stoStatusInfo = calculateFreshnessStatus(stoAgeMin, {
-    freshMinutes: planFreshMin,
-    agingMinutes: planAgingMin,
-    staleMinutes: planStaleMin
-  });
+  const stoStatusInfo = getWeeklyStatus(stoResult.latestEpoch, !!stoUpdatedThisWeek);
   const stoItem: DataFreshnessItem = {
     key: 'sto',
     title: 'STO Requirements',
@@ -342,13 +399,9 @@ export const fetchSystemDataFreshness = async (
     details: { recordCount: stoResult.rowCount }
   };
 
-  // Build Item 3: Production Plan
+  // Build Item 3: Production Plan (Weekly update on Monday)
   const planAgeMin = planResult.latestEpoch ? Math.max(0, Math.floor((nowEpoch - planResult.latestEpoch) / 60000)) : null;
-  const planStatusInfo = calculateFreshnessStatus(planAgeMin, {
-    freshMinutes: planFreshMin,
-    agingMinutes: planAgingMin,
-    staleMinutes: planStaleMin
-  });
+  const planStatusInfo = getWeeklyStatus(planResult.latestEpoch, !!planUpdatedThisWeek);
   const planItem: DataFreshnessItem = {
     key: 'production_plan',
     title: 'Production Plan',
@@ -360,7 +413,7 @@ export const fetchSystemDataFreshness = async (
     relativeTime: planResult.latestEpoch ? formatRelativeTime(planResult.latestEpoch, nowEpoch) : 'Never',
     updatedBy: planResult.updatedBy,
     sourceSummary: planResult.latestEpoch
-      ? `${planResult.fileName || 'SAP MPPS7 Plan'}${planResult.rowCount ? ` (${planResult.rowCount} rows)` : ''}`
+      ? `${planResult.fileName || 'SAP SNP87 Plan'}${planResult.rowCount ? ` (${planResult.rowCount} rows)` : ''}`
       : 'No production plan imported',
     route: '/planning/production-plan',
     actionLabel: 'Upload Production Plan',
@@ -409,7 +462,13 @@ export const fetchSystemDataFreshness = async (
 
   // Generate clear decision advice for planners
   let advice = 'All core operational data sources are current. Recommendations reflect up-to-date inputs.';
-  if (missingCount > 0 || staleCount > 0) {
+  if (!planUpdatedThisWeek && !stoUpdatedThisWeek) {
+    advice = 'Notice: Both Production Plan (scheduled Monday) and STO Requirements (scheduled Thursday) have not been updated for the current weekly schedule.';
+  } else if (!planUpdatedThisWeek) {
+    advice = 'Notice: Production Plan scheduled for Monday has not been updated for this week.';
+  } else if (!stoUpdatedThisWeek) {
+    advice = 'Notice: STO Requirements scheduled for Thursday have not been updated for this week.';
+  } else if (missingCount > 0 || staleCount > 0) {
     const staleNames = allItems
       .filter(i => i.status === 'STALE' || i.status === 'MISSING')
       .map(i => i.title)
@@ -420,7 +479,7 @@ export const fetchSystemDataFreshness = async (
       .filter(i => i.status === 'AGING')
       .map(i => i.title)
       .join(', ');
-    advice = `${agingNames} ${allItems.filter(i => i.status === 'AGING').length > 1 ? 'have' : 'has'} not been refreshed recently.`;
+    advice = `${agingNames} ${allItems.filter(i => i.status === 'AGING').length > 1 ? 'have' : 'has'} pending weekly updates.`;
   }
 
   return {

@@ -16,7 +16,8 @@ import {
   Clock,
   Trash2,
   Edit2,
-  AlertCircle
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useAuth } from '../../auth/context/AuthContext';
@@ -27,9 +28,14 @@ import {
   getNorthfleetStoRequirements, 
   cancelNorthfleetStoRequirement,
   updateNorthfleetStoRequirement,
+  updateStoDispatchControl,
+  calculateStoFeasibility,
+  calculateBatchStoFeasibility,
+  StoFeasibility,
   ValidatedStoRow 
 } from '../services/northfleetStoService';
 import { NorthfleetStoRequirement, NorthfleetStoStatus } from '../../../types/production';
+import { StoTrackerDashboard } from '../components/snp87/StoTrackerDashboard';
 
 export const NorthfleetStoPage: React.FC = () => {
   const { site, tenantId, siteId: ctxSiteId } = useSiteContext();
@@ -48,16 +54,21 @@ export const NorthfleetStoPage: React.FC = () => {
 
   // Active requirements list state
   const [requirements, setRequirements] = useState<NorthfleetStoRequirement[]>([]);
+  const [feasibilityMap, setFeasibilityMap] = useState<Map<string, StoFeasibility>>(new Map());
   const [isLoadingRequirements, setIsLoadingRequirements] = useState(true);
   const [requirementsError, setRequirementsError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [activeTab, setActiveTab] = useState<'REQUIREMENTS' | 'PASTE_IMPORT' | 'PRODUCT_SUMMARY'>('REQUIREMENTS');
+  const [activeTab, setActiveTab] = useState<'REQUIREMENTS' | 'TRACKER' | 'PASTE_IMPORT' | 'PRODUCT_SUMMARY'>('TRACKER');
 
   // Edit modal state
   const [editingSto, setEditingSto] = useState<NorthfleetStoRequirement | null>(null);
   const [editCases, setEditCases] = useState<number>(0);
   const [editPallets, setEditPallets] = useState<number>(0);
+
+  // Compact header & slide-in drawer state
+  const [showBusinessPopover, setShowBusinessPopover] = useState(false);
+  const [isInfoDrawerOpen, setIsInfoDrawerOpen] = useState(false);
 
   // Load requirements on mount or site change
   const fetchRequirements = async () => {
@@ -66,11 +77,34 @@ export const NorthfleetStoPage: React.FC = () => {
     try {
       const data = await getNorthfleetStoRequirements(tenantId, siteId);
       setRequirements(data);
+
+      const fMap = await calculateBatchStoFeasibility(tenantId, siteId, data);
+      setFeasibilityMap(fMap);
     } catch (err: any) {
       console.error('Failed to load Northfleet STO requirements:', err);
       setRequirementsError(err?.message || 'Unable to load Northfleet STO requirements');
     } finally {
       setIsLoadingRequirements(false);
+    }
+  };
+
+  const handleToggleMode = async (req: NorthfleetStoRequirement) => {
+    const newMode = req.dispatchMode === 'MANUAL' ? 'AUTOMATIC' : 'MANUAL';
+    const newStatus = newMode === 'MANUAL' ? (req.manualStatus || 'PENDING') : undefined;
+    const res = await updateStoDispatchControl(tenantId, siteId, req.id, newMode, newStatus, user?.email || 'planner-user');
+    if (res.success) {
+      fetchRequirements();
+    } else {
+      alert(`Error updating mode: ${res.error}`);
+    }
+  };
+
+  const handleManualStatusChange = async (req: NorthfleetStoRequirement, manualStatus: 'PENDING' | 'DESPATCHED' | 'HOLD') => {
+    const res = await updateStoDispatchControl(tenantId, siteId, req.id, 'MANUAL', manualStatus, user?.email || 'planner-user');
+    if (res.success) {
+      fetchRequirements();
+    } else {
+      alert(`Error updating manual status: ${res.error}`);
     }
   };
 
@@ -235,131 +269,238 @@ export const NorthfleetStoPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header & Business Purpose */}
-      <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      {/* Compact Header & Controls */}
+      <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-indigo-950/80 text-indigo-400 border border-indigo-800/60 rounded-lg">
+            <Truck className="w-5 h-5" />
+          </div>
           <div>
             <div className="flex items-center gap-2">
-              <div className="p-2.5 bg-indigo-950/80 text-indigo-400 border border-indigo-800/60 rounded-lg">
-                <Truck className="w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-slate-100">Northfleet STO Requirements</h1>
-                <p className="text-sm text-slate-400">
-                  Committed dated demand logic protecting Barrow stock from incorrect overflow recommendations
-                </p>
+              <h1 className="text-xl font-bold text-slate-100">Northfleet STO Requirements</h1>
+              {/* Business Purpose Hover / Popover Trigger */}
+              <div className="relative">
+                <button
+                  onMouseEnter={() => setShowBusinessPopover(true)}
+                  onMouseLeave={() => setShowBusinessPopover(false)}
+                  onClick={() => setShowBusinessPopover(prev => !prev)}
+                  className="p-1 text-indigo-400 hover:text-indigo-300 rounded-full hover:bg-indigo-950/50 transition-colors focus:outline-none"
+                  title="Hover for Core Recommendation Business Purpose"
+                >
+                  <Info className="w-4 h-4" />
+                </button>
+                {showBusinessPopover && (
+                  <div className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-80 sm:w-96 bg-slate-900 border border-indigo-500/50 rounded-xl p-4 shadow-2xl z-50 text-xs text-indigo-200 space-y-2">
+                    <p className="font-bold text-indigo-300 flex items-center gap-1.5">
+                      <Info className="w-4 h-4 text-indigo-400" />
+                      Core Recommendation Business Purpose
+                    </p>
+                    <p className="leading-relaxed">
+                      Northfleet STOs are <strong>committed dated demand</strong> that must be protected at Barrow warehouse.
+                      The OVMS recommendation engine calculates <span className="font-mono bg-slate-800 px-1 py-0.5 rounded text-indigo-100">Total Protected Stock = Base Retention + Northfleet STO Demand + Promotions</span>.
+                      Only stock above Total Protected Stock is recommended to the product's configured overflow destination (e.g. Chorley). Northfleet STOs are <strong>never</strong> set as the overflow destination.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={fetchRequirements}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-200 bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded-lg transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh Data
-            </button>
-            <button
-              onClick={() => setActiveTab('PASTE_IMPORT')}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-sm"
-            >
-              <Upload className="w-4 h-4" />
-              Import STO Data
-            </button>
+            <p className="text-xs text-slate-400">
+              Committed dated demand logic protecting Barrow stock
+            </p>
           </div>
         </div>
 
-        {/* Business Logic Explanatory Banner */}
-        <div className="mt-4 p-4 bg-indigo-950/50 border border-indigo-800/60 rounded-lg text-sm text-indigo-200">
+        {/* Compact Smaller Buttons with Tooltips */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchRequirements}
+            className="p-2 text-xs font-medium text-slate-200 bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm"
+            title="Refresh STO Data"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('PASTE_IMPORT')}
+            className="p-2 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors shadow-sm flex items-center gap-1.5"
+            title="Import STO Data from Clipboard"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Import STO</span>
+          </button>
+        </div>
+      </div>
+
+      {/* STO Read Failure Alert */}
+      {requirementsError && (
+        <div className="p-4 bg-rose-950/70 border border-rose-800/80 rounded-xl text-sm text-rose-200 flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-indigo-400 flex-shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-semibold text-indigo-300">Core Recommendation Business Purpose:</p>
-              <p>
-                Northfleet STOs are <strong>committed dated demand</strong> that must be protected at Barrow warehouse.
-                The OVMS recommendation engine calculates <span className="font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-indigo-700/80 text-indigo-200 font-bold">Total Protected Stock = Base Retention + Northfleet STO Demand + Promotions</span>.
-                Only stock above Total Protected Stock is recommended to the product's configured overflow destination (e.g. Chorley). Northfleet STOs are <strong>never</strong> set as the overflow destination.
-              </p>
+            <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-rose-200">Unable to load Northfleet STO requirements</p>
+              <p className="text-xs text-rose-300/90 mt-0.5">{requirementsError}</p>
             </div>
+          </div>
+          <button
+            onClick={fetchRequirements}
+            className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-rose-800 hover:bg-rose-700 text-rose-100 rounded-md transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Compact Single Summary Bar with Right-to-Left Slide-In Info Drawer Trigger */}
+      <div className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-6 text-xs sm:text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400">Total STOs:</span>
+            <span className="font-bold text-slate-100">{requirementsError ? '—' : metrics.count}</span>
+          </div>
+          <div className="hidden md:flex items-center gap-2">
+            <span className="text-slate-400">Protected Cases:</span>
+            <span className="font-bold text-emerald-400">{requirementsError ? '—' : metrics.totalCases.toLocaleString()}</span>
+          </div>
+          <div className="hidden lg:flex items-center gap-2">
+            <span className="text-slate-400">Next Collection:</span>
+            <span className="font-bold text-amber-400">{requirementsError ? '—' : (metrics.nextCollection ? formatDate(metrics.nextCollection) : 'None')}</span>
           </div>
         </div>
 
-        {/* STO Read Failure Alert */}
-        {requirementsError && (
-          <div className="mt-4 p-4 bg-rose-950/70 border border-rose-800/80 rounded-lg text-sm text-rose-200 flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold text-rose-200">Unable to load Northfleet STO requirements</p>
-                <p className="text-xs text-rose-300/90 mt-0.5">{requirementsError}</p>
-                <p className="text-xs text-rose-300/70 mt-1">
-                  Stock protection and STO commitment figures cannot be determined until database connectivity is restored.
+        <button
+          onClick={() => setIsInfoDrawerOpen(true)}
+          className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-950 border border-indigo-800/80 rounded-lg transition-colors shadow-sm"
+          title="Open Total STO Information & Metrics Breakdown"
+        >
+          <span>View STO Info Table</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Right-to-Left Slide-In Info Table / Drawer */}
+      {isInfoDrawerOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/60 backdrop-blur-sm flex justify-end transition-opacity">
+          <div className="w-full max-w-md bg-slate-900 border-l border-slate-700 h-full shadow-2xl flex flex-col transform transition-transform duration-300 ease-out animate-in slide-in-from-right">
+            {/* Drawer Header */}
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-800/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-950 text-indigo-400 rounded-lg border border-indigo-800">
+                  <Truck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-100 text-base">Total STO Information & Metrics</h3>
+                  <p className="text-xs text-slate-400">Barrow stock protection summary</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsInfoDrawerOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Drawer Content */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-slate-200">
+              {/* Metrics Table Grid */}
+              <div className="grid grid-cols-1 gap-3">
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-400">Active STOs</p>
+                    <p className="text-xl font-bold text-slate-100 mt-0.5">{requirementsError ? '—' : metrics.count}</p>
+                    <p className="text-xs text-slate-400">Outstanding commitments</p>
+                  </div>
+                  <div className="p-2.5 bg-indigo-950 text-indigo-400 rounded-lg border border-indigo-900">
+                    <Truck className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-400">Affected Products</p>
+                    <p className="text-xl font-bold text-blue-400 mt-0.5">{requirementsError ? '—' : metrics.affectedProducts}</p>
+                    <p className="text-xs text-slate-400">SKUs with STO protection</p>
+                  </div>
+                  <div className="p-2.5 bg-blue-950 text-blue-400 rounded-lg border border-blue-900">
+                    <Package className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-400">Protected Cases</p>
+                    <p className="text-xl font-bold text-emerald-400 mt-0.5">{requirementsError ? '—' : metrics.totalCases.toLocaleString()}</p>
+                    <p className="text-xs text-slate-400">Cases held at Barrow</p>
+                  </div>
+                  <div className="p-2.5 bg-emerald-950 text-emerald-400 rounded-lg border border-emerald-900">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-400">Protected Pallets</p>
+                    <p className="text-xl font-bold text-purple-400 mt-0.5">{requirementsError ? '—' : metrics.totalPallets.toLocaleString()}</p>
+                    <p className="text-xs text-slate-400">Pallets reserved</p>
+                  </div>
+                  <div className="p-2.5 bg-purple-950 text-purple-400 rounded-lg border border-purple-900">
+                    <Package className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-400">Next Collection</p>
+                    <p className="text-base font-bold text-amber-400 mt-0.5">{requirementsError ? '—' : (metrics.nextCollection ? formatDate(metrics.nextCollection) : 'None')}</p>
+                    <p className="text-xs text-slate-400">Barrow collection date</p>
+                  </div>
+                  <div className="p-2.5 bg-amber-950 text-amber-400 rounded-lg border border-amber-900">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Core Business Purpose in Drawer */}
+              <div className="bg-indigo-950/40 border border-indigo-800/60 rounded-xl p-4 space-y-2">
+                <p className="font-semibold text-indigo-300 text-sm flex items-center gap-1.5">
+                  <Info className="w-4 h-4 text-indigo-400" />
+                  Core Recommendation Business Purpose
+                </p>
+                <p className="text-xs text-indigo-200/90 leading-relaxed">
+                  Northfleet STOs are committed dated demand that must be protected at Barrow warehouse.
+                  The OVMS recommendation engine calculates Total Protected Stock = Base Retention + Northfleet STO Demand + Promotions.
+                  Only stock above Total Protected Stock is recommended to the product's configured overflow destination (e.g. Chorley).
                 </p>
               </div>
             </div>
-            <button
-              onClick={fetchRequirements}
-              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-rose-800 hover:bg-rose-700 text-rose-100 rounded-md transition-colors shadow-sm"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Retry
-            </button>
-          </div>
-        )}
-      </div>
 
-      {/* Metrics Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Active STOs</span>
-            <Truck className="w-4 h-4 text-indigo-400" />
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-800/50 flex justify-end">
+              <button
+                onClick={() => setIsInfoDrawerOpen(false)}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg transition-colors"
+              >
+                Close Info Table
+              </button>
+            </div>
           </div>
-          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.count}</div>
-          <div className="text-xs text-slate-400 mt-1">Outstanding commitments</div>
         </div>
-
-        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Affected Products</span>
-            <Package className="w-4 h-4 text-blue-400" />
-          </div>
-          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.affectedProducts}</div>
-          <div className="text-xs text-slate-400 mt-1">SKUs with STO protection</div>
-        </div>
-
-        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Protected Cases</span>
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.totalCases.toLocaleString()}</div>
-          <div className="text-xs text-slate-400 mt-1">Cases held at Barrow</div>
-        </div>
-
-        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Protected Pallets</span>
-            <Package className="w-4 h-4 text-purple-400" />
-          </div>
-          <div className="text-2xl font-bold text-slate-100">{requirementsError ? '—' : metrics.totalPallets.toLocaleString()}</div>
-          <div className="text-xs text-slate-400 mt-1">Pallets reserved</div>
-        </div>
-
-        <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Next Collection</span>
-            <Calendar className="w-4 h-4 text-amber-400" />
-          </div>
-          <div className="text-lg font-bold text-slate-100">
-            {requirementsError ? '—' : (metrics.nextCollection ? formatDate(metrics.nextCollection) : 'None')}
-          </div>
-          <div className="text-xs text-slate-400 mt-1">Barrow collection date</div>
-        </div>
-      </div>
+      )}
 
       {/* Tabs Navigation */}
       <div className="border-b border-slate-700 flex gap-6 text-sm font-medium">
+        <button
+          onClick={() => setActiveTab('TRACKER')}
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${
+            activeTab === 'TRACKER'
+              ? 'border-indigo-500 text-indigo-400 font-semibold'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Truck className="w-4 h-4" />
+          STO Tracker & Status Dashboard
+        </button>
         <button
           onClick={() => setActiveTab('REQUIREMENTS')}
           className={`pb-3 border-b-2 transition-colors flex items-center gap-2 ${
@@ -368,7 +509,7 @@ export const NorthfleetStoPage: React.FC = () => {
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Truck className="w-4 h-4" />
+          <Package className="w-4 h-4" />
           Active STO Requirements {requirementsError ? '(!)' : `(${requirements.length})`}
         </button>
         <button
@@ -399,6 +540,18 @@ export const NorthfleetStoPage: React.FC = () => {
           Product Protection Summary ({productSummaries.length})
         </button>
       </div>
+
+      {/* TAB 0: STO TRACKER DASHBOARD */}
+      {activeTab === 'TRACKER' && (
+        <StoTrackerDashboard
+          requirements={requirements}
+          feasibilityMap={feasibilityMap}
+          tenantId={tenantId}
+          siteId={siteId}
+          userId={user?.email || 'planner-user'}
+          onRefresh={fetchRequirements}
+        />
+      )}
 
       {/* TAB 1: ACTIVE REQUIREMENTS LIST */}
       {activeTab === 'REQUIREMENTS' && (
@@ -476,6 +629,8 @@ export const NorthfleetStoPage: React.FC = () => {
                     <th className="px-4 py-3 text-right">Pallets</th>
                     <th className="px-4 py-3 text-right">Cases</th>
                     <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Ship-Ready Feasibility</th>
+                    <th className="px-4 py-3">Dispatch Mode & Tracking</th>
                     <th className="px-4 py-3 text-center">Actions</th>
                   </tr>
                 </thead>
@@ -531,6 +686,65 @@ export const NorthfleetStoPage: React.FC = () => {
                               <XCircle className="w-3.5 h-3.5" />
                               Cancelled
                             </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const feas = feasibilityMap.get(req.id);
+                            if (!feas) return <span className="text-xs text-slate-500">Checking...</span>;
+                            if (feas.feasibilityStatus === 'GREEN') {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800/60" title={`Available stock: ${feas.availableStockCases} cases`}>
+                                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                                  Ready ({feas.availableStockCases} c)
+                                </span>
+                              );
+                            }
+                            if (feas.feasibilityStatus === 'AMBER') {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/60" title={`Available stock: ${feas.availableStockCases} cases`}>
+                                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                                  Partial ({feas.availableStockCases} c)
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-950/80 text-red-300 border border-red-800/60" title={`Available stock: 0 cases`}>
+                                <span className="w-2 h-2 rounded-full bg-red-400"></span>
+                                Out of Stock
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-4 py-3 space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleToggleMode(req)}
+                              className={`px-2 py-0.5 rounded text-xs font-semibold border transition-colors ${
+                                req.dispatchMode === 'MANUAL'
+                                  ? 'bg-purple-950 text-purple-300 border-purple-800'
+                                  : 'bg-slate-800 text-slate-300 border-slate-700'
+                              }`}
+                              title="Toggle between Automatic delivery assumption and Manual dispatch tracking"
+                            >
+                              {req.dispatchMode === 'MANUAL' ? 'Manual Mode' : 'Auto Mode'}
+                            </button>
+                          </div>
+                          {req.dispatchMode === 'MANUAL' && (
+                            <div className="flex items-center gap-1.5 pt-1">
+                              <select
+                                value={req.manualStatus || 'PENDING'}
+                                onChange={e => handleManualStatusChange(req, e.target.value as any)}
+                                className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1 focus:ring-1 focus:ring-indigo-500"
+                              >
+                                <option value="PENDING">Pending</option>
+                                <option value="DESPATCHED">Despatched</option>
+                                <option value="HOLD">Hold</option>
+                              </select>
+                              {req.manualStatus === 'DESPATCHED' && (
+                                <span className="text-[10px] text-emerald-400 font-medium">Checked Out</span>
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">

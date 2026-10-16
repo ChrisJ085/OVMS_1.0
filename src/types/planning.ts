@@ -29,3 +29,5 @@ export interface ProductPlanningRule extends BaseDocument {
 }
 
 export type PlanningBandStatus = 'BELOW_CONTROL' | 'AT_CONTROL' | 'BELOW_TARGET' | 'AT_TARGET' | 'ABOVE_TARGET' | 'ABOVE_MAXIMUM';
+
+export * from './snp87';

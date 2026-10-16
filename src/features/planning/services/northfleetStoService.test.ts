@@ -411,4 +411,188 @@ describe('Northfleet STO Service & Decision Logic Suite', () => {
       expect(errorState).toContain('Unavailable / Deadline Exceeded');
     });
   });
+
+  describe('5. STO Product Substitution & Inventory Protection Safeguards', () => {
+    it('Scenario 16: Product with less than 52 pallets available is marked not eligible and filtered out', async () => {
+      const { getEligibleSubstituteProducts } = await import('./northfleetStoService');
+      
+      const mockTargetSto: any = {
+        id: 'sto-1',
+        productId: 'prod-current',
+        productCode: '1000001',
+        pallets: 26,
+        cases: 2600,
+        casesPerPalletSnapshot: 100
+      };
+
+      const mockProducts: any[] = [
+        { id: 'prod-current', productCode: '1000001', description: 'Current SKU', casesPerPallet: 100 },
+        { id: 'prod-low-stock', productCode: '1000002', description: 'Low Stock SKU', casesPerPallet: 100 }
+      ];
+
+      // Low stock: only 30 pallets (3,000 cases)
+      const mockBalances: any[] = [
+        { productId: 'prod-low-stock', productCode: '1000002', quantity: 3000 }
+      ];
+
+      mockGetDocuments.mockImplementation((collection: string) => {
+        if (collection === 'products') return Promise.resolve(mockProducts);
+        if (collection === 'inventoryBalances') return Promise.resolve(mockBalances);
+        if (collection === 'planningRules') return Promise.resolve([]);
+        if (collection === 'northfleetStoRequirements') return Promise.resolve([mockTargetSto]);
+        return Promise.resolve([]);
+      });
+
+      const results = await getEligibleSubstituteProducts('tenant-1', 'site-1', mockTargetSto);
+      expect(results.length).toBe(1);
+      expect(results[0].product.productCode).toBe('1000002');
+      expect(results[0].availablePallets).toBe(30);
+      expect(results[0].isEligible).toBe(false);
+      expect(results[0].ineligibilityReason).toContain('minimum 52 pallets required');
+    });
+
+    it('Scenario 17: Product with gross >= 52 pallets but DDXM reservation leaves < 52 pallets is not eligible', async () => {
+      const { getEligibleSubstituteProducts } = await import('./northfleetStoService');
+      
+      const mockTargetSto: any = {
+        id: 'sto-1',
+        productId: 'prod-current',
+        productCode: '1000001',
+        pallets: 26,
+        cases: 2600,
+        casesPerPalletSnapshot: 100
+      };
+
+      const mockProducts: any[] = [
+        { id: 'prod-ddxm-held', productCode: '1000003', description: 'DDXM Held SKU', casesPerPallet: 100 }
+      ];
+
+      // 60 pallets gross (6,000 cases), but DDXM is 20 pallets (2,000 cases). Leaves 40 pallets < 52.
+      const mockBalances: any[] = [
+        { productId: 'prod-ddxm-held', productCode: '1000003', quantity: 6000 }
+      ];
+      const mockRules: any[] = [
+        {
+          productId: 'prod-ddxm-held',
+          ddxmRetentionQuantity: 2000,
+          minimumQuantity: 1000,
+          controllingThresholdMode: 'HIGHEST_MANDATORY',
+          status: 'active'
+        }
+      ];
+
+      mockGetDocuments.mockImplementation((collection: string) => {
+        if (collection === 'products') return Promise.resolve(mockProducts);
+        if (collection === 'inventoryBalances') return Promise.resolve(mockBalances);
+        if (collection === 'planningRules') return Promise.resolve(mockRules);
+        if (collection === 'northfleetStoRequirements') return Promise.resolve([mockTargetSto]);
+        return Promise.resolve([]);
+      });
+
+      const results = await getEligibleSubstituteProducts('tenant-1', 'site-1', mockTargetSto);
+      expect(results.length).toBe(1);
+      expect(results[0].availablePallets).toBe(40); // 60 - 20 = 40
+      expect(results[0].isEligible).toBe(false);
+      expect(results[0].ineligibilityReason).toContain('minimum 52 pallets required');
+    });
+
+    it('Scenario 18: Product with >= 52 pallets available above DDXM and other STOs is eligible', async () => {
+      const { getEligibleSubstituteProducts } = await import('./northfleetStoService');
+      
+      const mockTargetSto: any = {
+        id: 'sto-1',
+        productId: 'prod-current',
+        productCode: '1000001',
+        pallets: 26,
+        cases: 2600,
+        casesPerPalletSnapshot: 100
+      };
+
+      const mockProducts: any[] = [
+        { id: 'prod-healthy', productCode: '1000004', description: 'Healthy SKU', casesPerPallet: 100 }
+      ];
+
+      // 100 pallets gross (10,000 cases). DDXM = 15 pallets (1,500 cases). Other STO = 10 pallets (1,000 cases).
+      // Protected = 25 pallets. Available = 75 pallets >= 52 pallets!
+      // STO requires 26 pallets. 75 - 26 = 49 pallets remaining.
+      const mockBalances: any[] = [
+        { productId: 'prod-healthy', productCode: '1000004', quantity: 10000 }
+      ];
+      const mockRules: any[] = [
+        {
+          productId: 'prod-healthy',
+          ddxmRetentionQuantity: 1500,
+          minimumQuantity: 500,
+          controllingThresholdMode: 'HIGHEST_MANDATORY',
+          status: 'active'
+        }
+      ];
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const mockOtherSto: any = {
+        id: 'sto-other',
+        productId: 'prod-healthy',
+        productCode: '1000004',
+        pallets: 10,
+        cases: 1000,
+        status: 'UPCOMING',
+        dispatchMode: 'MANUAL',
+        manualStatus: 'PENDING',
+        barrowCollectionDate: tomorrow.toISOString()
+      };
+
+      mockGetDocuments.mockImplementation((collection: string) => {
+        if (collection === 'products') return Promise.resolve(mockProducts);
+        if (collection === 'inventoryBalances') return Promise.resolve(mockBalances);
+        if (collection === 'planningRules') return Promise.resolve(mockRules);
+        if (collection === 'northfleetStoRequirements') return Promise.resolve([mockTargetSto, mockOtherSto]);
+        return Promise.resolve([]);
+      });
+
+      const results = await getEligibleSubstituteProducts('tenant-1', 'site-1', mockTargetSto);
+      expect(results.length).toBe(1);
+      expect(results[0].availablePallets).toBe(75);
+      expect(results[0].otherStoProtectedCases).toBe(1000);
+      expect(results[0].ddxmRetentionCases).toBe(1500);
+      expect(results[0].isEligible).toBe(true);
+      expect(results[0].remainingPalletsAfterSub).toBe(49);
+    });
+
+    it('Scenario 19: Product with 53 pallets available when STO requires 60 pallets is not eligible (breaches protected reserves)', async () => {
+      const { getEligibleSubstituteProducts } = await import('./northfleetStoService');
+      
+      const mockBigSto: any = {
+        id: 'sto-1',
+        productId: 'prod-current',
+        productCode: '1000001',
+        pallets: 60,
+        cases: 6000,
+        casesPerPalletSnapshot: 100
+      };
+
+      const mockProducts: any[] = [
+        { id: 'prod-borderline', productCode: '1000005', description: 'Borderline SKU', casesPerPallet: 100 }
+      ];
+
+      // 53 pallets available (5,300 cases). Meets 52-pallet threshold, but STO needs 60 pallets!
+      const mockBalances: any[] = [
+        { productId: 'prod-borderline', productCode: '1000005', quantity: 5300 }
+      ];
+
+      mockGetDocuments.mockImplementation((collection: string) => {
+        if (collection === 'products') return Promise.resolve(mockProducts);
+        if (collection === 'inventoryBalances') return Promise.resolve(mockBalances);
+        if (collection === 'planningRules') return Promise.resolve([]);
+        if (collection === 'northfleetStoRequirements') return Promise.resolve([mockBigSto]);
+        return Promise.resolve([]);
+      });
+
+      const results = await getEligibleSubstituteProducts('tenant-1', 'site-1', mockBigSto);
+      expect(results.length).toBe(1);
+      expect(results[0].availablePallets).toBe(53);
+      expect(results[0].isEligible).toBe(false);
+      expect(results[0].ineligibilityReason).toContain('exceeds unprotected available stock');
+    });
+  });
 });

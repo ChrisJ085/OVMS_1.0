@@ -1,4 +1,6 @@
 import { NorthfleetStoRequirement, NorthfleetStoImport, NorthfleetStoStatus } from '../../../types/production';
+import { Product } from '../../../types/product';
+import { ProductPlanningRule } from '../../../types/planning';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
 import { generateRecommendationForProduct } from './recommendationService';
@@ -11,6 +13,56 @@ const STO_REQUIREMENTS_COLLECTION = 'northfleetStoRequirements';
 const STO_IMPORTS_COLLECTION = 'northfleetStoImports';
 const PRODUCTS_COLLECTION = 'products';
 const DESTINATIONS_COLLECTION = 'destinations';
+
+const getLocalDispatchControls = (): Record<string, { dispatchMode: 'AUTOMATIC' | 'MANUAL'; manualStatus?: 'PENDING' | 'DESPATCHED' | 'HOLD'; actualDespatchDate?: string | null }> => {
+  try {
+    const raw = localStorage.getItem('ovms_sto_dispatch_controls');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+const saveLocalDispatchControl = (stoId: string, dispatchMode: 'AUTOMATIC' | 'MANUAL', manualStatus?: 'PENDING' | 'DESPATCHED' | 'HOLD', actualDespatchDate?: string | null) => {
+  try {
+    const controls = getLocalDispatchControls();
+    controls[stoId] = { dispatchMode, manualStatus, actualDespatchDate };
+    localStorage.setItem('ovms_sto_dispatch_controls', JSON.stringify(controls));
+  } catch (err) {
+    console.error('Failed to save local dispatch control:', err);
+  }
+};
+
+export interface LocalStoSubstitution {
+  originalProductId?: string | null;
+  originalProductCode?: string | null;
+  originalProductDescriptionSnapshot?: string | null;
+  substitutedProductId?: string | null;
+  substitutedProductCode?: string | null;
+  substitutionDate?: string | null;
+  isBacklogRetained?: boolean;
+  cases?: number;
+  casesPerPalletSnapshot?: number;
+}
+
+const getLocalSubstitutions = (): Record<string, LocalStoSubstitution> => {
+  try {
+    const raw = localStorage.getItem('ovms_sto_substitutions');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+const saveLocalSubstitution = (stoId: string, sub: LocalStoSubstitution) => {
+  try {
+    const subs = getLocalSubstitutions();
+    subs[stoId] = sub;
+    localStorage.setItem('ovms_sto_substitutions', JSON.stringify(subs));
+  } catch (err) {
+    console.error('Failed to save local substitution:', err);
+  }
+};
 
 export interface ParsedStoRow {
   rowIndex: number;
@@ -588,14 +640,40 @@ export const getNorthfleetStoRequirements = async (
       [where('tenantId', '==', tenantId), where('siteId', '==', siteId)]
     );
 
+    const localControls = getLocalDispatchControls();
+    const localSubstitutions = getLocalSubstitutions();
     const list: NorthfleetStoRequirement[] = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     docs.forEach(data => {
       let currentStatus = data.status;
+      const local = localControls[data.id];
+      const localSub = localSubstitutions[data.id];
+      const dispatchMode = local?.dispatchMode || data.dispatchMode || 'AUTOMATIC';
+      const manualStatus = local?.manualStatus || data.manualStatus || 'PENDING';
+      const actualDespatchDate = local?.actualDespatchDate !== undefined ? local.actualDespatchDate : data.actualDespatchDate;
 
-      if (currentStatus !== 'CANCELLED') {
+      // Merge substitution data if present
+      const productId = localSub?.substitutedProductId || data.productId;
+      const productCode = localSub?.substitutedProductCode || data.productCode;
+      const originalProductId = localSub?.originalProductId || data.originalProductId;
+      const originalProductCode = localSub?.originalProductCode || data.originalProductCode;
+      const originalProductDescriptionSnapshot = localSub?.originalProductDescriptionSnapshot || data.originalProductDescriptionSnapshot;
+      const substitutedProductId = localSub?.substitutedProductId || data.substitutedProductId;
+      const substitutedProductCode = localSub?.substitutedProductCode || data.substitutedProductCode;
+      const substitutionDate = localSub?.substitutionDate || data.substitutionDate;
+      const isBacklogRetained = localSub?.isBacklogRetained !== undefined ? localSub.isBacklogRetained : data.isBacklogRetained;
+      const cases = localSub?.cases !== undefined ? localSub.cases : data.cases;
+      const casesPerPalletSnapshot = localSub?.casesPerPalletSnapshot !== undefined ? localSub.casesPerPalletSnapshot : data.casesPerPalletSnapshot;
+
+      if (dispatchMode === 'MANUAL') {
+        if (manualStatus === 'DESPATCHED') {
+          currentStatus = 'ASSUMED_DISPATCHED';
+        } else if (manualStatus === 'HOLD') {
+          currentStatus = 'UPCOMING';
+        }
+      } else if (currentStatus !== 'CANCELLED') {
         const collDate = new Date(data.barrowCollectionDate as any);
         collDate.setHours(0, 0, 0, 0);
 
@@ -610,6 +688,20 @@ export const getNorthfleetStoRequirements = async (
 
       list.push({
         ...data,
+        productId,
+        productCode,
+        cases,
+        casesPerPalletSnapshot,
+        originalProductId,
+        originalProductCode,
+        originalProductDescriptionSnapshot,
+        substitutedProductId,
+        substitutedProductCode,
+        substitutionDate,
+        isBacklogRetained,
+        dispatchMode,
+        manualStatus,
+        actualDespatchDate,
         status: currentStatus
       });
     });
@@ -724,3 +816,546 @@ export const updateNorthfleetStoRequirement = async (
     return { success: false, error: error.message };
   }
 };
+
+export interface StoFeasibility {
+  stoId: string;
+  productCode: string;
+  requiredCases: number;
+  availableStockCases: number;
+  allocatedCases?: number;
+  shortfallCases?: number;
+  remainingStockAfter?: number;
+  isDespatched?: boolean;
+  feasibilityStatus: 'GREEN' | 'AMBER' | 'RED';
+}
+
+/**
+ * Check if an STO requirement is already completed, dispatched, or cancelled.
+ * STOs with status 'Assumed Sent' or 'Despatched' must not consume from pending on-hand stock.
+ */
+export const isStoDespatchedOrSent = (req: NorthfleetStoRequirement): boolean => {
+  if (req.status === 'CANCELLED') return true;
+  if (req.dispatchMode === 'MANUAL') {
+    return req.manualStatus === 'DESPATCHED';
+  }
+  return req.status === 'ASSUMED_DISPATCHED';
+};
+
+export const updateStoDispatchControl = async (
+  tenantId: string,
+  siteId: string,
+  stoId: string,
+  dispatchMode: 'AUTOMATIC' | 'MANUAL',
+  manualStatus?: 'PENDING' | 'DESPATCHED' | 'HOLD',
+  userId: string = 'planner-user'
+): Promise<ServiceResult<void>> => {
+  try {
+    const data = await getDocument<NorthfleetStoRequirement>(STO_REQUIREMENTS_COLLECTION, stoId);
+    if (!data) return { success: false, error: 'STO requirement not found' };
+
+    const actualDespatchDate = manualStatus === 'DESPATCHED' ? new Date().toISOString() : null;
+
+    // Save locally for guaranteed persistence
+    saveLocalDispatchControl(stoId, dispatchMode, manualStatus, actualDespatchDate);
+
+    // Attempt Supabase update (ignoring schema column errors if columns haven't been migrated yet)
+    try {
+      const updates: any = {
+        dispatchMode,
+        manualStatus,
+        actualDespatchDate,
+        modifiedBy: userId,
+        modifiedDate: new Date().toISOString()
+      };
+      await supabase
+        .from('northfleet_sto_requirements')
+        .update(toSnakeCase(updates))
+        .eq('id', stoId);
+    } catch (dbErr) {
+      console.warn('Supabase schema update skipped, using local persistence overlay:', dbErr);
+    }
+
+    await logAuditEvent({
+      tenantId,
+      siteId,
+      eventType: 'NORTHFLEET_STO_UPDATE',
+      entityType: 'NORTHFLEET_STO_REQUIREMENT',
+      entityId: stoId,
+      summary: `Updated STO dispatch control for ${data.stoNumber}: mode=${dispatchMode}, status=${manualStatus}`,
+      performedBy: userId,
+      metadata: { stoNumber: data.stoNumber, dispatchMode, manualStatus }
+    });
+
+    await generateRecommendationForProduct(tenantId, siteId, data.productId, true);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to update STO dispatch control:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export interface EligibleSubstituteProduct {
+  product: Product;
+  casesPerPallet: number;
+  totalOnHandCases: number;
+  totalOnHandPallets: number;
+  ddxmRetentionCases: number;
+  minRetentionCases: number;
+  planningProtectedCases: number;
+  otherStoProtectedCases: number;
+  totalProtectedCases: number;
+  availableCases: number;
+  availablePallets: number;
+  stoRequiredCases: number;
+  stoRequiredPallets: number;
+  remainingCasesAfterSub: number;
+  remainingPalletsAfterSub: number;
+  isEligible: boolean;
+  ineligibilityReason?: string;
+}
+
+/**
+ * Evaluates candidate products for substituting an STO requirement.
+ * Enforces strict inventory protection rules:
+ * 1. Only products with available stock are considered.
+ * 2. Products with less than 52 pallets available are filtered out (isEligible = false).
+ * 3. The substitution quantity must NOT take away from other protected stocks (DDXM retention, planning minimums, or other active Northfleet STOs).
+ */
+export const getEligibleSubstituteProducts = async (
+  tenantId: string,
+  siteId: string,
+  targetSto: NorthfleetStoRequirement
+): Promise<EligibleSubstituteProduct[]> => {
+  try {
+    // 1. Fetch products, inventory balances, planning rules, and all STO requirements in parallel
+    const [products, balances, rules, existingStos] = await Promise.all([
+      getDocuments<Product>(PRODUCTS_COLLECTION, [where('tenantId', '==', tenantId)]),
+      getDocuments<any>('inventoryBalances', [
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId)
+      ]),
+      getDocuments<ProductPlanningRule>('planningRules', [
+        where('tenantId', '==', tenantId),
+        where('siteId', '==', siteId)
+      ]),
+      getNorthfleetStoRequirements(tenantId, siteId)
+    ]);
+
+    // 2. Map inventory balances by productId and productCode
+    const stockByProductId = new Map<string, number>();
+    const stockByProductCode = new Map<string, number>();
+    balances.forEach(b => {
+      const qty = Number(b.quantity) || 0;
+      if (b.productId) {
+        stockByProductId.set(b.productId, (stockByProductId.get(b.productId) || 0) + qty);
+      }
+      if (b.productCode) {
+        stockByProductCode.set(b.productCode.toUpperCase(), (stockByProductCode.get(b.productCode.toUpperCase()) || 0) + qty);
+      }
+    });
+
+    // 3. Map active planning rules
+    const ruleByProductId = new Map<string, ProductPlanningRule>();
+    rules.forEach(r => {
+      if (r.productId && (!ruleByProductId.has(r.productId) || r.status === 'active')) {
+        ruleByProductId.set(r.productId, r);
+      }
+    });
+
+    // 4. Map committed/protected STO cases from other active STOs
+    const otherStoCasesByProductId = new Map<string, number>();
+    const otherStoCasesByProductCode = new Map<string, number>();
+    existingStos.forEach(sto => {
+      // Exclude target STO itself being substituted
+      if (sto.id === targetSto.id) return;
+      // Exclude already despatched, assumed despatched, or cancelled STOs
+      if (isStoDespatchedOrSent(sto)) return;
+
+      const cases = Number(sto.cases) || 0;
+      if (sto.productId) {
+        otherStoCasesByProductId.set(
+          sto.productId,
+          (otherStoCasesByProductId.get(sto.productId) || 0) + cases
+        );
+      }
+      if (sto.productCode) {
+        const codeUpper = sto.productCode.toUpperCase();
+        otherStoCasesByProductCode.set(
+          codeUpper,
+          (otherStoCasesByProductCode.get(codeUpper) || 0) + cases
+        );
+      }
+    });
+
+    const results: EligibleSubstituteProduct[] = [];
+
+    // 5. Evaluate each product
+    for (const p of products) {
+      // Exclude current scheduled product of the STO
+      const isCurrentProduct = (targetSto.productId && p.id === targetSto.productId) ||
+        (targetSto.productCode && p.productCode.toUpperCase() === targetSto.productCode.toUpperCase());
+      if (isCurrentProduct) continue;
+
+      const cpp = p.casesPerPallet || p.configurations?.[0]?.casesPerPallet || 1;
+      const totalOnHandCases = stockByProductId.get(p.id) ?? stockByProductCode.get(p.productCode.toUpperCase()) ?? 0;
+      const totalOnHandPallets = Math.floor(totalOnHandCases / cpp);
+
+      // Planning rule protection (DDXM & Min)
+      const rule = ruleByProductId.get(p.id);
+      const ddxmRetentionCases = Number(rule?.ddxmRetentionQuantity) || 0;
+      const minRetentionCases = Number(rule?.minimumQuantity) || 0;
+      let planningProtectedCases = 0;
+
+      if (rule) {
+        switch (rule.controllingThresholdMode) {
+          case 'HIGHEST_MANDATORY':
+            planningProtectedCases = Math.max(minRetentionCases, ddxmRetentionCases);
+            break;
+          case 'DDXM_ONLY':
+            planningProtectedCases = ddxmRetentionCases;
+            break;
+          case 'MINIMUM_ONLY':
+            planningProtectedCases = minRetentionCases;
+            break;
+          case 'CUSTOM':
+            planningProtectedCases = Number(rule.customControllingRetentionQuantity) || 0;
+            break;
+          default:
+            planningProtectedCases = Math.max(minRetentionCases, ddxmRetentionCases);
+        }
+      }
+
+      // Other active Northfleet STO committed protection
+      const otherStoProtectedCases = otherStoCasesByProductId.get(p.id) ?? otherStoCasesByProductCode.get(p.productCode.toUpperCase()) ?? 0;
+      const totalProtectedCases = planningProtectedCases + otherStoProtectedCases;
+
+      // Unprotected stock available
+      const availableCases = Math.max(0, totalOnHandCases - totalProtectedCases);
+      const availablePallets = Math.floor(availableCases / cpp);
+
+      // Required quantity for target STO if substituted to this product
+      const stoRequiredPallets = targetSto.pallets || Math.ceil((targetSto.cases || 0) / cpp);
+      const stoRequiredCases = stoRequiredPallets * cpp;
+
+      const remainingCasesAfterSub = availableCases - stoRequiredCases;
+      const remainingPalletsAfterSub = Math.floor(remainingCasesAfterSub / cpp);
+
+      // Eligibility checks:
+      // 1. Must have >= 52 pallets available
+      // 2. Must not take away from other protected stocks (availableCases >= stoRequiredCases)
+      let isEligible = true;
+      let ineligibilityReason: string | undefined = undefined;
+
+      if (availablePallets < 52) {
+        isEligible = false;
+        ineligibilityReason = `Only ${availablePallets} pallets available (minimum 52 pallets required).`;
+      } else if (availableCases < stoRequiredCases || remainingCasesAfterSub < 0) {
+        isEligible = false;
+        ineligibilityReason = `Required ${stoRequiredCases.toLocaleString()} cases (${stoRequiredPallets} plts) exceeds unprotected available stock (${availableCases.toLocaleString()} cases) and would breach DDXM or STO protected reserves.`;
+      }
+
+      results.push({
+        product: p,
+        casesPerPallet: cpp,
+        totalOnHandCases,
+        totalOnHandPallets,
+        ddxmRetentionCases,
+        minRetentionCases,
+        planningProtectedCases,
+        otherStoProtectedCases,
+        totalProtectedCases,
+        availableCases,
+        availablePallets,
+        stoRequiredCases,
+        stoRequiredPallets,
+        remainingCasesAfterSub,
+        remainingPalletsAfterSub,
+        isEligible,
+        ineligibilityReason
+      });
+    }
+
+    // Sort: Eligible first, then highest available pallets descending
+    results.sort((a, b) => {
+      if (a.isEligible !== b.isEligible) return a.isEligible ? -1 : 1;
+      return b.availablePallets - a.availablePallets;
+    });
+
+    return results;
+  } catch (err) {
+    console.error('Error fetching eligible substitute products:', err);
+    return [];
+  }
+};
+
+export interface StoProductSubstitutionRequest {
+  tenantId: string;
+  siteId: string;
+  stoId: string;
+  newProductId: string;
+  newProductCode: string;
+  newProductDescription?: string;
+  newCasesPerPallet?: number;
+  retainOriginalBacklog: boolean;
+  userId: string;
+}
+
+/**
+ * Substitute product on an STO requirement when the original product is unavailable.
+ * Retains original product demand metadata for deferred backlog fulfillment.
+ * Triggers dual-product recommendation recalculation cascade for both original and substitute products.
+ */
+export const substituteStoProduct = async (
+  req: StoProductSubstitutionRequest
+): Promise<ServiceResult<void>> => {
+  try {
+    const current = await getDocument<NorthfleetStoRequirement>(STO_REQUIREMENTS_COLLECTION, req.stoId);
+    if (!current) return { success: false, error: 'STO requirement not found' };
+
+    const newCpp = req.newCasesPerPallet || current.casesPerPalletSnapshot || 1;
+    const newCases = current.pallets ? (current.pallets * newCpp) : current.cases;
+
+    const originalProductId = current.originalProductId || current.productId;
+    const originalProductCode = current.originalProductCode || current.productCode;
+    const originalProductDescriptionSnapshot = current.originalProductDescriptionSnapshot || current.productDescriptionSnapshot || '';
+    const substitutionDate = new Date().toISOString();
+
+    const subData: LocalStoSubstitution = {
+      originalProductId,
+      originalProductCode,
+      originalProductDescriptionSnapshot,
+      substitutedProductId: req.newProductId,
+      substitutedProductCode: req.newProductCode,
+      substitutionDate,
+      isBacklogRetained: req.retainOriginalBacklog,
+      cases: newCases,
+      casesPerPalletSnapshot: newCpp
+    };
+
+    saveLocalSubstitution(req.stoId, subData);
+
+    const updates = {
+      productId: req.newProductId,
+      productCode: req.newProductCode,
+      productDescriptionSnapshot: req.newProductDescription || current.productDescriptionSnapshot,
+      casesPerPalletSnapshot: newCpp,
+      cases: newCases,
+      originalProductId,
+      originalProductCode,
+      originalProductDescriptionSnapshot,
+      substitutedProductId: req.newProductId,
+      substitutedProductCode: req.newProductCode,
+      substitutionDate,
+      isBacklogRetained: req.retainOriginalBacklog,
+      modifiedBy: req.userId,
+      modifiedDate: substitutionDate
+    };
+
+    try {
+      await supabase
+        .from('northfleet_sto_requirements')
+        .update(toSnakeCase(updates))
+        .eq('id', req.stoId);
+    } catch (dbErr) {
+      console.warn('Supabase update skipped (using local overlay):', dbErr);
+    }
+
+    await logAuditEvent({
+      tenantId: req.tenantId,
+      siteId: req.siteId,
+      eventType: 'NORTHFLEET_STO_UPDATE',
+      entityType: 'NORTHFLEET_STO_REQUIREMENT',
+      entityId: req.stoId,
+      summary: `Substituted product on STO ${current.stoNumber}: ${originalProductCode} -> ${req.newProductCode} (Backlog retained: ${req.retainOriginalBacklog ? 'Yes' : 'No'})`,
+      performedBy: req.userId,
+      metadata: {
+        stoNumber: current.stoNumber,
+        originalProductCode,
+        newProductCode: req.newProductCode,
+        newCases,
+        newCpp,
+        retainOriginalBacklog: req.retainOriginalBacklog
+      }
+    });
+
+    // Cascade recalculation: recalculate recommendations for BOTH the original product and the new substituted product!
+    await generateRecommendationForProduct(req.tenantId, req.siteId, originalProductId, true);
+    if (req.newProductId !== originalProductId) {
+      await generateRecommendationForProduct(req.tenantId, req.siteId, req.newProductId, true);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to substitute STO product:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Calculate batch STO feasibility using Cumulative Waterfall Stock Allocation (Plan A).
+ * - STOs that have status as 'Assumed Sent' or 'Despatched' are excluded from consuming available stock.
+ * - Active pending STOs for each product are sorted chronologically (by Barrow Collection Date, then STO #).
+ * - Available inventory is sequentially allocated down the waterfall queue.
+ * - Resulting feasibility is marked GREEN (Fully Covered), AMBER (Partial), or RED (Deficit/Out of Stock).
+ */
+export const calculateBatchStoFeasibility = async (
+  tenantId: string,
+  siteId: string,
+  requirements: NorthfleetStoRequirement[]
+): Promise<Map<string, StoFeasibility>> => {
+  const resultMap = new Map<string, StoFeasibility>();
+  if (!requirements || requirements.length === 0) return resultMap;
+
+  try {
+    // 1. Fetch all inventory balances for tenant & site in one query
+    const balances = await getDocuments<any>('inventoryBalances', [
+      where('tenantId', '==', tenantId),
+      where('siteId', '==', siteId)
+    ]);
+
+    // Map total physical stock by productId and productCode
+    const stockByProductId = new Map<string, number>();
+    const stockByProductCode = new Map<string, number>();
+
+    balances.forEach(b => {
+      const qty = Number(b.quantity) || 0;
+      if (b.productId) {
+        stockByProductId.set(b.productId, (stockByProductId.get(b.productId) || 0) + qty);
+      }
+      if (b.productCode) {
+        stockByProductCode.set(b.productCode.toUpperCase(), (stockByProductCode.get(b.productCode.toUpperCase()) || 0) + qty);
+      }
+    });
+
+    // 2. Group requirements by product key (prefer productId, fallback to productCode)
+    const stosByProductKey = new Map<string, NorthfleetStoRequirement[]>();
+    requirements.forEach(req => {
+      const key = req.productId || req.productCode.toUpperCase();
+      if (!stosByProductKey.has(key)) {
+        stosByProductKey.set(key, []);
+      }
+      stosByProductKey.get(key)!.push(req);
+    });
+
+    // 3. Perform Cumulative Waterfall Allocation per product
+    for (const [productKey, productStos] of stosByProductKey.entries()) {
+      const prodCodeUpper = (productStos[0]?.productCode || '').toUpperCase();
+      const initialStock = stockByProductId.get(productKey) ?? 
+        stockByProductCode.get(prodCodeUpper) ?? 
+        stockByProductId.get(productStos[0]?.productId || '') ?? 0;
+
+      let remainingStock = initialStock;
+
+      // Separate into already dispatched/sent vs active pending STOs
+      const dispatchedStos: NorthfleetStoRequirement[] = [];
+      const pendingStos: NorthfleetStoRequirement[] = [];
+
+      productStos.forEach(sto => {
+        if (isStoDespatchedOrSent(sto)) {
+          dispatchedStos.push(sto);
+        } else {
+          pendingStos.push(sto);
+        }
+      });
+
+      // Dispatched / Assumed Sent STOs do NOT consume pending on-hand stock
+      dispatchedStos.forEach(sto => {
+        resultMap.set(sto.id, {
+          stoId: sto.id,
+          productCode: sto.productCode,
+          requiredCases: sto.cases || 0,
+          availableStockCases: initialStock,
+          allocatedCases: sto.cases || 0,
+          shortfallCases: 0,
+          remainingStockAfter: remainingStock,
+          isDespatched: true,
+          feasibilityStatus: 'GREEN'
+        });
+      });
+
+      // Sort pending STOs chronologically by Barrow Collection Date (earliest first), then STO #
+      pendingStos.sort((a, b) => {
+        const timeA = a.barrowCollectionDate ? new Date(a.barrowCollectionDate).getTime() : 0;
+        const timeB = b.barrowCollectionDate ? new Date(b.barrowCollectionDate).getTime() : 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return (a.stoNumber || '').localeCompare(b.stoNumber || '');
+      });
+
+      // Allocate stock sequentially down the waterfall
+      for (const sto of pendingStos) {
+        const reqCases = sto.cases || 0;
+        let allocated = 0;
+        let shortfall = 0;
+        let status: 'GREEN' | 'AMBER' | 'RED' = 'RED';
+
+        if (remainingStock >= reqCases) {
+          allocated = reqCases;
+          remainingStock -= reqCases;
+          shortfall = 0;
+          status = 'GREEN';
+        } else if (remainingStock > 0) {
+          allocated = remainingStock;
+          shortfall = reqCases - remainingStock;
+          remainingStock = 0;
+          status = 'AMBER';
+        } else {
+          allocated = 0;
+          shortfall = reqCases;
+          status = 'RED';
+        }
+
+        resultMap.set(sto.id, {
+          stoId: sto.id,
+          productCode: sto.productCode,
+          requiredCases: reqCases,
+          availableStockCases: initialStock,
+          allocatedCases: allocated,
+          shortfallCases: shortfall,
+          remainingStockAfter: remainingStock,
+          isDespatched: false,
+          feasibilityStatus: status
+        });
+      }
+    }
+
+    return resultMap;
+  } catch (err) {
+    console.error('Error calculating batch STO feasibility:', err);
+    // Fallback: mark all as RED
+    requirements.forEach(sto => {
+      resultMap.set(sto.id, {
+        stoId: sto.id,
+        productCode: sto.productCode,
+        requiredCases: sto.cases || 0,
+        availableStockCases: 0,
+        allocatedCases: 0,
+        shortfallCases: sto.cases || 0,
+        remainingStockAfter: 0,
+        isDespatched: false,
+        feasibilityStatus: 'RED'
+      });
+    });
+    return resultMap;
+  }
+};
+
+export const calculateStoFeasibility = async (
+  tenantId: string,
+  siteId: string,
+  sto: NorthfleetStoRequirement
+): Promise<StoFeasibility> => {
+  const batchMap = await calculateBatchStoFeasibility(tenantId, siteId, [sto]);
+  return batchMap.get(sto.id) || {
+    stoId: sto.id,
+    productCode: sto.productCode,
+    requiredCases: sto.cases || 0,
+    availableStockCases: 0,
+    allocatedCases: 0,
+    shortfallCases: sto.cases || 0,
+    remainingStockAfter: 0,
+    isDespatched: false,
+    feasibilityStatus: 'RED'
+  };
+};
+

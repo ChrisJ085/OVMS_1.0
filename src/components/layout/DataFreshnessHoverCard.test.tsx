@@ -58,7 +58,7 @@ describe('DataFreshnessHoverCard Component', () => {
         updatedAtFormatted: '14 Nov 2023, 20:15',
         relativeTime: '2 hrs ago',
         updatedBy: 'SAP System',
-        sourceSummary: 'MPPS7_Plan_W46.xlsx (88 rows)',
+        sourceSummary: 'SNP87_Plan_W46.xlsx (88 rows)',
         route: '/planning/production-plan',
         actionLabel: 'Upload Production Plan',
         ageMinutes: 120

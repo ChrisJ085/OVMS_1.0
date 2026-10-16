@@ -13,10 +13,12 @@ interface ProductionEventModalProps {
   item?: ProductionEvent;
   lines: ProductionLine[];
   uoms: UnitOfMeasure[];
+  initialLineId?: string;
+  initialDate?: Date;
 }
 
 export const ProductionEventModal: React.FC<ProductionEventModalProps> = ({ 
-  isOpen, onClose, item, lines, uoms 
+  isOpen, onClose, item, lines, uoms, initialLineId, initialDate 
 }) => {
   const { tenantId, siteId } = useSiteContext();
   const [formData, setFormData] = useState<Partial<ProductionEvent>>({});
@@ -36,12 +38,15 @@ export const ProductionEventModal: React.FC<ProductionEventModalProps> = ({
       } else {
         const activeLines = lines.filter(l => l.status === 'active');
         const activeUoms = uoms.filter(u => u.status === 'active');
+        const defaultLineId = (initialLineId && activeLines.some(l => l.id === initialLineId))
+          ? initialLineId
+          : (activeLines.length > 0 ? activeLines[0].id : '');
         
         setFormData({
           productId: '',
           productCodeSnapshot: '',
           descriptionSnapshot: '',
-          productionLineId: activeLines.length > 0 ? activeLines[0].id : '',
+          productionLineId: defaultLineId,
           productionStatus: 'PLANNED',
           plannedQuantity: null,
           actualQuantity: null,
@@ -52,13 +57,17 @@ export const ProductionEventModal: React.FC<ProductionEventModalProps> = ({
           notes: ''
         });
         
-        const start = new Date();
-        const finish = new Date(start.getTime() + 2 * 60 * 60 * 1000); // default 2 hours duration
+        const baseDate = initialDate ? new Date(initialDate) : new Date();
+        const start = new Date(baseDate);
+        start.setHours(6, 0, 0, 0);
+        const finish = new Date(baseDate);
+        finish.setHours(14, 0, 0, 0);
+
         setPlannedStartInput(start.toISOString().slice(0, 16));
         setPlannedFinishInput(finish.toISOString().slice(0, 16));
       }
     }
-  }, [isOpen, item, lines, uoms]);
+  }, [isOpen, item, lines, uoms, initialLineId, initialDate]);
 
   if (!isOpen) return null;
 

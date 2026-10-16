@@ -1,5 +1,6 @@
 import { ProductPlanningRule, PlanningBandStatus } from './planning';
 import { ProductProductionContext, NorthfleetStoRequirement } from './production';
+import { ProductPlanningContext } from './snp87';
 import { PromotionProductRule, PromotionWithPhase } from './promotion';
 import { InventoryBalance } from './inventory';
 
@@ -81,6 +82,7 @@ export interface DecisionConfiguration {
   releaseActionId: string | null;
   asPerScheduleActionId?: string | null;
   urgentPriorityId: string | null;
+  highPriorityId?: string | null;
   normalPriorityId: string | null;
   lowPriorityId: string | null;
   defaultDestinationRules?: DefaultDestinationRules;
@@ -105,13 +107,17 @@ export interface DecisionInputSnapshot {
   inventoryByLocation: InventoryBalance[];
   inventoryUpdatedAt: Date | null;
   planningRule: ProductPlanningRule | null;
-  productionContext: ProductProductionContext | null;
+  productionContext?: ProductProductionContext | null;
+  planningContext?: ProductPlanningContext | null;
   activePromotionImpacts: { rule: PromotionProductRule; promotion: PromotionWithPhase }[];
   existingActivePriorities: any[]; 
   outstandingStoCases?: number;
   stoRequirements?: NorthfleetStoRequirement[];
   evaluationTime: Date;
   configuration?: DecisionConfiguration | null;
+  generationId?: string;
+  triggeredBy?: string;
+  triggeredByName?: string;
 }
 
 export interface ThresholdBreakdown {

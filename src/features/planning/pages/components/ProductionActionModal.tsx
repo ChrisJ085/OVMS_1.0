@@ -135,12 +135,39 @@ export const ProductionActionModal: React.FC<ProductionActionModalProps> = ({
             )}
 
             {['DELAY', 'STOP'].includes(actionType) && (
-              <FormField 
-                label="Reason *" 
-                value={delayReason} 
-                onChange={(e) => setDelayReason(e.target.value)} 
-                required 
-              />
+              <div className="space-y-2">
+                <FormField 
+                  label="Reason *" 
+                  value={delayReason} 
+                  onChange={(e) => setDelayReason(e.target.value)} 
+                  required 
+                />
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[
+                    'Changeover overrun',
+                    'Material shortage',
+                    'Packaging film fault',
+                    'Mechanical jam',
+                    'Electrical fault',
+                    'Quality inspection hold',
+                    'Cleaning / CIP delay',
+                    'Operator shortage'
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setDelayReason(preset)}
+                      className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                        delayReason === preset 
+                          ? 'bg-amber-500 text-slate-950 font-bold border-amber-400' 
+                          : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {['COMPLETE', 'UPDATE_QTY'].includes(actionType) && (

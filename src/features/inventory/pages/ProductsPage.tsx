@@ -5,11 +5,15 @@ import { DataTable } from '../../../components/ui/DataTable';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { LoadingState, ErrorState } from '../../../components/ui/States';
 import { ConfirmationDialog } from '../../../components/ui/ConfirmationDialog';
-import { Plus, Search, Upload } from 'lucide-react';
+import { Plus, Search, Upload, Ruler } from 'lucide-react';
 import { subscribeToProducts, setProductStatus } from '../services/productService';
 import { Product } from '../../../types/product';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductCategory, UnitOfMeasure, Destination } from '../../../types/configuration';
+import { ProductPlanningRule } from '../../../types/planning';
+import { InventoryBalance } from '../../../types/inventory';
+import { subscribeToPlanningRules } from '../../planning/services/planningRuleService';
+import { subscribeToBalances } from '../services/inventoryService';
 import { ProductModal } from './components/ProductModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { BulkProductUploadModal } from './components/BulkProductUploadModal';
@@ -22,6 +26,8 @@ export const ProductsPage: React.FC = () => {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [planningRules, setPlanningRules] = useState<ProductPlanningRule[]>([]);
+  const [balances, setBalances] = useState<InventoryBalance[]>([]);
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -30,6 +36,7 @@ export const ProductsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [relevanceFilter, setRelevanceFilter] = useState<'all' | 'relevant' | 'not_relevant'>('all');
+  const [ruleFilter, setRuleFilter] = useState<'all' | 'has_rule' | 'no_rule'>('all');
 
   const [modalState, setModalState] = useState<{isOpen: boolean, item?: Product}>({ isOpen: false });
   const [detailModalState, setDetailModalState] = useState<{isOpen: boolean, item?: Product}>({ isOpen: false });
@@ -83,11 +90,27 @@ export const ProductsPage: React.FC = () => {
       console.error
     );
 
+    const unsubRules = subscribeToPlanningRules(
+      tenantId,
+      siteId,
+      (rules) => setPlanningRules(rules),
+      console.error
+    );
+
+    const unsubBalances = subscribeToBalances(
+      tenantId,
+      siteId,
+      (items) => setBalances(items),
+      console.error
+    );
+
     return () => {
       unsubProducts();
       unsubCategories();
       unsubUnits();
       unsubDestinations();
+      unsubRules();
+      unsubBalances();
     };
   }, [tenantId, siteId]);
 
@@ -112,6 +135,11 @@ export const ProductsPage: React.FC = () => {
     return destinations.find(d => d.id === id)?.destinationName || id;
   };
 
+  const hasPlanningRule = (productId?: string) => {
+    if (!productId) return false;
+    return planningRules.some(r => r.productId === productId && r.status === 'active');
+  };
+
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.productCode.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           p.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -119,13 +147,68 @@ export const ProductsPage: React.FC = () => {
     const matchesCategory = categoryFilter === 'all' || p.categoryId === categoryFilter;
     const matchesRelevance = relevanceFilter === 'all' || 
                              (relevanceFilter === 'relevant' ? p.operationallyRelevant : !p.operationallyRelevant);
-    return matchesSearch && matchesStatus && matchesCategory && matchesRelevance;
+    
+    const ruleExists = hasPlanningRule(p.id);
+    const matchesRule = ruleFilter === 'all' ||
+                        (ruleFilter === 'has_rule' ? ruleExists : !ruleExists);
+
+    return matchesSearch && matchesStatus && matchesCategory && matchesRelevance && matchesRule;
   });
 
   const columns = [
     { header: 'Product Code', accessor: 'productCode' as const },
     { header: 'Description', accessor: 'description' as const },
     { header: 'Category', accessor: (row: Product) => getCategoryName(row.categoryId) },
+    {
+      header: 'Planning Rule',
+      accessor: (row: Product) => {
+        const ruleActive = hasPlanningRule(row.id);
+        return ruleActive ? (
+          <span
+            title="Planning rule configured and active"
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+          >
+            <Ruler className="w-3.5 h-3.5" />
+            Configured
+          </span>
+        ) : (
+          <span
+            title="No active planning rule"
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-slate-800/80 text-slate-500 border border-slate-700/60"
+          >
+            <Ruler className="w-3.5 h-3.5 opacity-40" />
+            None
+          </span>
+        );
+      }
+    },
+    {
+      header: 'On-Hand Stock',
+      accessor: (row: Product) => {
+        const matchingBalances = balances.filter(
+          b => b.productId === row.id || (row.productCode && b.productCodeSnapshot === row.productCode)
+        );
+        const totalPallets = matchingBalances.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
+        const primaryConfig = row.configurations?.[0];
+        const cpp = primaryConfig?.casesPerPallet ?? row.casesPerPallet;
+        const totalCases = (cpp !== null && cpp !== undefined && cpp > 0) ? (totalPallets * cpp) : null;
+
+        return (
+          <div className="flex flex-col">
+            <div className="font-semibold text-slate-200 text-xs">
+              {totalPallets.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">Pal</span>
+            </div>
+            {totalCases !== null ? (
+              <div className="text-[11px] text-brand-400 font-medium">
+                {totalCases.toLocaleString()} <span className="text-[10px] text-slate-500 font-normal">CS</span>
+              </div>
+            ) : (
+              <div className="text-[10px] text-slate-500 italic">-</div>
+            )}
+          </div>
+        );
+      }
+    },
     { 
       header: 'Configurations', 
       accessor: (row: Product) => (
@@ -272,6 +355,15 @@ export const ProductsPage: React.FC = () => {
             <option value="relevant">Operationally Relevant</option>
             <option value="not_relevant">Not Relevant</option>
           </select>
+          <select
+            value={ruleFilter}
+            onChange={(e) => setRuleFilter(e.target.value as any)}
+            className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-sm text-slate-200 focus:outline-none focus:border-slate-600"
+          >
+            <option value="all">All Planning Rules</option>
+            <option value="has_rule">With Planning Rule</option>
+            <option value="no_rule">Missing Planning Rule</option>
+          </select>
         </div>
 
         {loading ? (
@@ -325,6 +417,10 @@ export const ProductsPage: React.FC = () => {
         getCategoryName={getCategoryName}
         getUnitName={getUnitName}
         getDestinationName={getDestinationName}
+        onProductUpdated={(updated) => {
+          setProducts(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+          setDetailModalState(prev => ({ ...prev, item: updated }));
+        }}
       />
 
       <BulkProductUploadModal

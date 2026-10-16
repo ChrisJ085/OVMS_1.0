@@ -9,6 +9,7 @@ export interface SiteRecommendationRun {
   id?: string;
   tenantId: string;
   siteId: string;
+  generationId?: string;
   status: SiteRecommendationRunStatus;
   startedAt: Timestamp | null;
   startedBy: string | null;
@@ -17,10 +18,17 @@ export interface SiteRecommendationRun {
   completedBy: string | null;
   completedByName: string | null;
   totalProducts: number;
+  candidateCount?: number;
+  evaluatedCount?: number;
   currentProductIndex: number;
   currentProductCode: string;
   generatedCount: number;
+  actionableCount?: number;
+  noActionCount?: number;
+  supersededCount?: number;
   conflictsCount: number;
+  failuresCount?: number;
+  sourceImportIds?: string[];
   error?: string | null;
   lastUpdatedAt: Timestamp | null;
 }
@@ -58,4 +66,5 @@ export interface Recommendation extends BaseDocument {
   overrideReason: string | null;
   supersededByRecommendationId: string | null;
   linkedPriorityId?: string;
+  generationId?: string;
 }

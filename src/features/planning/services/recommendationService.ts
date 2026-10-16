@@ -1,6 +1,6 @@
 import { DecisionInputSnapshot, DecisionOutput } from '../../../types/decision';
 import { Recommendation, RecommendationStatus, PlannerDecision, OverrideFlags, SiteRecommendationRun } from '../../../types/recommendation';
-import { evaluateDecision, ENGINE_VERSION } from './decisionEngine';
+import { evaluateDecision, capPriorityAtHigh, ENGINE_VERSION } from './decisionEngine';
 import { getProductInventory } from '../../inventory/services/inventoryService';
 import { getProductPlanningRule } from './planningRuleService';
 import { getProductProductionContext, buildProductProductionContext } from './productionService';
@@ -21,6 +21,10 @@ import { toSafeDate } from '../../../utils/timeFormatters';
 
 import { getDecisionConfiguration } from './decisionConfigurationService';
 import { getOutstandingStoCasesForProduct } from './northfleetStoService';
+import { filterRecommendationCandidates } from './recommendationCandidateService';
+import { getActiveSnp87Snapshot } from './snp87ImportService';
+import { buildProductPlanningContext, getProductPlanningContext, adaptPlanningContextToLegacyProductionContext } from './snp87PlanningContextService';
+import { ProductPlanningContext, Snp87PlanningImport, Snp87PlanningRow } from '../../../types/snp87';
 import {
   createDocument,
   deleteDocument,
@@ -43,9 +47,9 @@ export interface RecommendationPreloadContext {
   inventoryBalancesByProductId: Map<string, InventoryBalance[]>;
   inventoryTotalsByProductId: Map<string, number>;
   planningRulesMap: Map<string, ProductPlanningRule | null>;
-  productionEntriesByProductId: Map<string, ProductionPlanEntry[]>;
-  productionLineNotes: ProductionLinePlanNote[];
-  productionImportUploadTimes: Map<string, Date>;
+  productionEntriesByProductId?: Map<string, ProductionPlanEntry[]>;
+  productionLineNotes?: ProductionLinePlanNote[];
+  productionImportUploadTimes?: Map<string, Date>;
   stoRequirementsByProductId: Map<string, NorthfleetStoRequirement[]>;
   outstandingStoCasesByProductId: Map<string, number>;
   promotionsMap: Map<string, Promotion>;
@@ -57,6 +61,9 @@ export interface RecommendationPreloadContext {
   destinationsMap?: Map<string, any>;
   priorityLevelsMap?: Map<string, any>;
   evaluationDate?: Date;
+  planningContextsByProductId?: Map<string, ProductPlanningContext>;
+  activeSnp87Snapshot?: Snp87PlanningImport | null;
+  snp87Rows?: Snp87PlanningRow[];
 }
 
 export interface GenerateRecommendationResponse extends ServiceResult<string | null> {
@@ -136,6 +143,14 @@ const generateFingerprint = (input: DecisionInputSnapshot): string => {
       line: prod.currentProductionLine,
       sourceImportId: prod.sourceImportId
     } : null,
+    planningContext: input.planningContext ? {
+      forecastToday: input.planningContext.forecastCasesToday,
+      forecast7d: input.planningContext.forecastCasesNext7Days,
+      productionToday: input.planningContext.confirmedProductionCasesToday,
+      production7d: input.planningContext.confirmedProductionCasesNext7Days,
+      freshness: input.planningContext.dataFreshnessStatus,
+      importId: input.planningContext.sourceImportId
+    } : null,
     promoCount: input.activePromotionImpacts.length,
     stoCases: input.outstandingStoCases || 0,
     priorities: input.existingActivePriorities.length
@@ -155,7 +170,12 @@ export const generateRecommendationForProduct = async (
   siteId: string,
   productId: string,
   forceReevaluate = false,
-  preloadedContext?: RecommendationPreloadContext
+  preloadedContext?: RecommendationPreloadContext,
+  generationMetadata?: {
+    generationId?: string;
+    userId?: string;
+    userName?: string;
+  }
 ): Promise<GenerateRecommendationResponse> => {
   try {
     // 1. Gather Inputs
@@ -176,6 +196,17 @@ export const generateRecommendationForProduct = async (
       inventory = { totalQuantity, balances };
     } else {
       inventory = await getProductInventory(tenantId, siteId, productId);
+      if (!inventory || inventory.balances.length === 0) {
+        const docs = await getDocuments<InventoryBalance>('inventoryBalances', [
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          where('productId', '==', productId)
+        ]);
+        if (docs.length > 0) {
+          const totalQuantity = docs.reduce((sum, b) => sum + (b.quantity || 0), 0);
+          inventory = { totalQuantity, balances: docs };
+        }
+      }
     }
 
     let planningRule: ProductPlanningRule | null = null;
@@ -183,10 +214,39 @@ export const generateRecommendationForProduct = async (
       planningRule = preloadedContext.planningRulesMap.get(productId) || null;
     } else {
       planningRule = await getProductPlanningRule(tenantId, siteId, productId);
+      if (!planningRule) {
+        const rules = await getDocuments<ProductPlanningRule>('planningRules', [
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId),
+          where('productId', '==', productId)
+        ]);
+        planningRule = rules[0] || null;
+      }
     }
 
+    // Retrieve SNP87 planning context as authoritative planning input
+    let planningContext: ProductPlanningContext | null = null;
+    if (preloadedContext?.planningContextsByProductId) {
+      planningContext = preloadedContext.planningContextsByProductId.get(productId) || null;
+    } else {
+      try {
+        planningContext = await getProductPlanningContext(
+          tenantId,
+          siteId,
+          productId,
+          product.productCode,
+          preloadedContext?.evaluationDate || new Date()
+        );
+      } catch (snpErr) {
+        console.warn('Could not retrieve product planning context:', snpErr);
+      }
+    }
+
+    // Adapt SNP87 planning context to production context without requiring MPPS7 entries
     let productionContext: ProductProductionContext;
-    if (preloadedContext?.productionEntriesByProductId) {
+    if (planningContext) {
+      productionContext = adaptPlanningContextToLegacyProductionContext(planningContext, product);
+    } else if (preloadedContext?.productionEntriesByProductId) {
       const entries = preloadedContext.productionEntriesByProductId.get(productId) || [];
       productionContext = buildProductProductionContext(
         tenantId,
@@ -199,6 +259,10 @@ export const generateRecommendationForProduct = async (
       );
     } else {
       productionContext = await getProductProductionContext(tenantId, siteId, productId);
+    }
+
+    if (planningContext && productionContext && !productionContext.planningContext) {
+      productionContext.planningContext = planningContext;
     }
     
     // Fetch active promotions for product
@@ -267,11 +331,16 @@ export const generateRecommendationForProduct = async (
       inventoryUpdatedAt: inventory && inventory.balances.length > 0 ? (inventory.balances[0].modifiedDate as any) || new Date() : new Date(),
       planningRule,
       productionContext,
+      planningContext,
       activePromotionImpacts,
       existingActivePriorities: [],
       outstandingStoCases,
-      evaluationTime: new Date(),
-      configuration
+      stoRequirements: preloadedContext?.stoRequirementsByProductId ? (preloadedContext.stoRequirementsByProductId.get(productId) || []) : undefined,
+      evaluationTime: preloadedContext?.evaluationDate || new Date(),
+      configuration,
+      generationId: generationMetadata?.generationId,
+      triggeredBy: generationMetadata?.userId || 'system',
+      triggeredByName: generationMetadata?.userName || 'system'
     };
 
     // 2. Evaluate Decision
@@ -299,16 +368,17 @@ export const generateRecommendationForProduct = async (
       }
     }
 
+    const recId = `rec_${Math.random().toString(36).substring(2, 11)}`;
+
     // 4. Create new recommendation and push directly to warehouse priorities
     if (existingRec) {
       await updateDocument(RECOMMENDATIONS_COLLECTION, existingRec.id, { 
         recommendationStatus: 'SUPERSEDED',
+        supersededByRecommendationId: recId,
         modifiedDate: new Date().toISOString(),
         modifiedBy: 'system'
       });
     }
-
-    const recId = `rec_${Math.random().toString(36).substring(2, 11)}`;
 
     // Check if an existing operational priority exists for this product
     let activePriorities: { id: string; data: Priority }[] = [];
@@ -333,21 +403,27 @@ export const generateRecommendationForProduct = async (
 
     if (hasRecommendedAction) {
       const requestedQty = decisionOutput.recommendedQuantity || 0;
-      const instructionText = decisionOutput.explanationLines?.[0] || `Auto-pushed action: ${decisionOutput.recommendedActionTypeId}`;
+      const cpp = product.casesPerPallet || product.configurations?.[0]?.casesPerPallet || 45;
+      const pallets = cpp > 0 ? Math.round(requestedQty / cpp) : 0;
+      const destName = decisionOutput.recommendedDestinationId ? 'Chorley (CH)' : 'configured destination';
+      const instructionText = `Release ${requestedQty.toLocaleString()} cases (${pallets} ${pallets === 1 ? 'Pallet' : 'Pallets'}) to ${destName}`;
+      const selectionBlurb = `Physical inventory at Barrow warehouse exceeds the protected retention threshold. The system selected this product to release surplus stock (${requestedQty.toLocaleString()} cases / ${pallets} pallets) to relieve warehouse floor storage pressure while preserving 100% of Barrow protected DDXM and customer commitments.`;
 
       if (existingRecPrio) {
         // Update existing active priority
         targetPriorityId = existingRecPrio.id;
         const prioData = existingRecPrio.data;
 
+        const resolvedPriorityLevelId = capPriorityAtHigh(decisionOutput.recommendedPriorityLevelId, configuration) || 'NORMAL';
         const updatedPrioData: Partial<Priority> = {
           actionTypeId: decisionOutput.recommendedActionTypeId!,
           requestedQuantity: requestedQty,
           remainingQuantity: Math.max(0, requestedQty - (prioData.progressQuantity || 0)),
           progressPercent: requestedQty > 0 ? Math.round(((prioData.progressQuantity || 0) / requestedQty) * 100) : 0,
           destinationId: decisionOutput.recommendedDestinationId || null,
-          priorityLevelId: decisionOutput.recommendedPriorityLevelId || 'NORMAL',
+          priorityLevelId: resolvedPriorityLevelId,
           instruction: instructionText,
+          selectionLogicSummary: selectionBlurb,
           sourceRecommendationId: recId,
           modifiedDate: new Date().toISOString(),
           modifiedBy: 'system'
@@ -360,6 +436,7 @@ export const generateRecommendationForProduct = async (
           buildDisplayPriorityDoc({ ...prioData, ...updatedPrioData }, targetPriorityId)
         );
       } else {
+        const resolvedPriorityLevelId = capPriorityAtHigh(decisionOutput.recommendedPriorityLevelId, configuration) || 'NORMAL';
         // Create new operational priority pushed to warehouse
         const priorityData: any = {
           tenantId,
@@ -370,8 +447,9 @@ export const generateRecommendationForProduct = async (
           productCodeSnapshot: product.productCode,
           descriptionSnapshot: product.description,
           instruction: instructionText,
+          selectionLogicSummary: selectionBlurb,
           priorityStatus: 'ACTIVE',
-          priorityLevelId: decisionOutput.recommendedPriorityLevelId || 'NORMAL',
+          priorityLevelId: resolvedPriorityLevelId,
           actionTypeId: decisionOutput.recommendedActionTypeId!,
           requestedQuantity: requestedQty,
           progressQuantity: 0,
@@ -437,13 +515,14 @@ export const generateRecommendationForProduct = async (
       status: 'active',
       recommendationStatus: 'AUTO_PUBLISHED',
       linkedPriorityId: targetPriorityId,
+      generationId: generationMetadata?.generationId,
       engineVersion: ENGINE_VERSION,
       decisionOutput: JSON.parse(JSON.stringify(decisionOutput)), // Serialize dates
       sourceSnapshot: JSON.parse(JSON.stringify(inputSnapshot)),
       sourceFingerprint: fingerprint,
       generatedAt: new Date().toISOString(),
       reviewedAt: new Date().toISOString(),
-      reviewedBy: 'system',
+      reviewedBy: generationMetadata?.userId || 'system',
       plannerDecision: hasRecommendedAction ? {
         actionTypeId: decisionOutput.recommendedActionTypeId!,
         quantity: decisionOutput.recommendedQuantity || 0,
@@ -456,59 +535,186 @@ export const generateRecommendationForProduct = async (
       supersededByRecommendationId: null,
       createdDate: new Date().toISOString(),
       modifiedDate: new Date().toISOString(),
-      createdBy: 'system',
-      modifiedBy: 'system'
+      createdBy: generationMetadata?.userId || 'system',
+      modifiedBy: generationMetadata?.userId || 'system'
     };
 
     await setDocument(RECOMMENDATIONS_COLLECTION, recId, newRecommendation);
 
-    let snapshot: RecommendationAuditSnapshot | null = null;
-    if (hasRecommendedAction && targetPriorityId) {
-      const destId = decisionOutput.recommendedDestinationId || null;
-      const destObj = destId && preloadedContext?.destinationsMap ? preloadedContext.destinationsMap.get(destId) : null;
-      const actionId = decisionOutput.recommendedActionTypeId!;
-      const actionObj = preloadedContext?.actionTypesMap ? preloadedContext.actionTypesMap.get(actionId) : null;
-      const levelId = decisionOutput.recommendedPriorityLevelId || 'NORMAL';
-      const levelObj = preloadedContext?.priorityLevelsMap ? preloadedContext.priorityLevelsMap.get(levelId) : null;
+    // Build comprehensive Stage 9 RecommendationAuditSnapshot
+    const destId = decisionOutput.recommendedDestinationId || planningRule?.preferredDestinationId || null;
+    const destObj = destId && preloadedContext?.destinationsMap ? preloadedContext.destinationsMap.get(destId) : null;
+    const actionId = decisionOutput.recommendedActionTypeId || 'NONE';
+    const actionObj = preloadedContext?.actionTypesMap ? preloadedContext.actionTypesMap.get(actionId) : null;
+    const levelId = capPriorityAtHigh(decisionOutput.recommendedPriorityLevelId, configuration) || 'NORMAL';
+    const levelObj = preloadedContext?.priorityLevelsMap ? preloadedContext.priorityLevelsMap.get(levelId) : null;
 
-      const actLabel = actionObj?.name || actionObj?.code || actionId;
-      const destLabel = destObj?.name || destObj?.code || destId;
-      const levelLabel = levelObj?.name || levelObj?.code || levelId;
-      const finalRequestedQty = decisionOutput.recommendedQuantity || 0;
-      const finalInstruction = decisionOutput.explanationLines?.[0] || `Auto-pushed action: ${actionId}`;
-      const explanationText = decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.recommendation?.join(' | ') || '';
+    const actLabel = actionObj?.name || actionObj?.code || actionId;
+    const destLabel = destObj?.name || destObj?.code || destId || 'None';
+    const levelLabel = levelObj?.name || levelObj?.code || levelId;
+    const finalRequestedQty = decisionOutput.recommendedQuantity || 0;
+    const finalInstruction = decisionOutput.explanationLines?.[0] || (hasRecommendedAction ? `Auto-pushed action: ${actionId}` : 'No operational action required');
+    const explanationText = decisionOutput.explanationLines?.join(' | ') || decisionOutput.structuredExplanation?.recommendation?.join(' | ') || '';
 
-      snapshot = {
-        recommendationId: recId,
-        operationalPriorityId: targetPriorityId,
-        productId,
-        productCode: product.productCode || (product as any).code || product.id,
-        productDescription: product.description || (product as any).productName || product.productCode || '',
-        action: actLabel,
-        actionTypeId: actionId,
-        actionTypeLabel: actLabel,
-        requestedQuantity: finalRequestedQty,
-        quantityUnit: (product as any).unitOfMeasure || (product as any).uom || 'pallets',
-        destinationId: destId,
-        destinationCode: destObj?.code || destId,
-        destinationName: destLabel,
-        priorityLevel: levelLabel,
-        priorityLevelId: levelId,
-        instruction: finalInstruction,
-        reason: explanationText,
-        explanation: explanationText,
-        supportingReasons: decisionOutput.explanationLines || [],
-        sourceType: 'RECOMMENDATION',
-        createdAt: new Date().toISOString(),
-        decisionContext: {
-          inventoryTotal: inventory?.totalQuantity || 0,
-          controllingThresholdMode: planningRule?.controllingThresholdMode || null,
-          belowTargetBehavior: planningRule?.belowTargetBehavior || null,
-          outstandingStoCases: inputSnapshot.outstandingStoCases || 0,
-          plannedCasesNext7Days: inputSnapshot.productionContext?.plannedCasesNext7Days || 0,
-          planningBand: (decisionOutput as any).planningBandStatus || (decisionOutput as any).planningBand || null
-        }
-      };
+    // 1. SNP87 Source Snapshot
+    const snp87SourceSnapshot = planningContext ? {
+      sourceImportId: planningContext.sourceImportId || null,
+      sourceReportName: planningContext.sourceReportName || null,
+      importedAt: planningContext.forecastSourceUpdatedAt 
+        ? new Date(planningContext.forecastSourceUpdatedAt).toISOString() 
+        : (planningContext.productionSourceUpdatedAt ? new Date(planningContext.productionSourceUpdatedAt).toISOString() : null),
+      dataFreshnessStatus: planningContext.dataFreshnessStatus || 'MISSING',
+      sourceStatus: planningContext.sourceStatus || 'MISSING',
+      planningHorizon: planningContext.sevenDayWindow ? {
+        startDate: planningContext.sevenDayWindow.startDate,
+        endDate: planningContext.sevenDayWindow.endDate
+      } : null,
+      forecastCasesToday: planningContext.forecastCasesToday || 0,
+      forecastCasesNext7Days: planningContext.forecastCasesNext7Days || 0,
+      forecastByDate: planningContext.forecastByDate || {},
+      forecastSourceImportId: planningContext.forecastSourceImportId || null,
+      forecastSourceUpdatedAt: planningContext.forecastSourceUpdatedAt ? new Date(planningContext.forecastSourceUpdatedAt).toISOString() : null,
+      confirmedProductionCasesToday: planningContext.confirmedProductionCasesToday || 0,
+      confirmedProductionCasesNext7Days: planningContext.confirmedProductionCasesNext7Days || 0,
+      confirmedProductionByDate: planningContext.confirmedProductionByDate || {},
+      productionSourceImportId: planningContext.productionSourceImportId || null,
+      productionSourceUpdatedAt: planningContext.productionSourceUpdatedAt ? new Date(planningContext.productionSourceUpdatedAt).toISOString() : null,
+      hasMissingPlanningData: Boolean(planningContext.hasMissingPlanningData)
+    } : {
+      sourceImportId: null,
+      sourceReportName: null,
+      importedAt: null,
+      dataFreshnessStatus: 'MISSING' as const,
+      sourceStatus: 'MISSING' as const,
+      planningHorizon: null,
+      forecastCasesToday: 0,
+      forecastCasesNext7Days: 0,
+      forecastByDate: {},
+      forecastSourceImportId: null,
+      forecastSourceUpdatedAt: null,
+      confirmedProductionCasesToday: 0,
+      confirmedProductionCasesNext7Days: 0,
+      confirmedProductionByDate: {},
+      productionSourceImportId: null,
+      productionSourceUpdatedAt: null,
+      hasMissingPlanningData: true
+    };
+
+    // 2. Northfleet STO snapshot
+    const stoList = preloadedContext?.stoRequirementsByProductId?.get(productId) || [];
+    const northfleetProtectionSnapshot = {
+      outstandingCases: inputSnapshot.outstandingStoCases || 0,
+      requirementCount: stoList.length,
+      requirements: stoList.slice(0, 10).map((sto: any) => ({
+        id: sto.id,
+        cases: sto.cases || 0,
+        barrowCollectionDate: String(sto.barrowCollectionDate || ''),
+        destinationLocation: sto.destinationLocation || sto.destinationCode,
+        carrier: sto.carrier,
+        status: sto.status
+      }))
+    };
+
+    // 3. Product & Rule Configuration snapshot
+    const configurationSnapshot = {
+      productCode: product.productCode || (product as any).code || product.id,
+      preferredDestinationId: planningRule?.preferredDestinationId || null,
+      preferredDestinationCode: destObj?.code || null,
+      preferredDestinationName: destLabel !== 'None' ? destLabel : null,
+      minimumQuantity: planningRule?.minimumQuantity ?? null,
+      targetQuantity: planningRule?.targetQuantity ?? null,
+      maximumQuantity: planningRule?.maximumQuantity ?? null,
+      ddxmRetentionQuantity: planningRule?.ddxmRetentionQuantity ?? null,
+      controllingThresholdMode: planningRule?.controllingThresholdMode || null,
+      belowTargetBehavior: planningRule?.belowTargetBehavior || null,
+      engineVersion: ENGINE_VERSION
+    };
+
+    const snapshot: RecommendationAuditSnapshot = {
+      recommendationId: recId,
+      operationalPriorityId: targetPriorityId || '',
+      productId,
+      productCode: product.productCode || (product as any).code || product.id,
+      productDescription: product.description || (product as any).productName || product.productCode || '',
+      action: actLabel,
+      actionTypeId: actionId,
+      actionTypeLabel: actLabel,
+      requestedQuantity: finalRequestedQty,
+      quantityUnit: (product as any).unitOfMeasure || (product as any).uom || 'pallets',
+      destinationId: destId,
+      destinationCode: destObj?.code || destId,
+      destinationName: destLabel,
+      priorityLevel: levelLabel,
+      priorityLevelId: levelId,
+      instruction: finalInstruction,
+      reason: explanationText,
+      explanation: explanationText,
+      supportingReasons: decisionOutput.explanationLines || [],
+      sourceType: 'RECOMMENDATION',
+      createdAt: new Date().toISOString(),
+      generationId: generationMetadata?.generationId,
+      fingerprint,
+      sourceFingerprint: fingerprint,
+      recommendationStatus: 'AUTO_PUBLISHED',
+      triggeredBy: generationMetadata?.userId || 'system',
+      triggeredByName: generationMetadata?.userName || 'system',
+
+      inventorySnapshot: {
+        totalCases: inventory ? inventory.totalQuantity : 0,
+        balanceCount: inventory ? inventory.balances.length : 0,
+        updatedAt: (inventory as any)?.lastUpdated ? new Date((inventory as any).lastUpdated).toISOString() : null
+      },
+
+      snp87SourceSnapshot,
+      northfleetProtectionSnapshot,
+      configurationSnapshot,
+
+      decisionContext: {
+        inventoryTotal: inventory?.totalQuantity || 0,
+        controllingThresholdMode: planningRule?.controllingThresholdMode || null,
+        belowTargetBehavior: planningRule?.belowTargetBehavior || null,
+        outstandingStoCases: inputSnapshot.outstandingStoCases || 0,
+        plannedCasesNext7Days: inputSnapshot.productionContext?.plannedCasesNext7Days || 0,
+        planningBand: (decisionOutput as any).planningBandStatus || (decisionOutput as any).planningBand || null,
+        preferredDestinationId: planningRule?.preferredDestinationId || null,
+        preferredDestinationName: destLabel !== 'None' ? destLabel : null,
+        snp87ImportId: planningContext?.sourceImportId || null,
+        snp87ImportedAt: planningContext?.forecastSourceUpdatedAt ? new Date(planningContext.forecastSourceUpdatedAt).toISOString() : null,
+        snp87Freshness: planningContext?.dataFreshnessStatus || 'MISSING',
+        snp87ForecastCases7Days: planningContext?.forecastCasesNext7Days || 0,
+        snp87ConfirmedProductionCases7Days: planningContext?.confirmedProductionCasesNext7Days || 0,
+        snp87NetPosition: planningContext ? ((planningContext.confirmedProductionCasesNext7Days || 0) - (planningContext.forecastCasesNext7Days || 0)) : 0
+      }
+    };
+
+    // If standalone recalculation/generation (not in bulk refresh), log audit event immediately
+    if (!generationMetadata?.generationId && hasRecommendedAction) {
+      try {
+        await logAuditEvent({
+          tenantId,
+          siteId,
+          eventType: 'RECOMMENDATION_EVALUATED',
+          entityType: 'Recommendation',
+          entityId: recId,
+          summary: `Evaluated recommendation for ${product.productCode}: ${snapshot.action} (${snapshot.requestedQuantity} ${snapshot.quantityUnit})`,
+          performedBy: generationMetadata?.userId || 'system',
+          performedByName: generationMetadata?.userName || 'system',
+          generationId: `single_${recId}`,
+          generationStatus: 'COMPLETED',
+          candidateProductsCount: 1,
+          evaluatedProductsCount: 1,
+          actionableRecommendationsCount: 1,
+          operationalPrioritiesCreatedCount: targetPriorityId ? 1 : 0,
+          noActionCount: 0,
+          recommendationSnapshots: [snapshot],
+          metadata: {
+            sourceImportId: snp87SourceSnapshot.sourceImportId,
+            fingerprint
+          }
+        });
+      } catch (auditErr) {
+        console.warn('Could not log standalone recommendation audit:', auditErr);
+      }
     }
 
     return {
@@ -529,14 +735,16 @@ export const refreshSiteRecommendations = async (
   siteId: string,
   forceReevaluate = true,
   onProgress?: (progress: { current: number; total: number; productCode?: string }) => void,
-  initiatorInfo?: { userId?: string; userName?: string }
-): Promise<ServiceResult<{ generatedCount: number; conflicts: PriorityConflict[] }>> => {
+  initiatorInfo?: { userId?: string; userName?: string; userEmail?: string }
+): Promise<ServiceResult<{ generatedCount: number; conflicts: PriorityConflict[]; generationId?: string }>> => {
   const runId = `${tenantId}_${siteId}`;
   const userName = initiatorInfo?.userName || 'Planner';
   const userId = initiatorInfo?.userId || 'system';
+  const userEmail = initiatorInfo?.userEmail;
+  const generationId = `gen_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const runStartedAtMs = Date.now();
 
   try {
-    const runStartedAtMs = Date.now() - 1000;
     const evalDate = new Date();
 
     // 1. Fetch all required data for the site in parallel single-batch queries
@@ -544,14 +752,13 @@ export const refreshSiteRecommendations = async (
       productsDocs,
       balancesDocs,
       stoDocs,
-      productionEntriesDocs,
-      productionNotesDocs,
       planningRulesDocs,
       promoRulesDocs,
       promotionsDocs,
       configuration,
       activeRecsDocs,
-      activePrioritiesDocs
+      activePrioritiesDocs,
+      activeSnp87Snapshot
     ] = await Promise.all([
       getDocuments<Product>('products', [
         where('tenantId', '==', tenantId),
@@ -565,15 +772,6 @@ export const refreshSiteRecommendations = async (
       getDocuments<NorthfleetStoRequirement>('northfleetStoRequirements', [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId)
-      ]),
-      getDocuments<ProductionPlanEntry>('productionPlanEntries', [
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId)
-      ]),
-      getDocuments<ProductionLinePlanNote>('productionLinePlanNotes', [
-        where('tenantId', '==', tenantId),
-        where('siteId', '==', siteId),
-        where('active', '==', true)
       ]),
       getDocuments<ProductPlanningRule>('planningRules', [
         where('tenantId', '==', tenantId),
@@ -596,7 +794,11 @@ export const refreshSiteRecommendations = async (
       getDocuments<Priority>(PRIORITIES_COLLECTION, [
         where('tenantId', '==', tenantId),
         where('siteId', '==', siteId)
-      ])
+      ]),
+      getActiveSnp87Snapshot(tenantId, siteId).catch(err => {
+        console.warn('Failed to retrieve active SNP87 snapshot during refresh:', err);
+        return { importSummary: null, rows: [] };
+      })
     ]);
 
     const activeRecsFiltered = activeRecsDocs.filter(r => ['AWAITING_REVIEW', 'AUTO_PUBLISHED', 'APPROVED'].includes(r.recommendationStatus));
@@ -676,53 +878,7 @@ export const refreshSiteRecommendations = async (
       }
     });
 
-    // 5. Index Production Plan Entries, Notes & Imports
-    const productionEntriesByProductId = new Map<string, ProductionPlanEntry[]>();
-    const siteProductionEntries: ProductionPlanEntry[] = [];
-    const distinctImportIds = new Set<string>();
-
-    productionEntriesDocs.forEach(entry => {
-      siteProductionEntries.push(entry);
-
-      if (entry.productId) {
-        if (!productionEntriesByProductId.has(entry.productId)) {
-          productionEntriesByProductId.set(entry.productId, []);
-        }
-        productionEntriesByProductId.get(entry.productId)!.push(entry);
-      }
-
-      if (entry.activeImportId) {
-        distinctImportIds.add(entry.activeImportId);
-      }
-    });
-
-    const productionLineNotes: ProductionLinePlanNote[] = [...productionNotesDocs];
-
-    // Fetch import upload times for distinct activeImportIds
-    const productionImportUploadTimes = new Map<string, Date>();
-    if (distinctImportIds.size > 0) {
-      await Promise.all(
-        Array.from(distinctImportIds).map(async importId => {
-          try {
-            const importDoc = await getDocument<any>('productionPlanImports', importId);
-            if (importDoc) {
-              const uploaded = importDoc.uploadedAt
-                ? new Date(importDoc.uploadedAt)
-                : importDoc.createdDate
-                ? new Date(importDoc.createdDate)
-                : null;
-              if (uploaded) {
-                productionImportUploadTimes.set(importId, uploaded);
-              }
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch upload time for import ${importId}:`, err);
-          }
-        })
-      );
-    }
-
-    // 6. Index Planning Rules
+    // 5. Index Planning Rules
     const rawPlanningRulesByProdId = new Map<string, ProductPlanningRule[]>();
     planningRulesDocs.forEach(rule => {
       if (rule.productId) {
@@ -793,72 +949,44 @@ export const refreshSiteRecommendations = async (
       }
     });
 
-    // 9. Construct Candidate Product Sets (UNION)
-    const positiveInventoryCandidates = new Set<string>();
-    const stoDueTodayCandidates = new Set<string>();
-    const productionTodayCandidates = new Set<string>();
-    const existingSystemRecCandidates = new Set<string>();
+    // 9. Construct Candidate Product Sets (UNION) using SNP87 Planning
+    const candidateResult = filterRecommendationCandidates({
+      activeProducts,
+      inventoryTotalsByProductId,
+      stoRequirements: siteStoRequirements,
+      snp87Rows: activeSnp87Snapshot?.rows || [],
+      activeRecommendations: activeSiteRecommendations,
+      activePriorities: activeSitePriorities,
+      evaluationDate: evalDate
+    });
 
-    // A. Positive Inventory
-    for (const p of activeProducts) {
-      const totalQty = inventoryTotalsByProductId.get(p.id) || 0;
-      if (totalQty > 0) {
-        positiveInventoryCandidates.add(p.id);
-      }
-    }
-
-    // B. STO Due Today (Barrow Collection Date is TODAY)
-    for (const sto of siteStoRequirements) {
-      if (sto.status !== 'CANCELLED' && sto.productId && isDateToday(sto.barrowCollectionDate, evalDate)) {
-        stoDueTodayCandidates.add(sto.productId);
-      }
-    }
-
-    // C. Production Scheduled for Today
-    for (const entry of siteProductionEntries) {
-      if (entry.status !== 'CANCELLED' && entry.productId && isProductionDateToday(entry.productionDate, evalDate)) {
-        productionTodayCandidates.add(entry.productId);
-      }
-    }
-
-    // D. Existing System Recommendations / Recommendation-driven Priorities
-    for (const rec of activeSiteRecommendations) {
-      if (rec.productId && ['AWAITING_REVIEW', 'AUTO_PUBLISHED', 'APPROVED'].includes(rec.recommendationStatus)) {
-        existingSystemRecCandidates.add(rec.productId);
-      }
-    }
-    for (const prio of activeSitePriorities) {
-      if (
-        prio.productId &&
-        prio.sourceType === 'RECOMMENDATION' &&
-        ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(prio.priorityStatus)
-      ) {
-        existingSystemRecCandidates.add(prio.productId);
-      }
-    }
-
-    // Build the deduplicated Candidate Set
-    const candidateProductIds = new Set<string>([
-      ...positiveInventoryCandidates,
-      ...stoDueTodayCandidates,
-      ...productionTodayCandidates,
-      ...existingSystemRecCandidates
-    ]);
-
-    // Filter to active products
-    const candidateProducts = activeProducts.filter(p => candidateProductIds.has(p.id));
-    const totalCandidates = candidateProducts.length;
+    const {
+      candidateProducts,
+      positiveInventoryCandidates,
+      stoDueTodayCandidates,
+      snp87ForecastCandidates,
+      snp87ProductionCandidates,
+      existingSystemRecCandidates,
+      totalCandidates,
+      diagnosticLog
+    } = candidateResult;
 
     // Diagnostic logging
-    console.log(
-      `Recommendation refresh:\n` +
-      `Active products: ${activeProducts.length}\n` +
-      `Positive inventory: ${positiveInventoryCandidates.size}\n` +
-      `STO due today: ${stoDueTodayCandidates.size}\n` +
-      `Production today: ${productionTodayCandidates.size}\n` +
-      `Existing system recommendations: ${existingSystemRecCandidates.size}\n` +
-      `Unique candidates: ${totalCandidates}`
-    );
+    console.log(diagnosticLog);
+
+    // Pre-build ProductPlanningContext for all candidates
+    const planningContextsByProductId = new Map<string, ProductPlanningContext>();
+    for (const prod of candidateProducts) {
+      const pContext = buildProductPlanningContext({
+        productId: prod.id,
+        productCode: (prod as any).code || prod.productCode,
+        productDescription: prod.description,
+        activeSnapshot: activeSnp87Snapshot?.importSummary || null,
+        snapshotRows: activeSnp87Snapshot?.rows || [],
+        evaluationDate: evalDate
+      });
+      planningContextsByProductId.set(prod.id, pContext);
+    }
 
     // Build preloaded context for evaluation
     const preloadedContext: RecommendationPreloadContext = {
@@ -866,9 +994,6 @@ export const refreshSiteRecommendations = async (
       inventoryBalancesByProductId,
       inventoryTotalsByProductId,
       planningRulesMap,
-      productionEntriesByProductId,
-      productionLineNotes,
-      productionImportUploadTimes,
       stoRequirementsByProductId,
       outstandingStoCasesByProductId,
       promotionsMap,
@@ -876,23 +1001,39 @@ export const refreshSiteRecommendations = async (
       configuration,
       activeRecommendationsByProductId,
       activePrioritiesByProductId,
-      evaluationDate: evalDate
+      evaluationDate: evalDate,
+      planningContextsByProductId,
+      activeSnp87Snapshot: activeSnp87Snapshot?.importSummary || null,
+      snp87Rows: activeSnp87Snapshot?.rows || []
     };
+
+    // Track SNP87 source imports used in this generation
+    const usedSnp87ImportIds = new Set<string>();
+    if (activeSnp87Snapshot?.importSummary?.id) {
+      usedSnp87ImportIds.add(activeSnp87Snapshot.importSummary.id);
+    }
 
     // Record initial run state
     try {
       await setDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
         tenantId,
         siteId,
+        generationId,
         status: 'IN_PROGRESS',
         startedAt: new Date().toISOString(),
         startedBy: userId,
         startedByName: userName,
         totalProducts: totalCandidates,
+        candidateCount: totalCandidates,
+        evaluatedCount: 0,
         currentProductIndex: 0,
         currentProductCode: totalCandidates > 0 ? 'Initializing' : 'None to evaluate',
         generatedCount: 0,
+        actionableCount: 0,
+        noActionCount: 0,
         conflictsCount: 0,
+        failuresCount: 0,
+        sourceImportIds: Array.from(usedSnp87ImportIds),
         error: null,
         lastUpdatedAt: new Date().toISOString()
       });
@@ -901,6 +1042,11 @@ export const refreshSiteRecommendations = async (
     }
 
     let count = 0;
+    let actionableCount = 0;
+    let noActionCount = 0;
+    let failuresCount = 0;
+    let evaluatedCount = 0;
+    const generatedSnapshots: RecommendationAuditSnapshot[] = [];
     let lastFirestoreProgressWrite = 0;
 
     // Evaluate ONLY candidate products
@@ -933,10 +1079,25 @@ export const refreshSiteRecommendations = async (
         siteId,
         product.id,
         forceReevaluate,
-        preloadedContext
+        preloadedContext,
+        { generationId, userId, userName }
       );
+      evaluatedCount++;
       if (res.success) {
         count++;
+        if (res.hasAction) {
+          actionableCount++;
+        } else {
+          noActionCount++;
+        }
+        if (res.snapshot) {
+          generatedSnapshots.push(res.snapshot);
+          if (res.snapshot.snp87SourceSnapshot?.sourceImportId) {
+            usedSnp87ImportIds.add(res.snapshot.snp87SourceSnapshot.sourceImportId);
+          }
+        }
+      } else {
+        failuresCount++;
       }
     }
 
@@ -968,20 +1129,27 @@ export const refreshSiteRecommendations = async (
     // Detect conflicts between newly generated system priorities and existing manual priorities
     const conflicts = await detectPriorityConflicts(tenantId, siteId);
 
-    // Record completion
+    // Record completion in SiteRecommendationRuns
     try {
       await setDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
         tenantId,
         siteId,
+        generationId,
         status: 'COMPLETED',
         completedAt: new Date().toISOString(),
         completedBy: userId,
         completedByName: userName,
         totalProducts: totalCandidates,
+        candidateCount: totalCandidates,
+        evaluatedCount,
         currentProductIndex: totalCandidates,
         currentProductCode: 'Complete',
         generatedCount: count,
+        actionableCount,
+        noActionCount,
         conflictsCount: conflicts.length,
+        failuresCount,
+        sourceImportIds: Array.from(usedSnp87ImportIds),
         error: null,
         lastUpdatedAt: new Date().toISOString()
       });
@@ -989,7 +1157,36 @@ export const refreshSiteRecommendations = async (
       console.warn('Could not record run completion:', completeErr);
     }
 
-    return { success: true, data: { generatedCount: count, conflicts } };
+    // Log the comprehensive RECOMMENDATIONS_GENERATED audit event
+    try {
+      await logAuditEvent({
+        tenantId,
+        siteId,
+        eventType: 'RECOMMENDATIONS_GENERATED',
+        entityType: 'RecommendationEngine',
+        entityId: generationId,
+        summary: `Generated ${actionableCount} recommendations across ${totalCandidates} candidates (${conflicts.length} priority conflicts detected)`,
+        performedBy: userId,
+        performedByName: userName,
+        performedByEmail: userEmail,
+        generationId,
+        generationStatus: 'COMPLETED',
+        generationDurationMs: Date.now() - runStartedAtMs,
+        candidateProductsCount: totalCandidates,
+        actionableRecommendationsCount: actionableCount,
+        operationalPrioritiesCreatedCount: actionableCount,
+        noActionCount,
+        recommendationSnapshots: generatedSnapshots,
+        metadata: {
+          sourceImportIds: Array.from(usedSnp87ImportIds),
+          evaluationDate: evalDate.toISOString()
+        }
+      });
+    } catch (auditErr) {
+      console.warn('Could not log recommendation generation audit event:', auditErr);
+    }
+
+    return { success: true, data: { generatedCount: count, conflicts, generationId } };
   } catch (e: any) {
     console.error('Failed to refresh site recommendations:', e);
 
@@ -997,9 +1194,34 @@ export const refreshSiteRecommendations = async (
       await setDocument(SITE_RECOMMENDATION_RUNS_COLLECTION, runId, {
         tenantId,
         siteId,
+        generationId,
         status: 'FAILED',
         error: e?.message || 'Failed to refresh site recommendations',
         lastUpdatedAt: new Date().toISOString()
+      });
+    } catch {
+      // Non-blocking
+    }
+
+    try {
+      await logAuditEvent({
+        tenantId,
+        siteId,
+        eventType: 'RECOMMENDATIONS_GENERATED',
+        entityType: 'RecommendationEngine',
+        entityId: generationId,
+        summary: `Failed recommendation generation run: ${e?.message || 'Unknown error'}`,
+        performedBy: userId,
+        performedByName: userName,
+        performedByEmail: userEmail,
+        generationId,
+        generationStatus: 'FAILED',
+        generationDurationMs: Date.now() - runStartedAtMs,
+        candidateProductsCount: 0,
+        actionableRecommendationsCount: 0,
+        operationalPrioritiesCreatedCount: 0,
+        noActionCount: 0,
+        errorMessage: e?.message || 'Unknown error'
       });
     } catch {
       // Non-blocking

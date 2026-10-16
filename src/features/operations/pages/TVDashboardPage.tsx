@@ -22,18 +22,55 @@ import { toCamelCase } from '../../../utils/caseTransformers';
 import { 
   AlertTriangle, Clock, CheckCircle, Ban, Play,
   LayoutGrid, AlertCircle, TrendingDown,
-  Wifi, WifiOff, Settings, Package, Info
+  Wifi, WifiOff, Settings, Package, Info, Calendar, Layers
 } from 'lucide-react';
+import { subscribeToBalances } from '../../inventory/services/inventoryService';
+import { InventoryBalance } from '../../../types/inventory';
+import { useSnp87Planning } from '../../planning/hooks/useSnp87Planning';
+import { computeWeeklyForecastPlan } from '../../planning/services/snp87ImportService';
+import { areProductCodesEqual, normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 // Constants
 const PAGE_ROTATION_MS = 15000;
 const COMPLETED_RETENTION_MS = 10 * 60 * 1000; // 10 minutes
 
 const PRIORITY_WEIGHTS: Record<string, number> = {
-  CRITICAL: 4,
+  CRITICAL: 5,
+  URGENT: 4,
   HIGH: 3,
   NORMAL: 2,
   LOW: 1
+};
+
+const getShortReason = (p: DisplayPriority, hasForecast = false): string => {
+  const text = (p.selectionLogicSummary || p.instruction || '').toLowerCase();
+  const act = (p.actionTypeId || p.actionTypeLabel || '').toLowerCase();
+  
+  if (act.includes('prod') || text.includes('production')) return 'Replenish Stock';
+  
+  const isHoldAction = /\bhold\b/i.test(act) || p.actionTypeId === 'ACTION_HOLD';
+  if (isHoldAction) {
+    if (hasForecast) return 'Hold - Protect Forecast';
+    return 'Clearance - No Forecast';
+  }
+  
+  if (hasForecast) {
+    return 'Surplus Clearance';
+  }
+
+  if (text.includes('congestion') || text.includes('pressure') || text.includes('space')) {
+    return 'Floor Space Relief';
+  }
+  
+  if (text.includes('surplus') || text.includes('exceeds')) {
+    return 'Surplus Clearance';
+  }
+  
+  if (p.priorityLevelId?.toLowerCase().includes('high') || text.includes('high')) {
+    return 'Urgent Despatch';
+  }
+  
+  return 'Surplus Clearance';
 };
 
 const getPriorityDisplayLabel = (
@@ -43,8 +80,9 @@ const getPriorityDisplayLabel = (
 ): string => {
   const rawLabel = getPriorityLevelLabel(levelId, priorityLevels, snapshot).toUpperCase();
   if (rawLabel.includes('CRITICAL')) return 'CRITICAL';
-  if (rawLabel.includes('HIGH') || rawLabel.includes('URGENT')) return 'URGENT';
-  if (rawLabel.includes('NORMAL')) return 'STANDARD';
+  if (rawLabel.includes('URGENT')) return 'URGENT';
+  if (rawLabel.includes('HIGH')) return 'HIGH';
+  if (rawLabel.includes('NORMAL') || rawLabel.includes('MEDIUM')) return 'STANDARD';
   if (rawLabel.includes('LOW')) return 'LOW PRIORITY';
   return rawLabel;
 };
@@ -94,7 +132,7 @@ const getTileTheme = (
   }
 
   const normalized = levelLabel.toUpperCase();
-  if (normalized.includes('CRITICAL')) {
+  if (normalized.includes('CRITICAL') || normalized.includes('URGENT')) {
     return {
       border: 'border-red-500/80',
       bg: 'bg-red-950/30',
@@ -107,7 +145,7 @@ const getTileTheme = (
     };
   }
 
-  if (normalized.includes('HIGH') || normalized.includes('URGENT')) {
+  if (normalized.includes('HIGH')) {
     return {
       border: 'border-amber-500/70',
       bg: 'bg-amber-950/30',
@@ -153,10 +191,14 @@ export const TVDashboardPage: React.FC = () => {
   const [exceptions, setExceptions] = useState<OperationalException[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isConnected, setIsConnected] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
+
+  // SNP87 Planning data hook for active snapshot & forecast demand
+  const { activeSnapshot, activeRows, snapshotLoading } = useSnp87Planning(tenantId, siteId);
 
   // Dynamic config collections
   const [destinations, setDestinations] = useState<Destination[]>([]);
@@ -199,6 +241,18 @@ export const TVDashboardPage: React.FC = () => {
     if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
     const unsubProd = subscribeToProducts(tenantId, siteId, setProducts, console.error);
     return () => unsubProd();
+  }, [tenantId, siteId]);
+
+  // Subscribe to Inventory Balances for on-hand pallet calculation
+  useEffect(() => {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
+    const unsubBal = subscribeToBalances(
+      tenantId,
+      siteId,
+      (items) => setBalances(items),
+      (err) => console.warn('TV Dashboard inventory balance subscription error:', err)
+    );
+    return () => unsubBal();
   }, [tenantId, siteId]);
 
   // Clock tick
@@ -269,8 +323,17 @@ export const TVDashboardPage: React.FC = () => {
 
         // Sort
         activePriorities.sort((a, b) => {
-          const weightA = PRIORITY_WEIGHTS[a.priorityLevelId] || 0;
-          const weightB = PRIORITY_WEIGHTS[b.priorityLevelId] || 0;
+          const labelA = getPriorityLevelLabel(a.priorityLevelId, priorityLevels, a.priorityLevelLabel).toUpperCase();
+          const labelB = getPriorityLevelLabel(b.priorityLevelId, priorityLevels, b.priorityLevelLabel).toUpperCase();
+          const getWeight = (l: string) => {
+            if (l.includes('CRITICAL')) return 5;
+            if (l.includes('URGENT')) return 4;
+            if (l.includes('HIGH')) return 3;
+            if (l.includes('LOW')) return 1;
+            return 2;
+          };
+          const weightA = getWeight(labelA);
+          const weightB = getWeight(labelB);
           if (weightA !== weightB) return weightB - weightA;
           
           try {
@@ -437,6 +500,135 @@ export const TVDashboardPage: React.FC = () => {
     };
   }, [priorities, exceptions]);
 
+  // Helper to format horizon date label
+  const formatHorizonDateLabel = (dateStr: string): string => {
+    if (!dateStr) return 'ACTIVE HORIZON';
+    try {
+      const clean = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+      const parts = clean.split('-');
+      if (parts.length === 3) {
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        const d = new Date(year, month, day);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+      }
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      }
+    } catch (e) {
+      // fallback
+    }
+    return dateStr;
+  };
+
+  // Map inventory balances by productId and productCode (ignoring leading zeros and case)
+  const inventoryStockMap = useMemo(() => {
+    const byId = new Map<string, number>();
+    const byCode = new Map<string, number>();
+    balances.forEach(b => {
+      const qty = Number(b.quantity) || 0;
+      if (b.productId) {
+        byId.set(b.productId, (byId.get(b.productId) || 0) + qty);
+      }
+      if (b.productCodeSnapshot) {
+        const codeUpper = b.productCodeSnapshot.trim().toUpperCase();
+        byCode.set(codeUpper, (byCode.get(codeUpper) || 0) + qty);
+        const normCode = normalizeProductCode(b.productCodeSnapshot);
+        if (normCode) {
+          byCode.set(normCode, (byCode.get(normCode) || 0) + qty);
+        }
+      }
+    });
+    return { byId, byCode };
+  }, [balances]);
+
+  // Aggregate weekly forecast plan from active SNP87 snapshot
+  const weeklyPlans = useMemo(() => {
+    return computeWeeklyForecastPlan(activeRows, products);
+  }, [activeRows, products]);
+
+  // Target Horizon Date
+  const targetHorizonDate = useMemo(() => {
+    if (weeklyPlans.length > 0 && weeklyPlans[0].horizonDate) {
+      return weeklyPlans[0].horizonDate;
+    }
+    if (activeSnapshot?.importPeriod?.startDate) {
+      return activeSnapshot.importPeriod.startDate;
+    }
+    return '';
+  }, [weeklyPlans, activeSnapshot]);
+
+  // Calculate detailed stock in pallets vs demand in pallets for each forecast product
+  // Rounding rule from user: "If the demand quantity is less than a full pallet, round it up to a full pallet, example: 0.6=1 , 2.4=3"
+  const forecastStockItems = useMemo(() => {
+    return weeklyPlans.map(plan => {
+      const matchedProduct = products.find(p => 
+        (plan.productId && p.id === plan.productId) ||
+        areProductCodesEqual(p.productCode, plan.productCode)
+      );
+
+      const cpp = matchedProduct?.casesPerPallet || 
+        matchedProduct?.configurations?.[0]?.casesPerPallet || 
+        plan.casesPerPallet || 
+        40;
+
+      // Demand in Pallets: rounded UP to a full pallet if fractional
+      const rawDemandPallets = cpp > 0 ? (plan.totalForecastCases / cpp) : 0;
+      const requiredPallets = rawDemandPallets > 0 ? Math.ceil(rawDemandPallets) : 0;
+
+      // On-Hand Cases and Pallets (ignoring leading zeros)
+      const onHandCases = (plan.productId ? inventoryStockMap.byId.get(plan.productId) : undefined) ?? 
+        inventoryStockMap.byCode.get(plan.productCode.toUpperCase()) ?? 
+        inventoryStockMap.byCode.get(normalizeProductCode(plan.productCode)) ?? 0;
+
+      const rawOnHandPallets = cpp > 0 ? onHandCases / cpp : 0;
+      const onHandPallets = rawOnHandPallets % 1 === 0 
+        ? rawOnHandPallets 
+        : Number(rawOnHandPallets.toFixed(1));
+
+      const isShortfall = onHandPallets < requiredPallets;
+      const deficitPallets = isShortfall ? Math.max(0, requiredPallets - Math.floor(rawOnHandPallets)) : 0;
+      const surplusPallets = !isShortfall ? Math.max(0, Math.floor(rawOnHandPallets) - requiredPallets) : 0;
+
+      return {
+        productId: plan.productId,
+        productCode: plan.productCode,
+        productDescription: plan.productDescription || matchedProduct?.description || 'Forecast Product',
+        casesPerPallet: cpp,
+        totalForecastCases: plan.totalForecastCases,
+        rawDemandPallets,
+        requiredPallets,
+        onHandCases,
+        rawOnHandPallets,
+        onHandPallets,
+        isShortfall,
+        deficitPallets,
+        surplusPallets
+      };
+    }).sort((a, b) => {
+      // Prioritize items where on hand is short of demand (so warehouse knows what must stay on site!)
+      if (a.isShortfall && !b.isShortfall) return -1;
+      if (!a.isShortfall && b.isShortfall) return 1;
+      return b.requiredPallets - a.requiredPallets;
+    });
+  }, [weeklyPlans, products, inventoryStockMap]);
+
+  const totalRequiredPallets = useMemo(() => {
+    return forecastStockItems.reduce((sum, item) => sum + item.requiredPallets, 0);
+  }, [forecastStockItems]);
+
+  const totalOnHandPallets = useMemo(() => {
+    return forecastStockItems.reduce((sum, item) => sum + Math.floor(item.rawOnHandPallets), 0);
+  }, [forecastStockItems]);
+
+  const shortfallCount = useMemo(() => {
+    return forecastStockItems.filter(item => item.isShortfall).length;
+  }, [forecastStockItems]);
+
   // Active Displayed Site Label (Never raw ID)
   const displaySiteLabel = useMemo(() => {
     if (siteName) return siteName;
@@ -566,24 +758,39 @@ export const TVDashboardPage: React.FC = () => {
                 ? Ban 
                 : isCompleted 
                 ? CheckCircle 
-                : (levelLabel.toUpperCase().includes('CRITICAL') || levelLabel.toUpperCase().includes('HIGH')) 
+                : (levelLabel.toUpperCase().includes('CRITICAL') || levelLabel.toUpperCase().includes('URGENT') || levelLabel.toUpperCase().includes('HIGH')) 
                 ? AlertTriangle 
                 : Package;
 
               // Product CPP matching for pallet calculation - CRITICAL: No fallback to 100!
               const productMatch = products.find(prod => 
                 (p.productId && prod.id === p.productId) || 
-                (p.productCodeSnapshot && prod.productCode === p.productCodeSnapshot)
+                (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
               );
               const cpp = productMatch?.casesPerPallet || 
                 productMatch?.configurations?.[0]?.casesPerPallet || 
                 null;
 
+              // Check if product has active forecast demand in the weekly planning horizon
+              const forecastItem = forecastStockItems.find(f =>
+                (p.productId && f.productId === p.productId) ||
+                (p.productCodeSnapshot && areProductCodesEqual(f.productCode, p.productCodeSnapshot))
+              );
+              const hasForecastDemand = Boolean(forecastItem && (forecastItem.requiredPallets > 0 || forecastItem.totalForecastCases > 0));
+
               let qtyValue = '0';
               let unitLabel = 'PALLETS';
               let isCases = false;
 
-              if (p.requestedQuantity && p.requestedQuantity > 0) {
+              const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
+              const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
+
+              // Pallet calculation: if releasing surplus for a product with forecast demand, protect forecast stock!
+              if (rawActionLabel.includes('RELEASE') && forecastItem && forecastItem.requiredPallets > 0) {
+                const pallets = forecastItem.surplusPallets;
+                qtyValue = pallets.toLocaleString();
+                unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
+              } else if (p.requestedQuantity && p.requestedQuantity > 0) {
                 if (cpp && cpp > 0) {
                   const pallets = Math.round(p.requestedQuantity / cpp);
                   qtyValue = pallets.toLocaleString();
@@ -594,9 +801,6 @@ export const TVDashboardPage: React.FC = () => {
                   isCases = true;
                 }
               }
-
-              const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
-              const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
 
               const destLabel = p.destinationId
                 ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
@@ -615,6 +819,9 @@ export const TVDashboardPage: React.FC = () => {
                   {/* Card Header: Top Right Priority Badge */}
                   <div className="flex items-center justify-between gap-2 mb-1 shrink-0">
                     <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 bg-slate-900/70 border border-slate-700/70 px-2 py-0.5 rounded shadow-sm">
+                        {getShortReason(p, hasForecastDemand)}
+                      </span>
                       {/* Optional status badge for secondary status */}
                       {p.priorityStatus !== 'ACTIVE' && p.priorityStatus !== 'COMPLETED' && p.priorityStatus !== 'BLOCKED' && (
                         <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${theme.statusBadge}`}>
@@ -635,8 +842,8 @@ export const TVDashboardPage: React.FC = () => {
                     {/* LEFT: Product Identity & Action */}
                     <div className="flex flex-col justify-between space-y-1.5 min-w-0">
                       <div className="min-w-0 flex-1">
-                        <div className={`font-mono font-black tracking-tight truncate ${compactMode ? 'text-2xl sm:text-3xl' : 'text-3xl sm:text-4xl lg:text-5xl'} ${theme.productCodeText}`}>
-                          {p.productCodeSnapshot || 'SKU'}
+                        <div className={`font-mono font-black tracking-tight whitespace-nowrap overflow-visible ${compactMode ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl lg:text-4xl'} ${theme.productCodeText}`}>
+                          {normalizeProductCode(p.productCodeSnapshot) || 'SKU'}
                         </div>
                         <div className={`text-slate-300 font-medium leading-tight line-clamp-2 mt-0.5 ${compactMode ? 'text-xs' : 'text-xs sm:text-sm'}`}>
                           {p.descriptionSnapshot || 'Product Description'}
@@ -715,52 +922,141 @@ export const TVDashboardPage: React.FC = () => {
           )}
         </div>
 
-        {/* Side Panel - Execution Summary */}
-        <div className="w-48 lg:w-52 bg-slate-900 border-l border-slate-800 p-4 flex flex-col gap-4 shrink-0 z-10 overflow-y-auto">
-          <div>
-            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <LayoutGrid className="w-3.5 h-3.5" />
-              Execution Summary
-            </h2>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg flex flex-col items-center justify-center text-center">
-                <span className="text-2xl font-bold text-brand-400 font-mono">{stats.active}</span>
-                <span className="text-[10px] text-slate-500 font-medium uppercase mt-0.5">Active</span>
+        {/* Side Panel - Forecast Stock vs Demand in Pallets */}
+        <div className="w-80 sm:w-96 lg:w-[460px] xl:w-[500px] 2xl:w-[540px] bg-slate-900 border-l border-slate-800 p-3 sm:p-3.5 flex flex-col gap-2.5 shrink-0 z-10 overflow-hidden shadow-2xl">
+          {/* Header with Horizon Date */}
+          <div className="border-b border-slate-800 pb-2.5 shrink-0">
+            <div className="flex items-center justify-between gap-1 mb-1.5">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-brand-400" />
+                <span>Demand Horizon</span>
+              </h2>
+              {/* Target Horizon Date Pill */}
+              <span className="px-2 py-0.5 rounded bg-brand-950/80 border border-brand-800/80 text-brand-300 font-mono text-xs font-bold whitespace-nowrap shadow-sm">
+                {targetHorizonDate ? formatHorizonDateLabel(targetHorizonDate) : 'WEEKLY PLAN'}
+              </span>
+            </div>
+
+            {/* Quick KPI stats strip */}
+            <div className="grid grid-cols-2 gap-2 mt-1.5">
+              <div className="bg-slate-950 border border-slate-800 p-1.5 sm:p-2 rounded-lg flex flex-col items-center justify-center text-center">
+                <span className="text-lg sm:text-xl font-bold text-brand-400 font-mono leading-none">{totalRequiredPallets}</span>
+                <span className="text-[10px] text-slate-400 font-medium uppercase mt-0.5">Required Plts</span>
               </div>
-              <div className="bg-red-950/20 border border-red-900/50 p-3 rounded-lg flex flex-col items-center justify-center text-center">
-                <span className="text-2xl font-bold text-red-500 font-mono">{stats.blocked}</span>
-                <span className="text-[10px] text-red-400 font-medium uppercase mt-0.5">Blocked</span>
+              <div className={`p-1.5 sm:p-2 rounded-lg flex flex-col items-center justify-center text-center border ${
+                shortfallCount > 0 
+                  ? 'bg-amber-950/30 border-amber-800/60' 
+                  : 'bg-emerald-950/30 border-emerald-800/60'
+              }`}>
+                <span className={`text-lg sm:text-xl font-bold font-mono leading-none ${shortfallCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {totalOnHandPallets}
+                </span>
+                <span className={`text-[10px] font-medium uppercase mt-0.5 ${shortfallCount > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
+                  {shortfallCount > 0 ? `${shortfallCount} Deficit` : 'On Hand Plts'}
+                </span>
               </div>
+            </div>
+
+            {/* Sub-label explaining rounding rule */}
+            <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium mt-1.5 px-0.5">
+              <span>Pallets: On Hand vs Req</span>
+              <span className="text-slate-400 font-mono">Demand Ceil ↑</span>
             </div>
           </div>
 
-          <div className="flex-1">
-            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Network Exceptions
-            </h2>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-slate-300 font-medium">Urgent Priorities</span>
-                <span className={`font-bold font-mono text-sm ${stats.urgent > 0 ? 'text-orange-400' : 'text-slate-600'}`}>{stats.urgent}</span>
+          {/* List of products - Auto-switches to 2 columns if > 3 products to ensure all fit without scrolling */}
+          <div className="flex-1 overflow-y-auto pr-0.5 min-h-0">
+            {snapshotLoading ? (
+              <div className="flex flex-col items-center justify-center py-10 text-slate-500 gap-2">
+                <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs">Loading forecast stock...</span>
               </div>
-              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-slate-300 font-medium">Below Retention</span>
-                <span className={`font-bold font-mono text-sm ${stats.belowRetention > 0 ? 'text-amber-400' : 'text-slate-600'}`}>{stats.belowRetention}</span>
+            ) : forecastStockItems.length === 0 ? (
+              <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/80 text-center space-y-1.5 my-auto">
+                <Package className="w-6 h-6 text-slate-600 mx-auto" />
+                <div className="text-xs font-semibold text-slate-300">No Forecast Demand</div>
+                <div className="text-[10px] text-slate-500 leading-tight">
+                  No active forecast demand rows found in snapshot for this site.
+                </div>
               </div>
-              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-slate-300 font-medium">Above Maximum</span>
-                <span className={`font-bold font-mono text-sm ${stats.aboveMax > 0 ? 'text-blue-400' : 'text-slate-600'}`}>{stats.aboveMax}</span>
+            ) : (
+              <div className={`grid gap-2 ${forecastStockItems.length > 3 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+                {forecastStockItems.map(item => {
+                  const percentCovered = item.requiredPallets > 0 
+                    ? Math.min(100, Math.round((item.onHandPallets / item.requiredPallets) * 100))
+                    : 100;
+                  const isMultiCol = forecastStockItems.length > 3;
+
+                  return (
+                    <div 
+                      key={item.productCode}
+                      className={`p-2 sm:p-2.5 rounded-lg border transition-all flex flex-col justify-between ${
+                        item.isShortfall 
+                          ? 'bg-amber-950/20 border-amber-800/60 shadow-sm' 
+                          : 'bg-slate-950 border-slate-800/90'
+                      }`}
+                    >
+                      {/* Top Row: Product Code & Status Badge */}
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <div 
+                          className={`font-mono font-black text-slate-100 tracking-tight leading-none whitespace-nowrap overflow-visible ${
+                            isMultiCol ? 'text-base sm:text-lg' : 'text-lg sm:text-xl'
+                          }`}
+                          title={normalizeProductCode(item.productCode)}
+                        >
+                          {normalizeProductCode(item.productCode)}
+                        </div>
+                        {item.isShortfall ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 border border-amber-500/40 text-amber-300 shrink-0 whitespace-nowrap">
+                            Short ({item.deficitPallets})
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 shrink-0 whitespace-nowrap">
+                            Covered
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Product Description */}
+                      <div className="text-[10px] sm:text-[11px] text-slate-400 font-medium truncate mb-1.5 leading-tight" title={item.productDescription}>
+                        {item.productDescription}
+                      </div>
+
+                      {/* Stock Numbers: On Hand vs Required */}
+                      <div className="flex items-center justify-between text-xs mb-1.5 bg-slate-900/90 px-2 py-1 rounded border border-slate-800/90">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] text-slate-400 font-bold uppercase">OH:</span>
+                          <span className={`font-mono font-black text-sm ${item.isShortfall ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {item.onHandPallets}
+                          </span>
+                          <span className="text-[8px] text-slate-400 font-bold uppercase">PLT</span>
+                        </div>
+
+                        <div className="text-slate-600 font-mono text-xs">/</div>
+
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] text-slate-400 font-bold uppercase">REQ:</span>
+                          <span className="font-mono font-black text-sm text-slate-200">
+                            {item.requiredPallets}
+                          </span>
+                          <span className="text-[8px] text-slate-400 font-bold uppercase">PLT</span>
+                        </div>
+                      </div>
+
+                      {/* Coverage Visual Progress Bar */}
+                      <div className="w-full bg-slate-800/80 rounded-full h-1 overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            item.isShortfall ? 'bg-amber-500' : 'bg-emerald-500'
+                          }`}
+                          style={{ width: `${percentCovered}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-slate-300 font-medium">Promo Affected</span>
-                <span className={`font-bold font-mono text-sm ${stats.promotionAffected > 0 ? 'text-fuchsia-400' : 'text-slate-600'}`}>{stats.promotionAffected}</span>
-              </div>
-              <div className="flex justify-between items-center p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-slate-300 font-medium">Stale Inventory</span>
-                <span className={`font-bold font-mono text-sm ${stats.staleInventory > 0 ? 'text-slate-400' : 'text-slate-600'}`}>{stats.staleInventory}</span>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

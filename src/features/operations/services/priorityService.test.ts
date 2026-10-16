@@ -95,6 +95,30 @@ describe('Operational Priorities Collection Audit Test Suite', () => {
     expect(supabase.from).toHaveBeenCalledWith('priorities');
   });
 
+  it('Allows valid transitions from SCHEDULED to ACKNOWLEDGED and IN_PROGRESS', async () => {
+    mockSelect.mockReturnValueOnce({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'prio_sched', priority_status: 'SCHEDULED', tenant_id: 't1', site_id: 's1' },
+          error: null
+        })
+      })
+    });
+    const ackRes = await updatePriorityStatus('prio_sched', 'ACKNOWLEDGED', 'user_tester');
+    expect(ackRes.success).toBe(true);
+
+    mockSelect.mockReturnValueOnce({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'prio_sched_2', priority_status: 'SCHEDULED', tenant_id: 't1', site_id: 's1' },
+          error: null
+        })
+      })
+    });
+    const progRes = await updatePriorityStatus('prio_sched_2', 'IN_PROGRESS', 'user_tester');
+    expect(progRes.success).toBe(true);
+  });
+
   it('No operationalPriorities references exist in runtime configuration maps', () => {
     const activeCollections = [
       'priorities',

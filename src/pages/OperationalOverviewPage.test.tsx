@@ -116,7 +116,7 @@ describe('OperationalOverviewPage Test Suite', () => {
     expect(screen.getByText('Operational Overview')).toBeInTheDocument();
     expect(screen.getAllByText(/Milton Keynes/i)[0]).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review Recs/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Import SAP Plan/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Import SAP Plan/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Create Priority/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Announcement/i })).toBeInTheDocument();
   });

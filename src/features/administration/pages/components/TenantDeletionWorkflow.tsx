@@ -98,6 +98,7 @@ export const TenantDeletionWorkflow: React.FC<TenantDeletionWorkflowProps> = ({ 
       const collections = [
         'sites', 'users', 'products', 'inventoryBalances',
         'productionPlanEntries', 'productionPlanImports',
+        'snp87Imports', 'snp87PlanningRows',
         'planningRules', 'promotions', 'recommendations',
         'priorities', 'announcements', 'exceptions'
       ];

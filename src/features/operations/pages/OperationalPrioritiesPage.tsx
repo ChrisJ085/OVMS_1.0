@@ -10,7 +10,7 @@ import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
-import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel, formatQuantityInPallets } from '../utils/priorityFormatters';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel, formatQuantityInPallets, extractPrioritySelectionLogic } from '../utils/priorityFormatters';
 import { PriorityConflict } from '../../../types/priority';
 import { PriorityConflictModal } from '../components/PriorityConflictModal';
 import { Product } from '../../../types/product';
@@ -18,6 +18,7 @@ import { subscribeToProducts } from '../../inventory/services/productService';
 import { subscribeToCollection } from '../../../services/dbService';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase } from '../../../utils/caseTransformers';
+import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 const SUMMARY_TILES = [
   { id: 'active', label: 'Active', icon: <Activity className="w-5 h-5 mb-2 text-blue-400"/>, color: 'bg-blue-900/30 text-blue-200 border-blue-800' },
@@ -334,7 +335,7 @@ export const OperationalPrioritiesPage: React.FC = () => {
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3">
-                        <div className="font-medium text-slate-100">{p.productCodeSnapshot}</div>
+                        <div className="font-medium text-slate-100">{normalizeProductCode(p.productCodeSnapshot)}</div>
                         <div className="text-xs text-slate-400">{p.descriptionSnapshot}</div>
                       </td>
                       <td className="px-4 py-3">
@@ -365,7 +366,19 @@ export const OperationalPrioritiesPage: React.FC = () => {
                           } 
                           label={p.priorityStatus.replace(/_/g, ' ')} 
                         />
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1">{levelLabel}</div>
+                        <div className="mt-1">
+                          <span
+                            className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold ${
+                              levelLabel.toUpperCase().includes('URGENT') || levelLabel.toUpperCase().includes('CRITICAL')
+                                ? 'bg-red-950 text-red-300 border border-red-800 font-bold'
+                                : levelLabel.toUpperCase().includes('HIGH')
+                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                : 'text-slate-500'
+                            }`}
+                          >
+                            {levelLabel}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="w-24 bg-slate-800 rounded-full h-2 mb-1">
@@ -488,7 +501,7 @@ export const OperationalPrioritiesPage: React.FC = () => {
 
             <p className="text-sm text-slate-400 mt-3">
               Are you sure you want to {confirmingAction.type === 'complete' ? 'complete' : 'delete'} the priority for product{' '}
-              <strong className="text-slate-200">{confirmingAction.productCode}</strong>? This action cannot be undone.
+              <strong className="text-slate-200">{normalizeProductCode(confirmingAction.productCode)}</strong>? This action cannot be undone.
             </p>
 
             {confirmingAction.type === 'delete' && confirmingAction.isActiveStatus && (

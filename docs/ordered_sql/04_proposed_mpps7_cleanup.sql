@@ -1,0 +1,69 @@
+-- ============================================================================
+-- OVMS Migration: Stage 8 - Proposed MPPS7 Schema Cleanup & Deprecation
+-- ============================================================================
+-- IMPORTANT NOTICE:
+-- DO NOT EXECUTE AUTOMATICALLY.
+-- This script contains PROPOSED cleanup actions for obsolete MPPS7 planning tables.
+-- Per data safety rules, historical production planning tables must NOT be
+-- destroyed without explicit operational review and regulatory audit confirmation.
+--
+-- TARGET ARCHITECTURE:
+-- SAP SNP87
+--     ↓
+-- snp87_imports / snp87_planning_rows
+--     ↓
+-- ProductPlanningContext
+--     ↓
+-- Decision Engine
+--     ↓
+-- Recommendations & Priorities
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 1. AUDIT & IDENTIFICATION OF OBSOLETE MPPS7 RELATIONS
+-- ----------------------------------------------------------------------------
+-- The following tables were previously used by the retired MPPS7 workflow:
+--
+-- Table: public.production_plan_imports
+--   - Role: Stored uploads of MPPS7 Excel workbooks.
+--   - Status: OBSOLETE for active planning. Superseded by public.snp87_imports.
+--   - Data Retention: Retain for historical import audit trail or archive.
+--
+-- Table: public.production_plan_rows
+--   - Role: Stored raw parsed rows with Resource ID and date matrix columns.
+--   - Status: OBSOLETE. Superseded by public.snp87_planning_rows.
+--   - Data Retention: Historical staging data.
+--
+-- Table: public.production_plan_entries
+--   - Role: Stored line-scheduled daily production allocations mapped via Resource ID.
+--   - Status: OBSOLETE for recommendation engine.
+--   - Data Retention: May be referenced by historical line views (read-only).
+--
+-- ----------------------------------------------------------------------------
+-- 2. RECOMMENDED TRANSITIONAL ACTION: DEPRECATION TAGGING
+-- ----------------------------------------------------------------------------
+-- Mark tables as deprecated in the database schema catalog without dropping:
+
+COMMENT ON TABLE public.production_plan_imports IS 'DEPRECATED [Stage 8]: Replaced by public.snp87_imports for SAP SNP87 planning.';
+COMMENT ON TABLE public.production_plan_rows IS 'DEPRECATED [Stage 8]: Replaced by public.snp87_planning_rows for SAP SNP87 planning.';
+COMMENT ON TABLE public.production_plan_entries IS 'DEPRECATED [Stage 8]: Decoupled from recommendation engine; active planning now uses SNP87.';
+
+-- ----------------------------------------------------------------------------
+-- 3. PROPOSED PURGE STATEMENTS (COMMENTED OUT - DO NOT RUN AUTOMATICALLY)
+-- ----------------------------------------------------------------------------
+-- If operational policy approves full decommissioning of historical MPPS7 data,
+-- the following statements can be run manually by a database administrator:
+--
+-- BEGIN;
+--
+-- -- Optional: Archive tables before deletion
+-- -- CREATE TABLE archive.production_plan_imports AS SELECT * FROM public.production_plan_imports;
+-- -- CREATE TABLE archive.production_plan_rows AS SELECT * FROM public.production_plan_rows;
+-- -- CREATE TABLE archive.production_plan_entries AS SELECT * FROM public.production_plan_entries;
+--
+-- -- Drop obsolete tables
+-- -- DROP TABLE IF EXISTS public.production_plan_rows CASCADE;
+-- -- DROP TABLE IF EXISTS public.production_plan_entries CASCADE;
+-- -- DROP TABLE IF EXISTS public.production_plan_imports CASCADE;
+--
+-- COMMIT;

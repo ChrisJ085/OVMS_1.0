@@ -4,7 +4,7 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { DataTable } from '../../../components/ui/DataTable';
 import { useSiteContext } from '../../../contexts/SiteContext';
-import { FileText, ChevronRight, X, Clock, CheckCircle2, AlertTriangle, Layers, Activity } from 'lucide-react';
+import { FileText, ChevronRight, X, Clock, CheckCircle2, AlertTriangle, Layers, Activity, ChevronDown, ChevronUp, FileSpreadsheet, Package, ShieldCheck } from 'lucide-react';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase } from '../../../utils/caseTransformers';
 
@@ -15,6 +15,7 @@ export const AuditLogPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<AuditEvent | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [expandedSnapshotIdx, setExpandedSnapshotIdx] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -215,34 +216,127 @@ export const AuditLogPage: React.FC = () => {
                             </td>
                           </tr>
                         ) : (
-                          filteredSnapshots.map((snap, idx) => (
-                            <tr key={idx} className="hover:bg-slate-800/40">
-                              <td className="px-4 py-3 font-medium text-white">
-                                <div>{snap.productCode}</div>
-                                <div className="text-slate-400 text-[11px] truncate max-w-xs">{snap.productDescription}</div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 rounded font-semibold border border-indigo-500/20">
-                                  {snap.action}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 font-semibold text-white">
-                                {snap.requestedQuantity} <span className="text-slate-400 font-normal">{snap.quantityUnit}</span>
-                              </td>
-                              <td className="px-4 py-3 text-slate-300">
-                                {snap.destinationName || snap.destinationCode || 'N/A'}
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className="px-2 py-0.5 bg-slate-800 text-slate-200 rounded border border-slate-700">
-                                  {snap.priorityLevel}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-slate-300 space-y-1">
-                                <div className="font-medium">{snap.instruction}</div>
-                                {snap.reason && <div className="text-slate-400 text-[11px]">{snap.reason}</div>}
-                              </td>
-                            </tr>
-                          ))
+                          filteredSnapshots.map((snap, idx) => {
+                            const isExpanded = expandedSnapshotIdx === idx;
+                            return (
+                              <React.Fragment key={idx}>
+                                <tr 
+                                  onClick={() => setExpandedSnapshotIdx(isExpanded ? null : idx)}
+                                  className="hover:bg-slate-800/40 cursor-pointer transition-colors"
+                                >
+                                  <td className="px-4 py-3 font-medium text-white">
+                                    <div className="flex items-center gap-1.5">
+                                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-indigo-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                                      <div>{snap.productCode}</div>
+                                    </div>
+                                    <div className="text-slate-400 text-[11px] truncate max-w-xs ml-5">{snap.productDescription}</div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 rounded font-semibold border border-indigo-500/20">
+                                      {snap.action}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 font-semibold text-white">
+                                    {snap.requestedQuantity} <span className="text-slate-400 font-normal">{snap.quantityUnit}</span>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-300">
+                                    {snap.destinationName || snap.destinationCode || 'N/A'}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="px-2 py-0.5 bg-slate-800 text-slate-200 rounded border border-slate-700">
+                                      {snap.priorityLevel}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-300 space-y-1">
+                                    <div className="font-medium">{snap.instruction}</div>
+                                    {snap.reason && <div className="text-slate-400 text-[11px]">{snap.reason}</div>}
+                                  </td>
+                                </tr>
+                                {isExpanded && (
+                                  <tr className="bg-slate-950/60 border-t border-b border-indigo-500/20">
+                                    <td colSpan={6} className="p-4 space-y-3">
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                        {/* 1. Inventory Seen */}
+                                        <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg space-y-1">
+                                          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                            <Package className="w-3.5 h-3.5 text-blue-400" /> Inventory Seen
+                                          </div>
+                                          <div className="text-lg font-bold text-white font-mono">
+                                            {snap.inventorySnapshot?.totalCases ?? snap.decisionContext?.inventoryTotal ?? 0} cs
+                                          </div>
+                                          <div className="text-[11px] text-slate-500">
+                                            {snap.inventorySnapshot?.updatedAt ? `Updated ${new Date(snap.inventorySnapshot.updatedAt).toLocaleTimeString()}` : 'Snapshot at run time'}
+                                          </div>
+                                        </div>
+
+                                        {/* 2. SNP87 Forecast */}
+                                        <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg space-y-1">
+                                          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                            <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-400" /> SNP87 Forecast
+                                          </div>
+                                          <div className="text-sm font-semibold text-slate-200">
+                                            Today: <span className="font-mono text-white">{snap.snp87SourceSnapshot?.forecastCasesToday ?? 0}</span> cs
+                                          </div>
+                                          <div className="text-sm font-semibold text-slate-200">
+                                            7 Days: <span className="font-mono text-white">{snap.snp87SourceSnapshot?.forecastCasesNext7Days ?? snap.decisionContext?.snp87ForecastCases7Days ?? 0}</span> cs
+                                          </div>
+                                        </div>
+
+                                        {/* 3. SNP87 Confirmed Supply */}
+                                        <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg space-y-1">
+                                          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                            <Activity className="w-3.5 h-3.5 text-emerald-400" /> Confirmed Production
+                                          </div>
+                                          <div className="text-sm font-semibold text-slate-200">
+                                            Today: <span className="font-mono text-white">{snap.snp87SourceSnapshot?.confirmedProductionCasesToday ?? 0}</span> cs
+                                          </div>
+                                          <div className="text-sm font-semibold text-slate-200">
+                                            7 Days: <span className="font-mono text-white">{snap.snp87SourceSnapshot?.confirmedProductionCasesNext7Days ?? snap.decisionContext?.snp87ConfirmedProductionCases7Days ?? 0}</span> cs
+                                          </div>
+                                        </div>
+
+                                        {/* 4. Northfleet STO Protected */}
+                                        <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg space-y-1">
+                                          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" /> Northfleet Protected
+                                          </div>
+                                          <div className="text-lg font-bold text-amber-400 font-mono">
+                                            {snap.northfleetProtectionSnapshot?.outstandingCases ?? snap.decisionContext?.outstandingStoCases ?? 0} cs
+                                          </div>
+                                          <div className="text-[11px] text-slate-500">
+                                            {snap.northfleetProtectionSnapshot?.requirementCount ? `${snap.northfleetProtectionSnapshot.requirementCount} active STOs` : 'Protected requirement'}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Source & Configuration Footprint */}
+                                      <div className="bg-slate-900/60 border border-slate-800/80 p-3 rounded-lg flex flex-wrap items-center justify-between text-xs gap-3">
+                                        <div className="space-y-0.5">
+                                          <span className="text-slate-400 font-medium">SNP87 Source: </span>
+                                          <span className="text-slate-200 font-semibold">{snap.snp87SourceSnapshot?.sourceReportName || 'SNP87 Report'}</span>
+                                          <span className="text-slate-500 ml-1.5">({snap.snp87SourceSnapshot?.sourceImportId ? `Import ID: ${snap.snp87SourceSnapshot.sourceImportId}` : 'Snapshot ID'})</span>
+                                          <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                            (snap.snp87SourceSnapshot?.dataFreshnessStatus || snap.decisionContext?.snp87Freshness) === 'FRESH'
+                                              ? 'bg-emerald-500/20 text-emerald-400'
+                                              : (snap.snp87SourceSnapshot?.dataFreshnessStatus || snap.decisionContext?.snp87Freshness) === 'STALE'
+                                              ? 'bg-amber-500/20 text-amber-400'
+                                              : 'bg-red-500/20 text-red-400'
+                                          }`}>
+                                            {snap.snp87SourceSnapshot?.dataFreshnessStatus || snap.decisionContext?.snp87Freshness || 'FRESH'}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-4 text-slate-400 font-mono text-[11px]">
+                                          <div>Preferred Dest: <span className="text-slate-200">{snap.configurationSnapshot?.preferredDestinationName || snap.destinationName || 'None'}</span></div>
+                                          <div>Generation: <span className="text-indigo-300">{snap.generationId || selectedAudit.generationId || 'N/A'}</span></div>
+                                          <div>Fingerprint: <span className="text-slate-300">{snap.fingerprint || snap.sourceFingerprint || 'N/A'}</span></div>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>

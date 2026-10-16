@@ -24,6 +24,8 @@ export interface Priority extends BaseDocument {
   priorityLevelLabel?: string;
   supportingReasons: string[];
   planningContextSnapshot: any | null;
+  selectionLogicSummary?: string | null;
+  sizingRationaleBreakdown?: any | null;
   startAt: Timestamp;
   expireAt: Timestamp | null;
   untilSwitchedOff?: boolean;
@@ -80,6 +82,7 @@ export interface DisplayPriority {
   expireAt?: Timestamp | null;
   untilSwitchedOff?: boolean;
   modifiedDate?: Timestamp;
+  selectionLogicSummary?: string | null;
 }
 
 export type ConflictResolutionChoice = 'REPLACE_MANUAL_WITH_SYSTEM' | 'KEEP_MANUAL_IGNORE_SYSTEM';

@@ -4,7 +4,7 @@ import { Recommendation } from '../../../types/recommendation';
 import { Priority } from '../../../types/priority';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
-import { ArrowLeft, AlertTriangle, Infinity } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Infinity, Info } from 'lucide-react';
 import { createPriority, updatePriority, checkDuplicatePriority } from '../services/priorityService';
 import { getProduct } from '../../inventory/services/productService';
 import { useAuth } from '../../auth/context/AuthContext';
@@ -12,8 +12,10 @@ import { useSiteContext } from '../../../contexts/SiteContext';
 import { collections } from '../../configuration/services/configurationService';
 import { ProductLookup } from '../../inventory/components/ProductLookup';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
-import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
+import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel, extractPrioritySelectionLogic, formatQuantityInPallets } from '../utils/priorityFormatters';
+import { Product } from '../../../types/product';
 import { getDocument, subscribeToCollection, where } from '../../../services/dbService';
+import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 export const CreatePriorityPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -49,6 +51,16 @@ export const CreatePriorityPage: React.FC = () => {
   
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const [duplicateOverrideReason, setDuplicateOverrideReason] = useState('');
+  const [existingPriority, setExistingPriority] = useState<Priority | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  useEffect(() => {
+    if (!productId) {
+      setSelectedProduct(null);
+      return;
+    }
+    getProduct(productId).then(setSelectedProduct).catch(() => setSelectedProduct(null));
+  }, [productId]);
 
   // Dynamic config collections loaded from database
   const [destinations, setDestinations] = useState<Destination[]>([]);
@@ -64,6 +76,7 @@ export const CreatePriorityPage: React.FC = () => {
       try {
         const p = await getDocument<Priority>('priorities', editPriorityId);
         if (p) {
+          setExistingPriority(p);
           setProductId(p.productId || '');
           setActionTypeId(p.actionTypeId || 'RELEASE_TO_DESPATCH');
           setRequestedQuantity(p.requestedQuantity ?? '');
@@ -235,12 +248,12 @@ export const CreatePriorityPage: React.FC = () => {
       let descriptionSnapshot = 'UNKNOWN';
       
       if (recommendation) {
-        productCodeSnapshot = recommendation.productCodeSnapshot;
+        productCodeSnapshot = normalizeProductCode(recommendation.productCodeSnapshot);
         descriptionSnapshot = recommendation.descriptionSnapshot;
       } else {
         const prod = await getProduct(productId);
         if (prod) {
-          productCodeSnapshot = prod.productCode;
+          productCodeSnapshot = normalizeProductCode(prod.productCode);
           descriptionSnapshot = prod.description;
         }
       }
@@ -360,6 +373,75 @@ export const CreatePriorityPage: React.FC = () => {
         description={isEditMode ? "Update operational priority parameters and instructions." : "Convert approved decisions into clear warehouse instructions."}
       />
 
+      {/* System Selection Logic & Sizing Breakdown for existing or recommendation-driven priorities */}
+      {(existingPriority || recommendation) && (() => {
+        const logicInput: Partial<Priority> = existingPriority || {
+          productId: recommendation?.productId,
+          productCodeSnapshot: recommendation?.productCodeSnapshot,
+          descriptionSnapshot: recommendation?.descriptionSnapshot,
+          actionTypeId: recommendation?.decisionOutput.recommendedActionTypeId,
+          requestedQuantity: recommendation?.plannerDecision?.quantity ?? recommendation?.decisionOutput.recommendedQuantity,
+          destinationId: recommendation?.plannerDecision?.destinationId ?? recommendation?.decisionOutput.recommendedDestinationId,
+          selectionLogicSummary: recommendation?.decisionOutput.explanationLines?.[0],
+          supportingReasons: recommendation?.decisionOutput.explanationLines || [],
+          planningContextSnapshot: recommendation?.sourceSnapshot
+        };
+        const explanation = extractPrioritySelectionLogic(logicInput, selectedProduct, destinations, actionTypes);
+
+        return (
+          <div className="mb-6">
+            <SectionCard title="System Selection Logic & Sizing Breakdown">
+              <div className="space-y-4 text-xs">
+                <div className="p-3 bg-slate-900/90 border border-slate-700/80 rounded-lg flex items-start gap-3">
+                  <div className="p-2 bg-purple-500/20 text-purple-300 rounded-lg shrink-0 mt-0.5">
+                    <Info className="w-4 h-4" />
+                  </div>
+                  <div className="space-y-1">
+                    <h5 className="font-semibold text-slate-100 text-sm">Why this product and quantity were selected:</h5>
+                    <p className="text-slate-300 leading-relaxed">{explanation.summaryBlurb}</p>
+                    <p className="text-brand-300 font-medium pt-1">Action Rationale: {explanation.actionReason}</p>
+                    <p className="text-amber-300 font-medium">Quantity Rationale: {explanation.quantityReason}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px]">Calculation Formula</span>
+                    <span className="font-mono text-slate-200 font-semibold">{explanation.calculationFormula}</span>
+                  </div>
+                  <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px]">Stock on Hand (QOH)</span>
+                    <span className="font-mono text-emerald-400 font-semibold">
+                      {explanation.breakdown.qohCases ? `${explanation.breakdown.qohCases.toLocaleString()} cases` : 'N/A'}
+                    </span>
+                    {explanation.breakdown.qohPallets && (
+                      <span className="text-slate-400 text-[10px] ml-1">({explanation.breakdown.qohPallets} plts)</span>
+                    )}
+                  </div>
+                  <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px]">Protected Stock (DDXM/Min)</span>
+                    <span className="font-mono text-amber-400 font-semibold">
+                      {explanation.breakdown.totalProtectedCases ? `${explanation.breakdown.totalProtectedCases.toLocaleString()} cases` : '0 cases'}
+                    </span>
+                  </div>
+                </div>
+
+                {explanation.structuredLines.length > 0 && (
+                  <div className="p-3 bg-slate-900/40 border border-slate-800/80 rounded-lg space-y-1">
+                    <span className="text-slate-400 font-semibold block text-[11px] uppercase tracking-wider">Supporting Rules & Context</span>
+                    <ul className="list-disc list-inside text-slate-300 space-y-0.5">
+                      {explanation.structuredLines.slice(0, 5).map((line, idx) => (
+                        <li key={idx} className="text-slate-300">{line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          </div>
+        );
+      })()}
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <SectionCard title="Priority Details">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -373,7 +455,7 @@ export const CreatePriorityPage: React.FC = () => {
                       type="text"
                       required
                       disabled
-                      value={recommendation.productCodeSnapshot}
+                      value={normalizeProductCode(recommendation.productCodeSnapshot)}
                       className="w-full bg-slate-900 border-slate-700 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 sm:text-sm text-slate-200 disabled:opacity-50"
                     />
                     <p className="text-xs text-slate-500 mt-1">{recommendation.descriptionSnapshot}</p>

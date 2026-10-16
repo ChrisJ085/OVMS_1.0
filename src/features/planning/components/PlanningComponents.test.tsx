@@ -2,7 +2,6 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MissingProductResolution } from './MissingProductResolution';
-import { ImportDiagnosticsPanel } from './ImportDiagnosticsPanel';
 
 describe('Planning Components Test Suite', () => {
   it('renders MissingProductResolution correctly with product details and affected rows', () => {

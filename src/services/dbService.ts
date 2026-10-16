@@ -4,6 +4,14 @@ import { BaseDocument } from '../types/common';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const TEXT_ID_TABLES = new Set([
+  'decision_configurations',
+  'recommendation_runs',
+  'display_priorities',
+  'site_onboarding',
+  'announcements'
+]);
+
 export const isValidUuid = (val: any): boolean => {
   return typeof val === 'string' && UUID_REGEX.test(val.trim());
 };
@@ -32,23 +40,47 @@ export interface QueryFilter {
   value: any;
 }
 
+export const getFallbackTableName = (tableName: string): string | null => {
+  if (tableName === 'snp87_planning_imports') return 'snp87_imports';
+  if (tableName === 'snp87_imports') return 'snp87_planning_imports';
+  if (tableName === 'snp87_planning_rows') return 'snp87_rows';
+  if (tableName === 'snp87_rows') return 'snp87_planning_rows';
+  return null;
+};
+
 export const getDocument = async <T = any>(collectionName: string, id: string): Promise<T | null> => {
   if (!id || id === 'GLOBAL' || id.includes('GLOBAL')) {
     return null;
   }
 
-  const tableName = getTableName(collectionName);
+  let tableName = getTableName(collectionName);
 
   // Handle composite IDs like `${tenantId}_${siteId}`
   if (id.includes('_')) {
     const parts = id.split('_');
     if (parts.length === 2 && isValidUuid(parts[0]) && isValidUuid(parts[1])) {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from(tableName)
         .select('*')
         .eq('tenant_id', parts[0])
         .eq('site_id', parts[1])
         .maybeSingle();
+
+      if (error && (error as any).code === 'PGRST205') {
+        const fallback = getFallbackTableName(tableName);
+        if (fallback) {
+          const fallbackRes = await supabase
+            .from(fallback)
+            .select('*')
+            .eq('tenant_id', parts[0])
+            .eq('site_id', parts[1])
+            .maybeSingle();
+          if (!fallbackRes.error) {
+            data = fallbackRes.data;
+            error = null;
+          }
+        }
+      }
 
       if (error) {
         console.warn(`[Supabase getDocument] Error fetching composite ${tableName}/${id}:`, error);
@@ -63,11 +95,26 @@ export const getDocument = async <T = any>(collectionName: string, id: string): 
     return null;
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from(tableName)
     .select('*')
     .eq('id', id)
     .maybeSingle();
+
+  if (error && (error as any).code === 'PGRST205') {
+    const fallback = getFallbackTableName(tableName);
+    if (fallback) {
+      const fallbackRes = await supabase
+        .from(fallback)
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (!fallbackRes.error) {
+        data = fallbackRes.data;
+        error = null;
+      }
+    }
+  }
 
   if (error) {
     console.error(`[Supabase getDocument] Error fetching ${tableName}/${id}:`, error);
@@ -88,14 +135,17 @@ export const getDocuments = async <T = any>(
   for (const f of filters) {
     const snakeField = f.field.replace(/([A-Z])/g, '_$1').toLowerCase();
     if (f.op === '==' || f.op === undefined) {
-      if (f.value === 'GLOBAL' || (isUuidField(snakeField) && !isValidUuid(f.value))) {
+      if (f.value === 'GLOBAL') {
+        return [];
+      }
+      if ((snakeField === 'tenant_id' || snakeField === 'site_id') && !isValidUuid(f.value)) {
         return [];
       }
     } else if (f.op === 'in') {
       if (!Array.isArray(f.value) || f.value.length === 0) {
         return [];
       }
-      if (isUuidField(snakeField)) {
+      if (snakeField === 'tenant_id' || snakeField === 'site_id') {
         const validValues = f.value.filter(v => v !== 'GLOBAL' && isValidUuid(v));
         if (validValues.length === 0) {
           return [];
@@ -104,46 +154,59 @@ export const getDocuments = async <T = any>(
     }
   }
 
-  let dbQuery = supabase.from(tableName).select('*');
-
-  for (const f of filters) {
-    const snakeField = f.field.replace(/([A-Z])/g, '_$1').toLowerCase();
-    switch (f.op) {
-      case '==':
-        dbQuery = dbQuery.eq(snakeField, f.value);
-        break;
-      case '!=':
-        dbQuery = dbQuery.neq(snakeField, f.value);
-        break;
-      case '>':
-        dbQuery = dbQuery.gt(snakeField, f.value);
-        break;
-      case '>=':
-        dbQuery = dbQuery.gte(snakeField, f.value);
-        break;
-      case '<':
-        dbQuery = dbQuery.lt(snakeField, f.value);
-        break;
-      case '<=':
-        dbQuery = dbQuery.lte(snakeField, f.value);
-        break;
-      case 'in': {
-        let values = Array.isArray(f.value) ? f.value : [f.value];
-        if (isUuidField(snakeField)) {
-          values = values.filter(v => v !== 'GLOBAL' && isValidUuid(v));
+  const buildQuery = (targetTable: string) => {
+    let query = supabase.from(targetTable).select('*');
+    for (const f of filters) {
+      const snakeField = f.field.replace(/([A-Z])/g, '_$1').toLowerCase();
+      switch (f.op) {
+        case '==':
+          query = query.eq(snakeField, f.value);
+          break;
+        case '!=':
+          query = query.neq(snakeField, f.value);
+          break;
+        case '>':
+          query = query.gt(snakeField, f.value);
+          break;
+        case '>=':
+          query = query.gte(snakeField, f.value);
+          break;
+        case '<':
+          query = query.lt(snakeField, f.value);
+          break;
+        case '<=':
+          query = query.lte(snakeField, f.value);
+          break;
+        case 'in': {
+          let values = Array.isArray(f.value) ? f.value : [f.value];
+          if (isUuidField(snakeField)) {
+            values = values.filter(v => v !== 'GLOBAL' && isValidUuid(v));
+          }
+          query = query.in(snakeField, values);
+          break;
         }
-        dbQuery = dbQuery.in(snakeField, values);
-        break;
+        case 'array-contains':
+          query = query.contains(snakeField, [f.value]);
+          break;
+        default:
+          query = query.eq(snakeField, f.value);
       }
-      case 'array-contains':
-        dbQuery = dbQuery.contains(snakeField, [f.value]);
-        break;
-      default:
-        dbQuery = dbQuery.eq(snakeField, f.value);
+    }
+    return query;
+  };
+
+  let { data, error } = await buildQuery(tableName);
+
+  if (error && (error as any).code === 'PGRST205') {
+    const fallback = getFallbackTableName(tableName);
+    if (fallback) {
+      const fallbackRes = await buildQuery(fallback);
+      if (!fallbackRes.error) {
+        data = fallbackRes.data;
+        error = null;
+      }
     }
   }
-
-  const { data, error } = await dbQuery;
 
   if (error) {
     console.error(`[Supabase getDocuments] Error querying ${tableName}:`, error);
@@ -191,7 +254,7 @@ function enrichWithActiveSite(data: Record<string, any>, tableName?: string): Re
   return result;
 }
 
-function sanitizeUuidFields(data: Record<string, any>): Record<string, any> {
+function sanitizeUuidFields(data: Record<string, any>, tableName?: string): Record<string, any> {
   const result = { ...data };
   const nonUuidFields = [
     'unit_of_measure_id',
@@ -202,7 +265,25 @@ function sanitizeUuidFields(data: Record<string, any>): Record<string, any> {
   ];
   for (const key of Object.keys(result)) {
     const val = result[key];
-    const isIdField = (key.endsWith('_id') || key === 'id') && key !== 'tenant_id' && key !== 'site_id';
+    if (key === 'id') {
+      if (!val || !isValidUuid(val)) {
+        if (tableName && TEXT_ID_TABLES.has(tableName) && typeof val === 'string' && val.trim() !== '') {
+          result[key] = val.trim();
+        } else if (!tableName || !TEXT_ID_TABLES.has(tableName)) {
+          try {
+            result[key] = crypto.randomUUID();
+          } catch {
+            delete result[key];
+          }
+        } else {
+          // Never set primary key id to null! That violates NOT NULL constraints on PostgreSQL UUID columns.
+          delete result[key];
+        }
+      }
+      continue;
+    }
+
+    const isIdField = (key.endsWith('_id') || key.endsWith('id')) && key !== 'tenant_id' && key !== 'site_id';
     if (isIdField) {
       if (val === '' || val === undefined) {
         result[key] = null;
@@ -253,17 +334,43 @@ export const createDocument = async <T extends BaseDocument>(
     delete (rawSnake as any).siteId;
   }
 
-  const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+  const snakeData = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>), tableName);
   if (isSiteOrTenant) {
     delete snakeData.site_id;
     delete snakeData.siteId;
   }
+  if (!snakeData.id || (!isValidUuid(snakeData.id) && !TEXT_ID_TABLES.has(tableName))) {
+    if (!TEXT_ID_TABLES.has(tableName)) {
+      try {
+        snakeData.id = crypto.randomUUID();
+      } catch {
+        delete snakeData.id;
+      }
+    } else {
+      delete snakeData.id;
+    }
+  }
 
-  const { data: inserted, error } = await supabase
+  let { data: inserted, error } = await supabase
     .from(tableName)
     .insert(snakeData)
     .select('id')
     .single();
+
+  if (error && (error as any).code === 'PGRST205') {
+    const fallback = getFallbackTableName(tableName);
+    if (fallback) {
+      const fallbackRes = await supabase
+        .from(fallback)
+        .insert(snakeData)
+        .select('id')
+        .single();
+      if (!fallbackRes.error) {
+        inserted = fallbackRes.data;
+        error = null;
+      }
+    }
+  }
 
   if (error) {
     console.error(`[Supabase createDocument] Error creating ${tableName}:`, error);
@@ -302,10 +409,21 @@ export const createDocuments = async <T extends BaseDocument>(
       delete (rawSnake as any).site_id;
       delete (rawSnake as any).siteId;
     }
-    const normalized = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>));
+    const normalized = sanitizeUuidFields(normalizeTablePayload(tableName, rawSnake as Record<string, any>), tableName);
     if (isSiteOrTenant) {
       delete normalized.site_id;
       delete normalized.siteId;
+    }
+    if (!normalized.id || (!isValidUuid(normalized.id) && !TEXT_ID_TABLES.has(tableName))) {
+      if (!TEXT_ID_TABLES.has(tableName)) {
+        try {
+          normalized.id = crypto.randomUUID();
+        } catch {
+          delete normalized.id;
+        }
+      } else {
+        delete normalized.id;
+      }
     }
     return normalized;
   });
@@ -314,10 +432,24 @@ export const createDocuments = async <T extends BaseDocument>(
   const CHUNK_SIZE = 100;
   for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
     const chunk = payloads.slice(i, i + CHUNK_SIZE);
-    const { data: inserted, error } = await supabase
+    let { data: inserted, error } = await supabase
       .from(tableName)
       .insert(chunk)
       .select('id');
+
+    if (error && (error as any).code === 'PGRST205') {
+      const fallback = getFallbackTableName(tableName);
+      if (fallback) {
+        const fallbackRes = await supabase
+          .from(fallback)
+          .insert(chunk)
+          .select('id');
+        if (!fallbackRes.error) {
+          inserted = fallbackRes.data;
+          error = null;
+        }
+      }
+    }
 
     if (error) {
       console.error(`[Supabase createDocuments] Error creating documents in ${tableName}:`, error);
@@ -394,6 +526,23 @@ export const setDocument = async (
     error = res.error;
   }
 
+  if (error && (error as any).code === 'PGRST205') {
+    const fallback = getFallbackTableName(tableName);
+    if (fallback) {
+      if (!isValidUuid(id) && TENANT_SITE_UNIQUE_TABLES.has(fallback) && snakeData.tenant_id && snakeData.site_id) {
+        const res = await supabase
+          .from(fallback)
+          .upsert(snakeData, { onConflict: 'tenant_id,site_id' });
+        error = res.error;
+      } else {
+        const res = await supabase
+          .from(fallback)
+          .upsert(snakeData);
+        error = res.error;
+      }
+    }
+  }
+
   if (error) {
     console.error(`[Supabase setDocument] Error upserting ${tableName}/${id}:`, error);
     throw new Error(`Failed to set document ${id} in ${tableName}: ${error.message}`);
@@ -439,11 +588,23 @@ export const updateDocument = async (
   if (id.includes('_')) {
     const parts = id.split('_');
     if (parts.length === 2 && isValidUuid(parts[0]) && isValidUuid(parts[1])) {
-      const { error } = await supabase
+      let { error } = await supabase
         .from(tableName)
         .update(snakeData)
         .eq('tenant_id', parts[0])
         .eq('site_id', parts[1]);
+
+      if (error && (error as any).code === 'PGRST205') {
+        const fallback = getFallbackTableName(tableName);
+        if (fallback) {
+          const res = await supabase
+            .from(fallback)
+            .update(snakeData)
+            .eq('tenant_id', parts[0])
+            .eq('site_id', parts[1]);
+          error = res.error;
+        }
+      }
 
       if (error) {
         console.error(`[Supabase updateDocument] Error updating composite ${tableName}/${id}:`, error);
@@ -458,10 +619,21 @@ export const updateDocument = async (
     return;
   }
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from(tableName)
     .update(snakeData)
     .eq('id', id);
+
+  if (error && (error as any).code === 'PGRST205') {
+    const fallback = getFallbackTableName(tableName);
+    if (fallback) {
+      const res = await supabase
+        .from(fallback)
+        .update(snakeData)
+        .eq('id', id);
+      error = res.error;
+    }
+  }
 
   if (error) {
     console.error(`[Supabase updateDocument] Error updating ${tableName}/${id}:`, error);
@@ -480,11 +652,23 @@ export const deleteDocument = async (
   if (id.includes('_')) {
     const parts = id.split('_');
     if (parts.length === 2 && isValidUuid(parts[0]) && isValidUuid(parts[1])) {
-      const { error } = await supabase
+      let { error } = await supabase
         .from(tableName)
         .delete()
         .eq('tenant_id', parts[0])
         .eq('site_id', parts[1]);
+
+      if (error && (error as any).code === 'PGRST205') {
+        const fallback = getFallbackTableName(tableName);
+        if (fallback) {
+          const res = await supabase
+            .from(fallback)
+            .delete()
+            .eq('tenant_id', parts[0])
+            .eq('site_id', parts[1]);
+          error = res.error;
+        }
+      }
 
       if (error) {
         console.error(`[Supabase deleteDocument] Error deleting composite ${tableName}/${id}:`, error);
@@ -499,10 +683,21 @@ export const deleteDocument = async (
     return;
   }
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from(tableName)
     .delete()
     .eq('id', id);
+
+  if (error && (error as any).code === 'PGRST205') {
+    const fallback = getFallbackTableName(tableName);
+    if (fallback) {
+      const res = await supabase
+        .from(fallback)
+        .delete()
+        .eq('id', id);
+      error = res.error;
+    }
+  }
 
   if (error) {
     console.error(`[Supabase deleteDocument] Error deleting ${tableName}/${id}:`, error);
@@ -566,8 +761,8 @@ export const subscribeToDocument = <T = any>(
     );
 
   channel.subscribe((status) => {
-    if (status === 'CHANNEL_ERROR' && onError) {
-      onError(new Error(`Realtime channel error for ${tableName}/${id}`));
+    if (status === 'CHANNEL_ERROR') {
+      console.info(`[Supabase Realtime] Channel info for ${tableName}/${id}: Realtime not enabled or disconnected.`);
     }
   });
 
@@ -652,8 +847,8 @@ export const subscribeToCollection = <T = any>(
     );
 
   channel.subscribe((status) => {
-    if (status === 'CHANNEL_ERROR' && onError) {
-      onError(new Error(`Realtime channel error for table ${tableName}`));
+    if (status === 'CHANNEL_ERROR') {
+      console.info(`[Supabase Realtime] Channel info for table ${tableName}: Realtime not enabled or disconnected.`);
     }
   });
 

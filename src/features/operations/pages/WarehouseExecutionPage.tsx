@@ -14,6 +14,7 @@ import { hasPermission } from '../../../config/rolePermissions';
 import { subscribeToCollection } from '../../../services/dbService';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase } from '../../../utils/caseTransformers';
+import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 const DEV_OPERATOR_KEY = 'ovms_dev_operator_name';
 
@@ -268,7 +269,7 @@ export const WarehouseExecutionPage: React.FC = () => {
               <div key={p.id} className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden flex flex-col shadow-sm">
                 <div className="p-4 border-b border-slate-700/50 flex justify-between items-start">
                   <div>
-                    <div className="text-sm font-bold text-slate-100 font-mono mb-1">{p.productCodeSnapshot}</div>
+                    <div className="text-sm font-bold text-slate-100 font-mono mb-1">{normalizeProductCode(p.productCodeSnapshot)}</div>
                     <div className="text-xs text-slate-400 line-clamp-1">{p.descriptionSnapshot}</div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -397,7 +398,7 @@ export const WarehouseExecutionPage: React.FC = () => {
             
             <form onSubmit={submitAction} className="p-6 space-y-4">
               <div className="bg-slate-800/50 p-3 rounded border border-slate-700/50">
-                <div className="text-xs text-slate-400">{selectedPriority.productCodeSnapshot}</div>
+                <div className="text-xs text-slate-400">{normalizeProductCode(selectedPriority.productCodeSnapshot)}</div>
                 <div className="font-medium text-slate-200">{getActionTypeLabel(selectedPriority.actionTypeId, actionTypes, selectedPriority.actionTypeLabel)}</div>
                 <div className="text-xs text-slate-500 mt-1">Requested: {selectedPriority.requestedQuantity || 'N/A'}</div>
               </div>

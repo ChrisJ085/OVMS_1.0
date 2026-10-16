@@ -61,6 +61,7 @@ export interface ProductProductionContext {
   nextProductionEvent?: ProductionEvent | null;
   nextProductionStart?: Date | null;
   hoursUntilNextProduction?: number | null;
+  planningContext?: any;
 }
 
 export type ProductionPlanImportStatus = 
@@ -72,6 +73,9 @@ export type ProductionPlanImportStatus =
   | 'FAILED'
   | 'SUPERSEDED';
 
+/**
+ * @deprecated [Stage 8]: Obsolete MPPS7 import types. Retained for historical schema compatibility.
+ */
 export type DuplicateCheckStatus = 'PASSED' | 'DUPLICATE_FOUND' | 'CHECK_FAILED';
 
 export type PlanComparisonStatus =
@@ -81,74 +85,9 @@ export type PlanComparisonStatus =
   | 'REPLACES_SAME_PERIOD'
   | 'NEWER_NON_OVERLAPPING';
 
-export interface ImportReconciliationSummary {
-  totalSourceCases: number;
-  totalParsedCases: number;
-  totalDifference: number;
-  totalExcludedRows: number;
-  totalErrorRows: number;
-  hasMaterialMismatch: boolean;
-  byLine: Record<string, { sourceCases: number; parsedCases: number; diff: number }>;
-  byProduct: Record<string, { sourceCases: number; parsedCases: number; diff: number }>;
-  byDate: Record<string, { parsedCases: number }>;
-}
-
-export interface ImportDiagnostics {
-  yearResolution: {
-    resolvedYear: number;
-    method: 'EXPLICIT_HEADER_DATE' | 'METADATA_OR_TITLE' | 'FILE_OR_CURRENT_DATE' | 'USER_CONFIRMED';
-    plannerConfirmationRequired: boolean;
-    isConfirmed: boolean;
-    hasYearRollover: boolean;
-    rolloverDatesCount: number;
-  };
-  dateSequence: {
-    startDate: string;
-    endDate: string;
-    totalDateColumns: number;
-    isValidSequence: boolean;
-    issues: string[];
-  };
-  worksheetSelection: {
-    selectedSheetName: string;
-    headerRowIndex: number;
-    inspectedSheetsCount: number;
-    allDetectedSheets: string[];
-  };
-  duplicateVerification: {
-    status: DuplicateCheckStatus;
-    message: string;
-    duplicateImportId?: string;
-  };
-  activePlanComparison: {
-    status: PlanComparisonStatus;
-    message: string;
-    activePlanPeriodStart?: string;
-    activePlanPeriodEnd?: string;
-  };
-  unitValidation: {
-    supportedUnits: string[];
-    unsupportedUnitsFound: string[];
-    hasUnsupportedUnits: boolean;
-  };
-  reconciliation: {
-    status: 'MATCH' | 'MISMATCH' | 'MISSING';
-    sourceTotalCases: number;
-    parsedTotalCases: number;
-    difference: number;
-  };
-  productMapping: {
-    totalSkus: number;
-    recognizedSkus: number;
-    missingSkus: string[];
-  };
-  lineMapping: {
-    totalLines: number;
-    recognizedLines: number;
-    missingLines: string[];
-  };
-}
-
+/**
+ * @deprecated [Stage 8]: Historical MPPS7 workbook import document. Superseded by Snp87PlanningImport.
+ */
 export interface ProductionPlanImport {
   id: string;
   tenantId: string;
@@ -180,6 +119,9 @@ export interface ProductionPlanImport {
 
 export type ProductionPlanRowStatus = 'VALID' | 'WARNING' | 'ERROR' | 'IGNORED';
 
+/**
+ * @deprecated [Stage 8]: Historical MPPS7 row record. Superseded by Snp87PlanningRow.
+ */
 export interface ProductionPlanRow {
   tenantId: string;
   siteId: string;
@@ -208,6 +150,10 @@ export interface ProductionPlanRow {
   createdDate: Timestamp;
 }
 
+/**
+ * @deprecated [Stage 8]: Decoupled from active recommendation engine.
+ * Active planning uses Snp87PlanningRow; entries retained for read-only historical line schedule view.
+ */
 export interface ProductionPlanEntry {
   tenantId: string;
   siteId: string;
@@ -266,6 +212,17 @@ export interface NorthfleetStoRequirement {
   casesPerPalletSnapshot: number;
   importId: string;
   status: NorthfleetStoStatus;
+  dispatchMode?: 'AUTOMATIC' | 'MANUAL';
+  manualStatus?: 'PENDING' | 'DESPATCHED' | 'HOLD';
+  actualDespatchDate?: Timestamp | null;
+  // Product Substitution & Deferred Backlog Tracking
+  originalProductId?: string | null;
+  originalProductCode?: string | null;
+  originalProductDescriptionSnapshot?: string | null;
+  substitutedProductId?: string | null;
+  substitutedProductCode?: string | null;
+  substitutionDate?: Timestamp | string | null;
+  isBacklogRetained?: boolean;
   createdBy: string;
   createdDate: Timestamp;
   modifiedBy: string;

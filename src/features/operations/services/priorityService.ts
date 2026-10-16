@@ -4,17 +4,19 @@ import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
+import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 const TERMINAL_PRIORITY_STATUSES: PriorityStatus[] = ['DRAFT', 'CANCELLED', 'EXPIRED', 'ARCHIVED'];
 
 export const buildDisplayPriorityDoc = (p: Partial<Priority>, priorityId?: string) => {
   const docId = priorityId || p.id || '';
+  const cleanProductCode = normalizeProductCode(p.productCodeSnapshot || '');
   return {
     tenantId: p.tenantId || '',
     siteId: p.siteId || '',
     sourcePriorityId: docId,
-    priorityCode: p.productCodeSnapshot || p.productId || '',
-    productCodeSnapshot: p.productCodeSnapshot || '',
+    priorityCode: cleanProductCode || p.productId || '',
+    productCodeSnapshot: cleanProductCode,
     descriptionSnapshot: p.descriptionSnapshot || '',
     title: p.descriptionSnapshot || p.instruction || '',
     instruction: p.instruction || '',
@@ -35,7 +37,8 @@ export const buildDisplayPriorityDoc = (p: Partial<Priority>, priorityId?: strin
     completedAt: p.completedAt || null,
     expireAt: p.expireAt || null,
     untilSwitchedOff: p.untilSwitchedOff || false,
-    modifiedDate: p.modifiedDate || new Date().toISOString()
+    modifiedDate: p.modifiedDate || new Date().toISOString(),
+    selectionLogicSummary: p.selectionLogicSummary || null
   };
 };
 
@@ -293,8 +296,8 @@ export const updatePriority = async (
 };
 
 const VALID_TRANSITIONS: Record<PriorityStatus, PriorityStatus[]> = {
-  'DRAFT': ['SCHEDULED', 'ACTIVE', 'CANCELLED', 'COMPLETED'],
-  'SCHEDULED': ['ACTIVE', 'CANCELLED', 'COMPLETED'],
+  'DRAFT': ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'CANCELLED', 'COMPLETED'],
+  'SCHEDULED': ['ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'CANCELLED', 'EXPIRED', 'COMPLETED'],
   'ACTIVE': ['ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED', 'EXPIRED'],
   'ACKNOWLEDGED': ['IN_PROGRESS', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED'],
   'IN_PROGRESS': ['WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE', 'COMPLETED', 'CANCELLED'],
@@ -338,7 +341,7 @@ export const updatePriorityStatus = async (
 
     if (newStatus === 'COMPLETED') updateData.completedAt = new Date().toISOString();
     if (newStatus === 'CANCELLED') updateData.cancelledAt = new Date().toISOString();
-    if (newStatus === 'SCHEDULED' || newStatus === 'ACTIVE') {
+    if (['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'].includes(newStatus)) {
        if (!priority.publishedAt) updateData.publishedAt = new Date().toISOString();
     }
 

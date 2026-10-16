@@ -75,8 +75,9 @@ export const ensureDefaultDecisionConfiguration = async (
     };
 
     const urgentPriorityId = await getOrAddPriority('URGENT', 'Urgent', 1);
-    const normalPriorityId = await getOrAddPriority('NORMAL', 'Normal', 2);
-    const lowPriorityId = await getOrAddPriority('LOW', 'Low', 3);
+    const highPriorityId = await getOrAddPriority('HIGH', 'High', 2);
+    const normalPriorityId = await getOrAddPriority('NORMAL', 'Normal', 3);
+    const lowPriorityId = await getOrAddPriority('LOW', 'Low', 4);
 
     // 3. Save default configuration
     const defaultConfig: Partial<DecisionConfiguration> = {
@@ -85,6 +86,7 @@ export const ensureDefaultDecisionConfiguration = async (
       reviewActionId,
       releaseActionId,
       urgentPriorityId,
+      highPriorityId,
       normalPriorityId,
       lowPriorityId,
       defaultDestinationRules: {
@@ -141,8 +143,8 @@ export const getDecisionConfiguration = async (
       .filter(d => d.status === 'inactive')
       .flatMap(d => [d.id, d.code].filter(Boolean));
 
-    const activePriorityLevels = priorityLevels
-      .filter(d => d.status === 'active')
+    const activePriorityDocs = priorityLevels.filter(d => d.status === 'active');
+    const activePriorityLevels = activePriorityDocs
       .flatMap(d => [d.id, d.code].filter(Boolean));
     const inactivePriorityLevels = priorityLevels
       .filter(d => d.status === 'inactive')
@@ -204,6 +206,9 @@ export const getDecisionConfiguration = async (
       return null;
     }
 
+    const highPriorityDoc = activePriorityDocs.find(p => p.code === 'HIGH' || p.label?.toUpperCase() === 'HIGH' || p.label?.toUpperCase() === 'HIGH PRIORITY');
+    const highPriorityId = configData.highPriorityId || highPriorityDoc?.id || (activePriorityLevels.includes('ee4a4964-bb8c-42dc-9aff-e0abaadb25f4') ? 'ee4a4964-bb8c-42dc-9aff-e0abaadb25f4' : null) || 'PRIORITY_HIGH';
+
     const config: DecisionConfiguration = {
       configurationVersion: configData.configurationVersion || 'v1.0.0',
       holdActionId: configData.holdActionId || null,
@@ -211,6 +216,7 @@ export const getDecisionConfiguration = async (
       releaseActionId: configData.releaseActionId || null,
       asPerScheduleActionId: configData.asPerScheduleActionId || null,
       urgentPriorityId: configData.urgentPriorityId || null,
+      highPriorityId: highPriorityId,
       normalPriorityId: configData.normalPriorityId || null,
       lowPriorityId: configData.lowPriorityId || null,
       defaultDestinationRules: {

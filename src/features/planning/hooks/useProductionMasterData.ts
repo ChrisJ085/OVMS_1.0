@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ProductionLine, ProductCategory } from '../../../types/configuration';
+import { ProductionLine, ProductCategory, Destination } from '../../../types/configuration';
 import { Product } from '../../../types/product';
 import { UnitOfMeasure } from '../../../types/configuration';
 import { toAppError } from '../../../types/error';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase } from '../../../utils/caseTransformers';
+import { getDocuments } from '../../../services/dbService';
 
 export function useProductionMasterData(tenantId: string, siteId: string) {
   const [productionLines, setProductionLines] = useState<ProductionLine[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<UnitOfMeasure[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
@@ -25,6 +27,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
       setProducts([]);
       setUnits([]);
       setCategories([]);
+      setDestinations([]);
       setLoading(false);
       return;
     }
@@ -73,11 +76,29 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
         if (catErr) throw catErr;
         const fetchedCat = (catData || []).map(row => toCamelCase<ProductCategory>(row));
 
+        // Fetch Destinations natively (with fallback to dbService)
+        let fetchedDest: Destination[] = [];
+        try {
+          const { data: destData, error: destErr } = await supabase
+            .from('destinations')
+            .select('*')
+            .eq('tenant_id', tenantId);
+
+          if (!destErr && destData && destData.length > 0) {
+            fetchedDest = destData.map(row => toCamelCase<Destination>(row));
+          } else {
+            fetchedDest = await getDocuments<Destination>('destinations', [{ field: 'tenantId', op: '==', value: tenantId }]);
+          }
+        } catch {
+          fetchedDest = await getDocuments<Destination>('destinations', [{ field: 'tenantId', op: '==', value: tenantId }]);
+        }
+
         if (isMounted) {
           setProductionLines(fetchedLines);
           setProducts(fetchedProducts);
           setUnits(fetchedUnits);
           setCategories(fetchedCat);
+          setDestinations(fetchedDest);
           setLoading(false);
         }
       } catch (err) {
@@ -101,6 +122,7 @@ export function useProductionMasterData(tenantId: string, siteId: string) {
     products,
     units,
     categories,
+    destinations,
     loading,
     error,
     revalidate

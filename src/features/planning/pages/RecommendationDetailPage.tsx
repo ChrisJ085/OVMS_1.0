@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Recommendation } from '../../../types/recommendation';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
-import { ArrowLeft, AlertTriangle, CheckCircle, Info, Calculator, Clock, PlayCircle, Settings, Box, RefreshCw } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, CheckCircle, Info, Calculator, Clock, PlayCircle, Settings, Box, RefreshCw, FileSpreadsheet } from 'lucide-react';
 import { generateRecommendationForProduct, updateRecommendationStatus } from '../services/recommendationService';
 import { PlannerDecision, OverrideFlags } from '../../../types/recommendation';
 import { useAuth } from '../../auth/context/AuthContext';
@@ -310,6 +310,64 @@ export const RecommendationDetailPage: React.FC = () => {
               )}
             </div>
           </SectionCard>
+
+          {Boolean(snap.planningContext || snap.productionContext?.planningContext) && (() => {
+            const planCtx = snap.planningContext || snap.productionContext?.planningContext;
+            if (!planCtx) return null;
+            return (
+              <SectionCard title={
+                <div className="flex items-center">
+                  <FileSpreadsheet className="w-4 h-4 mr-2 text-indigo-400" /> SNP87 Planning Audit
+                </div>
+              }>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm items-center">
+                    <span className="text-slate-500">Source Report:</span>
+                    <span className="font-medium text-slate-200 truncate max-w-[160px]">{planCtx.sourceReportName || 'SNP87 Report'}</span>
+                  </div>
+                  <div className="flex justify-between text-sm items-center">
+                    <span className="text-slate-500">Freshness:</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                      planCtx.dataFreshnessStatus === 'FRESH'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : planCtx.dataFreshnessStatus === 'STALE'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {planCtx.dataFreshnessStatus}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm border-t border-slate-800 pt-2">
+                    <span className="text-slate-500">Forecast Today:</span>
+                    <span className="font-medium text-slate-200 font-mono">{planCtx.forecastCasesToday || 0} cs</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Forecast 7 Days:</span>
+                    <span className="font-medium text-slate-200 font-mono">{planCtx.forecastCasesNext7Days || 0} cs</span>
+                  </div>
+                  <div className="flex justify-between text-sm border-t border-slate-800 pt-2">
+                    <span className="text-slate-500">Confirmed Prod Today:</span>
+                    <span className="font-medium text-slate-200 font-mono">{planCtx.confirmedProductionCasesToday || 0} cs</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Confirmed Prod 7 Days:</span>
+                    <span className="font-medium text-slate-200 font-mono">{planCtx.confirmedProductionCasesNext7Days || 0} cs</span>
+                  </div>
+                  {Boolean(snap.outstandingStoCases) && (
+                    <div className="flex justify-between text-sm border-t border-slate-800 pt-2">
+                      <span className="text-slate-500">Northfleet STO Protected:</span>
+                      <span className="font-medium text-amber-400 font-mono">{snap.outstandingStoCases} cs</span>
+                    </div>
+                  )}
+                  {planCtx.sourceImportId && (
+                    <div className="text-[11px] text-slate-500 pt-1 font-mono truncate">
+                      Import ID: {planCtx.sourceImportId}
+                    </div>
+                  )}
+                </div>
+              </SectionCard>
+            );
+          })()}
 
           {snap.productionContext && (
             <SectionCard title={

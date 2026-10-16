@@ -44794,6 +44794,24 @@ function toCamelCase(obj) {
       newObj.asPerScheduleActionId = newObj.dataQualityRules.asPerScheduleActionId;
     }
   }
+  if (newObj.planningType || newObj.planning_type || newObj.rowText || newObj.row_text || newObj.infoObject || newObj.info_object) {
+    const rawType = String(newObj.planningType || newObj.planning_type || "").trim().toUpperCase();
+    const cleanInfo = String(newObj.infoObject || newObj.info_object || "").trim().toUpperCase();
+    const cleanText = String(newObj.rowText || newObj.row_text || "").trim().toUpperCase();
+    if (rawType === "FORECAST" || cleanInfo === "9ADFCST" || cleanText.includes("FORECAST")) {
+      newObj.planningType = "FORECAST";
+    } else if (rawType === "CONFIRMED_PRODUCTION" || rawType.includes("CONFIRMED") || cleanInfo === "9AFPROD" || cleanText.includes("CONFIRMED")) {
+      newObj.planningType = "CONFIRMED_PRODUCTION";
+    } else if (rawType === "IGNORED") {
+      newObj.planningType = "IGNORED";
+    }
+  }
+  if (newObj.planningDate && !newObj.startDate) {
+    newObj.startDate = newObj.planningDate;
+  }
+  if (newObj.startDate && !newObj.planningDate) {
+    newObj.planningDate = newObj.startDate;
+  }
   return newObj;
 }
 

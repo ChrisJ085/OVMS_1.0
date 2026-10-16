@@ -82,6 +82,20 @@ CREATE TABLE IF NOT EXISTS public.user_sites (
     PRIMARY KEY (user_id, site_id)
 );
 
+CREATE TABLE IF NOT EXISTS public.user_favorites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    icon_name TEXT,
+    group_title TEXT,
+    order_index INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(tenant_id, user_id, path)
+);
+
 CREATE TABLE IF NOT EXISTS public.sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -813,7 +827,85 @@ CREATE TABLE IF NOT EXISTS public.production_events (
 );
 
 -- ----------------------------------------------------------------------------
--- 7. NORTHFLEET STO REQUIREMENTS & IMPORTS
+-- 7. SAP SNP87 PLANNING (CURRENT SAP PLANNING MODEL)
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.snp87_imports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    site_id UUID NOT NULL REFERENCES public.sites(id) ON DELETE CASCADE,
+    source_report_name TEXT NOT NULL,
+    source_report_type TEXT NOT NULL DEFAULT 'SNP87',
+    file_hash TEXT,
+    imported_by TEXT NOT NULL,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    import_status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (import_status IN ('DRAFT', 'VALIDATED', 'REQUIRES_REVIEW', 'READY_TO_COMMIT', 'COMMITTED', 'FAILED', 'SUPERSEDED')),
+    source_row_count INTEGER DEFAULT 0,
+    recognised_row_count INTEGER DEFAULT 0,
+    ignored_row_count INTEGER DEFAULT 0,
+    forecast_row_count INTEGER DEFAULT 0,
+    confirmed_production_row_count INTEGER DEFAULT 0,
+    total_forecast_quantity NUMERIC DEFAULT 0,
+    total_confirmed_production_quantity NUMERIC DEFAULT 0,
+    warning_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    unknown_product_count INTEGER DEFAULT 0,
+    import_period JSONB DEFAULT NULL,
+    diagnostics JSONB DEFAULT '{}'::jsonb,
+    version INTEGER DEFAULT 1,
+    notes TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_by TEXT,
+    created_date TIMESTAMPTZ DEFAULT NOW(),
+    modified_by TEXT,
+    modified_date TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.snp87_planning_rows (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    import_id UUID NOT NULL REFERENCES public.snp87_imports(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    site_id UUID NOT NULL REFERENCES public.sites(id) ON DELETE CASCADE,
+    row_index INTEGER NOT NULL,
+    order_sku TEXT,
+    product_number TEXT NOT NULL,
+    product_description TEXT,
+    location TEXT,
+    sort TEXT,
+    info_object TEXT,
+    row_text TEXT,
+    planning_type TEXT NOT NULL CHECK (planning_type IN ('FORECAST', 'CONFIRMED_PRODUCTION', 'IGNORED')),
+    start_date_raw TEXT,
+    end_date_raw TEXT,
+    planning_date DATE NOT NULL,
+    start_date DATE,
+    end_date DATE,
+    quantity NUMERIC NOT NULL DEFAULT 0,
+    forecast_quantity NUMERIC,
+    confirmed_production_quantity NUMERIC,
+    base_unit_of_measure TEXT NOT NULL,
+    product_id UUID REFERENCES public.products(id) ON DELETE SET NULL,
+    product_code_snapshot TEXT,
+    description_snapshot TEXT,
+    product_matched BOOLEAN DEFAULT FALSE,
+    validation_status TEXT NOT NULL DEFAULT 'VALID' CHECK (validation_status IN ('VALID', 'WARNING', 'ERROR', 'IGNORED')),
+    validation_errors JSONB DEFAULT '[]'::jsonb,
+    validation_warnings JSONB DEFAULT '[]'::jsonb,
+    ignored_reason TEXT,
+    is_duplicate BOOLEAN DEFAULT FALSE,
+    raw_source_row JSONB DEFAULT '{}'::jsonb,
+    created_by TEXT,
+    created_date TIMESTAMPTZ DEFAULT NOW(),
+    modified_by TEXT,
+    modified_date TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ----------------------------------------------------------------------------
+-- 8. NORTHFLEET STO REQUIREMENTS & IMPORTS
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS public.northfleet_sto_imports (
@@ -864,7 +956,7 @@ CREATE TABLE IF NOT EXISTS public.northfleet_sto_requirements (
 );
 
 -- ----------------------------------------------------------------------------
--- 8. SITE SETTINGS & ONBOARDING
+-- 9. SITE SETTINGS & ONBOARDING
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS public.site_settings (
@@ -910,7 +1002,7 @@ CREATE TABLE IF NOT EXISTS public.site_onboarding (
 );
 
 -- ----------------------------------------------------------------------------
--- 9. AUDIT LOGS & TENANT DELETION
+-- 10. AUDIT LOGS & TENANT DELETION
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS public.audit_logs (
@@ -970,21 +1062,87 @@ CREATE TABLE IF NOT EXISTS public.platform_deletion_receipts (
 );
 
 -- ----------------------------------------------------------------------------
--- 10. VIEWS & ALIASES
+-- 11. VIEWS & ALIASES
 -- ----------------------------------------------------------------------------
 
 -- Safely convert old site_recommendation_runs table to a view if it exists as a table
-DO 979
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public' AND c.relname = 'site_recommendation_runs' AND c.relkind = 'r'
-    ) THEN
-        DROP TABLE public.site_recommendation_runs CASCADE;
-    END IF;
-END 979;
-
 DROP VIEW IF EXISTS public.site_recommendation_runs CASCADE;
+DROP TABLE IF EXISTS public.site_recommendation_runs CASCADE;
 CREATE OR REPLACE VIEW public.site_recommendation_runs AS 
 SELECT * FROM public.recommendation_runs;
+
+-- ----------------------------------------------------------------------------
+-- 12. PERFORMANCE INDEXES
+-- ----------------------------------------------------------------------------
+
+-- Tenancy & Users
+CREATE INDEX IF NOT EXISTS idx_sites_tenant_id ON public.sites(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON public.users(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
+CREATE INDEX IF NOT EXISTS idx_user_sites_site_id ON public.user_sites(site_id);
+CREATE INDEX IF NOT EXISTS idx_user_favorites_lookup ON public.user_favorites(tenant_id, user_id, order_index ASC);
+CREATE INDEX IF NOT EXISTS idx_user_favorites_path ON public.user_favorites(path);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON public.sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_tenant_site ON public.sessions(tenant_id, site_id);
+
+-- Master Data
+CREATE INDEX IF NOT EXISTS idx_products_tenant_site ON public.products(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_products_code ON public.products(tenant_id, code);
+CREATE INDEX IF NOT EXISTS idx_locations_tenant_site ON public.locations(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_destinations_tenant_id ON public.destinations(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_production_lines_tenant_site ON public.production_lines(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_storage_areas_site_id ON public.storage_areas(site_id);
+CREATE INDEX IF NOT EXISTS idx_decision_configs_lookup ON public.decision_configurations(tenant_id, site_id);
+
+-- Inventory & Balances
+CREATE INDEX IF NOT EXISTS idx_inventory_balances_lookup ON public.inventory_balances(tenant_id, site_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_balances_location ON public.inventory_balances(site_id, location_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_movements_lookup ON public.inventory_movements(tenant_id, site_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_movements_time ON public.inventory_movements(timestamp DESC);
+
+-- Priorities & Exceptions
+CREATE INDEX IF NOT EXISTS idx_priorities_tenant_site ON public.priorities(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_priorities_status ON public.priorities(tenant_id, site_id, priority_status);
+CREATE INDEX IF NOT EXISTS idx_priorities_product ON public.priorities(site_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_display_priorities_tenant_site ON public.display_priorities(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_priority_events_priority_id ON public.priority_events(priority_id);
+CREATE INDEX IF NOT EXISTS idx_exceptions_tenant_site ON public.exceptions(tenant_id, site_id, status);
+CREATE INDEX IF NOT EXISTS idx_announcements_tenant_site ON public.announcements(tenant_id, site_id, active);
+
+-- Planning & Recommendations
+CREATE INDEX IF NOT EXISTS idx_planning_rules_lookup ON public.planning_rules(tenant_id, site_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_promotions_tenant_site ON public.promotions(tenant_id, site_id, start_date, end_date);
+CREATE INDEX IF NOT EXISTS idx_promotion_rules_promo ON public.promotion_product_rules(promotion_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_lookup ON public.recommendations(tenant_id, site_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_status ON public.recommendations(tenant_id, site_id, recommendation_status);
+CREATE INDEX IF NOT EXISTS idx_recommendation_runs_lookup ON public.recommendation_runs(tenant_id, site_id);
+
+-- SAP Planning Models
+CREATE INDEX IF NOT EXISTS idx_production_plan_imports_lookup ON public.production_plan_imports(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_production_plan_entries_import ON public.production_plan_entries(import_id);
+CREATE INDEX IF NOT EXISTS idx_production_plan_entries_date ON public.production_plan_entries(site_id, production_date);
+CREATE INDEX IF NOT EXISTS idx_production_events_lookup ON public.production_events(tenant_id, site_id);
+
+-- SAP SNP87 Planning Models
+CREATE INDEX IF NOT EXISTS idx_snp87_imports_tenant_site ON public.snp87_imports(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_snp87_imports_status ON public.snp87_imports(tenant_id, site_id, import_status);
+CREATE INDEX IF NOT EXISTS idx_snp87_imports_imported_at ON public.snp87_imports(imported_at DESC);
+CREATE INDEX IF NOT EXISTS idx_snp87_imports_file_hash ON public.snp87_imports(file_hash);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_import_id ON public.snp87_planning_rows(import_id);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_tenant_site ON public.snp87_planning_rows(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_planning_date ON public.snp87_planning_rows(planning_date);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_product_id ON public.snp87_planning_rows(product_id);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_product_number ON public.snp87_planning_rows(product_number);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_planning_type ON public.snp87_planning_rows(planning_type);
+CREATE INDEX IF NOT EXISTS idx_snp87_planning_rows_active_eval ON public.snp87_planning_rows(import_id, product_id, planning_type, planning_date);
+
+-- Northfleet STO
+CREATE INDEX IF NOT EXISTS idx_northfleet_sto_imports_lookup ON public.northfleet_sto_imports(tenant_id, site_id);
+CREATE INDEX IF NOT EXISTS idx_northfleet_sto_reqs_lookup ON public.northfleet_sto_requirements(tenant_id, site_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_northfleet_sto_reqs_import ON public.northfleet_sto_requirements(import_id);
+
+-- Auditing
+CREATE INDEX IF NOT EXISTS idx_audit_logs_lookup ON public.audit_logs(tenant_id, site_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON public.audit_logs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_deletion_jobs_status ON public.tenant_deletion_jobs(status);
+

@@ -5,6 +5,7 @@ import { resolveAllPriorityConflicts } from '../services/priorityService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { ActionType, Destination, PriorityLevel } from '../../../types/configuration';
 import { getActionTypeLabel, getDestinationLabel, getPriorityLevelLabel } from '../utils/priorityFormatters';
+import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 interface PriorityConflictModalProps {
   isOpen: boolean;
@@ -164,7 +165,7 @@ export const PriorityConflictModal: React.FC<PriorityConflictModalProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-bold bg-slate-800 text-slate-200 px-2.5 py-1 rounded border border-slate-700">
-                      #{idx + 1} SKU: {conflict.productCodeSnapshot}
+                      #{idx + 1} SKU: {normalizeProductCode(conflict.productCodeSnapshot)}
                     </span>
                     <span className="text-sm font-semibold text-slate-200 truncate max-w-md">
                       {conflict.descriptionSnapshot}
@@ -213,7 +214,13 @@ export const PriorityConflictModal: React.FC<PriorityConflictModalProps> = ({
                       </div>
                       <div>
                         <span className="text-slate-500">Priority Level:</span>{' '}
-                        <span className="font-semibold text-slate-200 uppercase">{manualLevel}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold uppercase ${
+                          manualLevel.includes('URGENT') || manualLevel.includes('CRITICAL')
+                            ? 'bg-red-950 text-red-300 border border-red-800 font-bold'
+                            : manualLevel.includes('HIGH')
+                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                            : 'bg-slate-800 text-slate-200'
+                        }`}>{manualLevel}</span>
                       </div>
                       {manual.instruction && (
                         <div className="mt-2 text-[11px] text-slate-400 bg-slate-900 p-2 rounded border border-slate-800 italic">
@@ -263,7 +270,13 @@ export const PriorityConflictModal: React.FC<PriorityConflictModalProps> = ({
                       </div>
                       <div>
                         <span className="text-slate-500">Priority Level:</span>{' '}
-                        <span className="font-semibold text-slate-200 uppercase">{systemLevel}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold uppercase ${
+                          systemLevel.includes('URGENT') || systemLevel.includes('CRITICAL')
+                            ? 'bg-red-950 text-red-300 border border-red-800 font-bold'
+                            : systemLevel.includes('HIGH')
+                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                            : 'bg-slate-800 text-slate-200'
+                        }`}>{systemLevel}</span>
                       </div>
                       {system.instruction && (
                         <div className="mt-2 text-[11px] text-slate-400 bg-slate-900 p-2 rounded border border-slate-800">

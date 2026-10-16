@@ -272,8 +272,8 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     expect(output.recommendedActionTypeId).not.toBe('ACTION_HOLD');
   });
 
-  // Scenario 11: Above maximum with production planned
-  it('Scenario 11: Stock above maximum with planned production escalates priority to URGENT and warns capacity risk', () => {
+  // Scenario 11: Above maximum with production planned - capped at HIGH priority
+  it('Scenario 11: Stock above maximum with planned production assigns capped HIGH priority (never URGENT) and warns capacity risk', () => {
     const input = createBaseInput({
       inventoryTotal: 600, // Max is 500
       productionContext: createMockProductionContext({ plannedPalletsNext7Days: 200 })
@@ -284,7 +284,9 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     expect(output.planningBandStatus).toBe('ABOVE_MAXIMUM');
     expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.releaseActionId);
     expect(output.recommendedQuantity).toBe(500); // 600 - 100
-    expect(output.recommendedPriorityLevelId).toBe(DEFAULT_DECISION_CONFIG.urgentPriorityId);
+    // Capped at HIGH (never URGENT for engine-generated recommendations)
+    expect(output.recommendedPriorityLevelId).toBe(DEFAULT_DECISION_CONFIG.highPriorityId);
+    expect(output.recommendedPriorityLevelId).not.toBe(DEFAULT_DECISION_CONFIG.urgentPriorityId);
     expect(output.reasonCodes).toContain('ABOVE_MAXIMUM');
     expect(output.reasonCodes).toContain('UPCOMING_PRODUCTION_CAPACITY_RISK');
   });

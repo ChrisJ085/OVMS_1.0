@@ -107,6 +107,33 @@ export function toCamelCase<T = Record<string, any>>(obj: any): T {
     }
   }
 
+  // SNP87 Planning row mappings
+  if (newObj.planningType || newObj.planning_type || newObj.rowText || newObj.row_text || newObj.infoObject || newObj.info_object) {
+    const rawType = String(newObj.planningType || newObj.planning_type || '').trim().toUpperCase();
+    const cleanInfo = String(newObj.infoObject || newObj.info_object || '').trim().toUpperCase();
+    const cleanText = String(newObj.rowText || newObj.row_text || '').trim().toUpperCase();
+
+    if (rawType === 'FORECAST' || cleanInfo === '9ADFCST' || cleanText.includes('FORECAST')) {
+      newObj.planningType = 'FORECAST';
+    } else if (
+      rawType === 'CONFIRMED_PRODUCTION' || 
+      rawType.includes('CONFIRMED') ||
+      cleanInfo === '9AFPROD' || 
+      cleanText.includes('CONFIRMED')
+    ) {
+      newObj.planningType = 'CONFIRMED_PRODUCTION';
+    } else if (rawType === 'IGNORED') {
+      newObj.planningType = 'IGNORED';
+    }
+  }
+
+  if (newObj.planningDate && !newObj.startDate) {
+    newObj.startDate = newObj.planningDate;
+  }
+  if (newObj.startDate && !newObj.planningDate) {
+    newObj.planningDate = newObj.startDate;
+  }
+
   return newObj as T;
 }
 
@@ -272,10 +299,37 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
     result.data_quality_rules = dataQualityRules;
   } else if (tableName === 'priority_events') {
     delete result.status;
+  } else if (tableName === 'recommendations') {
+    delete result.generation_id;
+    delete result.generationId;
   } else if (tableName === 'recommendation_runs') {
     if (!result.id && result.tenant_id && result.site_id) {
       result.id = `${result.tenant_id}_${result.site_id}`;
     }
+    delete result.actionable_count;
+    delete result.actionableCount;
+    delete result.generation_id;
+    delete result.generationId;
+    delete result.candidate_count;
+    delete result.candidateCount;
+    delete result.total_products;
+    delete result.totalProducts;
+    delete result.evaluated_count;
+    delete result.evaluatedCount;
+    delete result.generated_count;
+    delete result.generatedCount;
+    delete result.no_action_count;
+    delete result.noActionCount;
+    delete result.conflicts_count;
+    delete result.conflictsCount;
+    delete result.failures_count;
+    delete result.failuresCount;
+    delete result.current_product_index;
+    delete result.currentProductIndex;
+    delete result.current_product_code;
+    delete result.currentProductCode;
+    delete result.source_import_ids;
+    delete result.sourceImportIds;
   } else if (tableName === 'production_plan_imports') {
     if (result.file_size !== undefined && result.file_size_bytes === undefined) {
       result.file_size_bytes = Number(result.file_size) || 0;
@@ -304,6 +358,44 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
     }
     if (result.source_row_number !== undefined && result.source_row_number !== null) {
       result.source_row_number = Number(result.source_row_number) || 0;
+    }
+  } else if (tableName === 'snp87_planning_rows' || tableName === 'snp87_rows') {
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!result.id || !UUID_REGEX.test(result.id)) {
+      try {
+        result.id = crypto.randomUUID();
+      } catch {}
+    }
+    const pt = String(result.planning_type || result.row_text || result.info_object || '').toUpperCase();
+    if (pt.includes('FORECAST') || pt === '9ADFCST') {
+      result.planning_type = 'FORECAST';
+    } else if (pt.includes('CONFIRMED') || pt === '9AFPROD') {
+      result.planning_type = 'CONFIRMED_PRODUCTION';
+    } else if (pt !== 'IGNORED') {
+      result.planning_type = 'IGNORED';
+    }
+    if (!result.planning_date || result.planning_date === '') {
+      result.planning_date = result.start_date || new Date().toISOString().split('T')[0];
+    } else if (typeof result.planning_date === 'string' && result.planning_date.includes('T')) {
+      result.planning_date = result.planning_date.split('T')[0];
+    }
+    if (result.start_date === '') result.start_date = null;
+    if (result.end_date === '') result.end_date = null;
+    if (result.quantity !== undefined && result.quantity !== null) {
+      result.quantity = Number(result.quantity) || 0;
+    }
+    if (result.sort !== undefined && result.sort !== null) {
+      result.sort = String(result.sort);
+    }
+  } else if (tableName === 'snp87_planning_imports' || tableName === 'snp87_imports') {
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!result.id || !UUID_REGEX.test(result.id)) {
+      try {
+        result.id = crypto.randomUUID();
+      } catch {}
+    }
+    if (!result.import_status) {
+      result.import_status = 'COMMITTED';
     }
   }
 
@@ -386,6 +478,14 @@ export const TABLE_MAP: Record<string, string> = {
   tenant_deletion_jobs: 'tenant_deletion_jobs',
   platformDeletionReceipts: 'platform_deletion_receipts',
   platform_deletion_receipts: 'platform_deletion_receipts',
+  snp87Imports: 'snp87_planning_imports',
+  snp87_imports: 'snp87_planning_imports',
+  snp87PlanningImports: 'snp87_planning_imports',
+  snp87_planning_imports: 'snp87_planning_imports',
+  snp87PlanningRows: 'snp87_planning_rows',
+  snp87_planning_rows: 'snp87_planning_rows',
+  snp87Rows: 'snp87_planning_rows',
+  snp87_rows: 'snp87_planning_rows',
   sessions: 'sessions'
 };
 

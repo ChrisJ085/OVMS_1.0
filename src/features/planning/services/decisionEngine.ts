@@ -10,8 +10,9 @@ import {
   StructuredExplanation,
   DecisionVersionInfo
 } from '../../../types/decision';
-import { PlanningBandStatus, BelowTargetBehavior } from '../../../types/planning';
+import { ProductPlanningRule, PlanningBandStatus, BelowTargetBehavior } from '../../../types/planning';
 import { toSafeDate } from '../../../utils/timeFormatters';
+import { calculateSnp87ChronologicalRequirement, adaptPlanningContextToLegacyProductionContext } from './snp87PlanningContextService';
 
 export const ENGINE_VERSION = '2.0.0';
 
@@ -22,6 +23,7 @@ export const DEFAULT_DECISION_CONFIG: DecisionConfiguration = {
   releaseActionId: 'ACTION_RELEASE',
   asPerScheduleActionId: 'ACTION_AS_PER_SCHEDULE',
   urgentPriorityId: 'PRIORITY_URGENT',
+  highPriorityId: 'PRIORITY_HIGH',
   normalPriorityId: 'PRIORITY_NORMAL',
   lowPriorityId: 'PRIORITY_LOW',
   defaultDestinationRules: {
@@ -32,6 +34,33 @@ export const DEFAULT_DECISION_CONFIG: DecisionConfiguration = {
   productionStalenessHoursThreshold: 24,
   nearProductionDaysWindow: 7,
   capacityWarningThresholdPercentage: 100
+};
+
+/**
+ * Capping helper: Decision-engine generated priorities must have a maximum ceiling of HIGH.
+ * Never produces engine-generated URGENT or CRITICAL priorities.
+ */
+export const capPriorityAtHigh = (
+  priorityId: string | null | undefined,
+  config?: DecisionConfiguration | null
+): string | null => {
+  if (!priorityId) return null;
+  const highId = config?.highPriorityId || 'PRIORITY_HIGH';
+  const urgentId = config?.urgentPriorityId;
+
+  const idUpper = priorityId.toUpperCase();
+  if (
+    (urgentId && priorityId === urgentId) ||
+    idUpper === 'URGENT' ||
+    idUpper === 'PRIORITY_URGENT' ||
+    idUpper === 'CRITICAL' ||
+    idUpper === 'PRIORITY_CRITICAL' ||
+    idUpper.includes('URGENT') ||
+    idUpper.includes('CRITICAL')
+  ) {
+    return highId;
+  }
+  return priorityId;
 };
 
 export const generateDeterministicHash = (input: DecisionInputSnapshot): string => {
@@ -297,13 +326,44 @@ export const evaluateDecision = (
     reasonCodes.push('CONFIGURATION_MISSING', 'REVIEW_REQUIRED');
   }
 
-  // 2. Planning Rule Data Quality Check
+  // 2. Planning Rule Resolution & Data Quality Check
+  const effectiveRule: ProductPlanningRule = planningRule || {
+    id: 'virtual-rule-default',
+    tenantId,
+    siteId,
+    productId,
+    productCodeSnapshot: input.productCodeSnapshot || '',
+    descriptionSnapshot: '',
+    minimumQuantity: 0,
+    targetQuantity: 0,
+    maximumQuantity: 0,
+    ddxmRetentionQuantity: 0,
+    controllingThresholdMode: 'MINIMUM_ONLY',
+    customControllingRetentionQuantity: null,
+    belowTargetBehavior: 'RELEASE_ABOVE_CONTROL',
+    preferredDestinationId: (input as any).productPreferredDestinationId || config?.defaultDestinationRules?.defaultDestinationId || 'DEST_CHORLEY',
+    secondaryDestinationId: null,
+    defaultActionTypeId: config?.holdActionId || 'ACTION_HOLD',
+    defaultPriorityLevelId: config?.normalPriorityId || 'PRIORITY_NORMAL',
+    allowQuantityOverride: true,
+    allowDestinationOverride: true,
+    overrideRequiresReason: false,
+    effectiveFrom: new Date() as any,
+    effectiveTo: null,
+    notes: 'Virtual default planning rule',
+    status: 'active',
+    createdBy: 'system',
+    createdDate: new Date(),
+    modifiedBy: 'system',
+    modifiedDate: new Date()
+  };
+
   if (!planningRule) {
     dataQualityIssues.push({
       code: 'PLANNING_RULE_MISSING',
-      severity: 'BLOCKING',
-      blocking: true,
-      message: 'Missing base product planning rule for this product.',
+      severity: 'INFO',
+      blocking: false,
+      message: 'Base product planning rule not pre-created for this SKU. Applied default virtual rule.',
       sourceArea: 'PLANNING_RULE'
     });
   } else {
@@ -336,26 +396,35 @@ export const evaluateDecision = (
   }
 
   // 4. Production Context & Data Quality Check
+  // SNP87 ProductPlanningContext is authoritative if present; otherwise fallback to legacy productionContext.
   const prodStalenessHours = config?.productionStalenessHoursThreshold || 24;
-  if (!productionContext || productionContext.dataFreshnessStatus === 'MISSING') {
+  const initialPlanningContext = input.planningContext || input.productionContext?.planningContext || null;
+  const effectivePlanningFreshness = initialPlanningContext
+    ? initialPlanningContext.dataFreshnessStatus
+    : (productionContext ? productionContext.dataFreshnessStatus : 'MISSING');
+
+  if (effectivePlanningFreshness === 'MISSING') {
     dataQualityIssues.push({
       code: 'PRODUCTION_SOURCE_MISSING',
       severity: 'WARNING',
       blocking: false,
-      message: 'Production data source is missing or unavailable.',
+      message: initialPlanningContext ? 'SNP87 planning data source is missing or unavailable.' : 'Production data source is missing or unavailable.',
       sourceArea: 'PRODUCTION'
     });
     reasonCodes.push('PRODUCTION_SOURCE_MISSING');
-  } else if (productionContext.dataFreshnessStatus === 'STALE') {
+  } else if (effectivePlanningFreshness === 'STALE') {
     dataQualityIssues.push({
       code: 'PRODUCTION_SOURCE_STALE',
       severity: 'WARNING',
       blocking: false,
-      message: 'SAP production import source is STALE (older than threshold).',
+      message: initialPlanningContext ? 'SNP87 planning data source is STALE (older than threshold).' : 'SAP production import source is STALE (older than threshold).',
       sourceArea: 'PRODUCTION'
     });
     reasonCodes.push('PRODUCTION_SOURCE_STALE');
-    exceptions.push({ message: `SAP production import is STALE (older than ${prodStalenessHours} hours).`, severity: 'WARNING' });
+    exceptions.push({ 
+      message: initialPlanningContext ? 'SNP87 planning import is STALE.' : `SAP production import is STALE (older than ${prodStalenessHours} hours).`, 
+      severity: 'WARNING' 
+    });
   }
 
   // 5. Promotion Conflicts Check
@@ -421,7 +490,7 @@ export const evaluateDecision = (
     const sourceHash = generateDeterministicHash(input);
 
     const recActionId = config?.reviewActionId || null;
-    const recPrioId = config?.urgentPriorityId || config?.normalPriorityId || null;
+    const recPrioId = capPriorityAtHigh(config?.highPriorityId || config?.normalPriorityId || null, config);
 
     const structuredExp: StructuredExplanation = {
       currentFacts: [`Current QOH: ${inventoryTotal}`],
@@ -479,10 +548,15 @@ export const evaluateDecision = (
   const reviewAction = config!.reviewActionId;
   const releaseAction = config!.releaseActionId;
   const urgentPriority = config!.urgentPriorityId;
+  const highPriority = config!.highPriorityId || 'PRIORITY_HIGH';
   const normalPriority = config!.normalPriorityId;
   const lowPriority = config!.lowPriorityId;
 
   // 6. Safe Production Fields Extraction
+  // Use planningContext adapter if productionContext was not provided
+  const planningContext = input.planningContext || input.productionContext?.planningContext || null;
+  const effectiveProdContext = productionContext || (planningContext ? adaptPlanningContextToLegacyProductionContext(planningContext) : null);
+
   const {
     isScheduled = false,
     isCurrentlyInProduction = false,
@@ -499,7 +573,12 @@ export const evaluateDecision = (
     hasTrial = false,
     productionRiskStatus = 'NORMAL',
     activeProductionNotes = []
-  } = productionContext || {};
+  } = effectiveProdContext || {};
+
+  const hasSnp87ForecastData = Boolean(
+    planningContext &&
+    ((planningContext.forecastCasesNext7Days || 0) > 0 || (planningContext.forecastByDate && Object.keys(planningContext.forecastByDate).length > 0))
+  );
 
   // Log Production Reasons
   if (isCurrentlyInProduction) reasonCodes.push('PRODUCTION_RUNNING');
@@ -507,7 +586,7 @@ export const evaluateDecision = (
   if (daysUntilNextProduction !== null && daysUntilNextProduction <= (config?.nearProductionDaysWindow || 7)) {
     reasonCodes.push('PRODUCTION_DUE_WITHIN_WINDOW');
   }
-  if (!isScheduled) {
+  if (!isScheduled && !hasSnp87ForecastData) {
     reasonCodes.push('NO_FUTURE_PRODUCTION');
   }
   if (hasDelay || productionRiskStatus === 'DELAYED') {
@@ -524,11 +603,48 @@ export const evaluateDecision = (
   }
   if (hasTrial) reasonCodes.push('PRODUCTION_TRIAL');
 
-  // 7. Threshold Calculation & Promotion Impact
-  const baseMin = planningRule!.minimumQuantity;
-  const baseTarget = planningRule!.targetQuantity;
-  const baseMax = planningRule!.maximumQuantity;
-  const baseDDXM = planningRule!.ddxmRetentionQuantity;
+  // 7. SNP87 Context & Dynamic Retail Demand Calculation
+  const isSnp87Fresh = planningContext?.dataFreshnessStatus === 'FRESH';
+  const isSnp87Stale = planningContext?.dataFreshnessStatus === 'STALE';
+  const isSnp87Missing = !planningContext || planningContext.dataFreshnessStatus === 'MISSING';
+
+  const snp87Chron = calculateSnp87ChronologicalRequirement(planningContext, evaluationTime);
+  const dynamicRetailDemand = (hasSnp87ForecastData && !isSnp87Missing)
+    ? snp87Chron.retailDemandRequirement
+    : 0;
+
+  if (isSnp87Stale && !reasonCodes.includes('PRODUCTION_SOURCE_STALE')) {
+    dataQualityIssues.push({
+      code: 'PRODUCTION_SOURCE_STALE',
+      severity: 'WARNING',
+      blocking: false,
+      message: 'SNP87 planning data source is STALE (older than threshold).',
+      sourceArea: 'PRODUCTION'
+    });
+    reasonCodes.push('PRODUCTION_SOURCE_STALE');
+    exceptions.push({ message: 'SNP87 planning import is STALE.', severity: 'WARNING' });
+  } else if (isSnp87Missing && !reasonCodes.includes('PRODUCTION_SOURCE_MISSING') && (!productionContext || productionContext?.dataFreshnessStatus === 'MISSING')) {
+    dataQualityIssues.push({
+      code: 'PRODUCTION_SOURCE_MISSING',
+      severity: 'WARNING',
+      blocking: false,
+      message: 'SNP87 planning data source is missing or unavailable.',
+      sourceArea: 'PRODUCTION'
+    });
+    reasonCodes.push('PRODUCTION_SOURCE_MISSING');
+  }
+
+  // 8. Dynamic Threshold Calculation & Promotion Impact
+  let baseMin = effectiveRule.minimumQuantity;
+  let baseTarget = effectiveRule.targetQuantity;
+  let baseMax = effectiveRule.maximumQuantity;
+  let baseDDXM = effectiveRule.ddxmRetentionQuantity;
+
+  if (hasSnp87ForecastData && !isSnp87Missing) {
+    baseMin = dynamicRetailDemand;
+    baseTarget = Math.max(baseMin, effectiveRule.targetQuantity);
+    baseMax = Math.max(baseTarget, effectiveRule.maximumQuantity);
+  }
 
   let minOverride: number | null = null;
   let targetOverride: number | null = null;
@@ -586,21 +702,41 @@ export const evaluateDecision = (
   const maxBreakdown: ThresholdBreakdown = { baseValue: baseMax, promotionAdjustment: effMax - baseMax, effectiveValue: effMax };
   const ddxmBreakdown: ThresholdBreakdown = { baseValue: baseDDXM, promotionAdjustment: 0, effectiveValue: effDDXM };
 
-  // 8. Determine Controlling Retention
+  // Determine Controlling Retention
   let baseControllingRetention = 0;
-  switch (planningRule!.controllingThresholdMode) {
-    case 'HIGHEST_MANDATORY':
-      baseControllingRetention = Math.max(effMin, effDDXM);
-      break;
-    case 'MINIMUM_ONLY':
-      baseControllingRetention = effMin;
-      break;
-    case 'DDXM_ONLY':
-      baseControllingRetention = effDDXM;
-      break;
-    case 'CUSTOM':
-      baseControllingRetention = (planningRule!.customControllingRetentionQuantity || 0) + retentionUplift;
-      break;
+  if (hasSnp87ForecastData && !isSnp87Missing) {
+    switch (effectiveRule.controllingThresholdMode) {
+      case 'HIGHEST_MANDATORY':
+        baseControllingRetention = Math.max(effMin, effDDXM);
+        break;
+      case 'MINIMUM_ONLY':
+        baseControllingRetention = effMin;
+        break;
+      case 'DDXM_ONLY':
+        baseControllingRetention = Math.max(effMin, effDDXM);
+        break;
+      case 'CUSTOM':
+        baseControllingRetention = Math.max(effMin, (effectiveRule.customControllingRetentionQuantity || 0) + retentionUplift);
+        break;
+      default:
+        baseControllingRetention = effMin;
+        break;
+    }
+  } else {
+    switch (effectiveRule.controllingThresholdMode) {
+      case 'HIGHEST_MANDATORY':
+        baseControllingRetention = Math.max(effMin, effDDXM);
+        break;
+      case 'MINIMUM_ONLY':
+        baseControllingRetention = effMin;
+        break;
+      case 'DDXM_ONLY':
+        baseControllingRetention = effDDXM;
+        break;
+      case 'CUSTOM':
+        baseControllingRetention = (effectiveRule.customControllingRetentionQuantity || 0) + retentionUplift;
+        break;
+    }
   }
 
   const stoProtectedQuantity = input.outstandingStoCases || 0;
@@ -611,7 +747,7 @@ export const evaluateDecision = (
   // Total Protected Stock = Base Protected Stock + STO Protected Stock
   const controllingRetention = baseControllingRetention + stoProtectedQuantity;
 
-  // 9. Calculate Stock Metrics
+  // Calculate Stock Metrics
   const qoh = inventoryTotal;
   const availableToRelease = Math.max(0, qoh - controllingRetention);
   const shortfallQuantity = Math.max(0, controllingRetention - qoh);
@@ -625,11 +761,15 @@ export const evaluateDecision = (
   else if (qoh <= effMax) bandStatus = 'ABOVE_TARGET';
   else bandStatus = 'ABOVE_MAXIMUM';
 
-  // 10. Action & Priority Logic
-  let recAction: string | null = planningRule!.defaultActionTypeId || holdAction;
+  // Action & Priority Logic
+  let recAction: string | null = effectiveRule.defaultActionTypeId || holdAction;
   let recQty = 0;
-  let recDest: string | null = destOverride || planningRule!.preferredDestinationId || config?.defaultDestinationRules?.defaultDestinationId || null;
-  let recPrio: string | null = planningRule!.defaultPriorityLevelId || normalPriority;
+  let recDest: string | null = destOverride || 
+    effectiveRule.preferredDestinationId || 
+    (input as any).productPreferredDestinationId || 
+    config?.defaultDestinationRules?.defaultDestinationId || 
+    'DEST_CHORLEY';
+  let recPrio: string | null = effectiveRule.defaultPriorityLevelId || normalPriority;
 
   if (prioUplift > 0) {
     recPrio = urgentPriority || normalPriority;
@@ -640,68 +780,83 @@ export const evaluateDecision = (
   }
 
   // Apply BelowTargetBehavior and Band Status Rules
-  const belowTargetBehavior: BelowTargetBehavior = planningRule!.belowTargetBehavior || 
-    (planningRule!.defaultActionTypeId === releaseAction ? 'RELEASE_ABOVE_CONTROL' : 'HOLD_UNTIL_TARGET');
+  const belowTargetBehavior: BelowTargetBehavior = effectiveRule.belowTargetBehavior || 
+    (effectiveRule.defaultActionTypeId === releaseAction ? 'RELEASE_ABOVE_CONTROL' : 'HOLD_UNTIL_TARGET');
 
-  if (bandStatus === 'BELOW_CONTROL' || bandStatus === 'AT_CONTROL') {
-    reasonCodes.push(bandStatus === 'BELOW_CONTROL' ? 'BELOW_CONTROLLING_RETENTION' : 'AT_CONTROLLING_RETENTION');
-    recAction = (actionOverride && actionOverride !== releaseAction) ? actionOverride : holdAction;
+  // Check missing or stale SNP87 fail-closed condition (stale data with valid forecast protects forecast retention)
+  const isStale = (planningContext && planningContext.dataFreshnessStatus === 'STALE') ||
+    (productionContext && productionContext.dataFreshnessStatus === 'STALE');
+  const isMissing = (planningContext && planningContext.dataFreshnessStatus === 'MISSING') ||
+    (productionContext && productionContext.dataFreshnessStatus === 'MISSING');
+
+  const shouldFailClosed = isMissing || (isStale && !hasSnp87ForecastData);
+
+  if (shouldFailClosed) {
+    recAction = reviewAction;
     recQty = 0;
-
-    if (shortfallQuantity > effTarget * 0.5) {
-      recPrio = urgentPriority || normalPriority;
-    }
-
-    if (hasDelay || hasShutdown || !isScheduled || productionRiskStatus === 'STOPPED') {
-      riskLines.push(`Production risks elevated (${productionRiskStatus}). Review scheduled run immediately.`);
-    }
-  } else if (bandStatus === 'BELOW_TARGET') {
-    reasonCodes.push('BELOW_TARGET');
-
-    if (belowTargetBehavior === 'HOLD_UNTIL_TARGET') {
-      recAction = actionOverride || holdAction;
+    reasonCodes.push('REVIEW_REQUIRED');
+    riskLines.push('Missing or stale SNP87 planning import. Failing safely to prevent releasing stock.');
+  } else {
+    if (bandStatus === 'BELOW_CONTROL' || bandStatus === 'AT_CONTROL') {
+      reasonCodes.push(bandStatus === 'BELOW_CONTROL' ? 'BELOW_CONTROLLING_RETENTION' : 'AT_CONTROLLING_RETENTION');
+      recAction = (actionOverride && actionOverride !== releaseAction) ? actionOverride : holdAction;
       recQty = 0;
-    } else if (belowTargetBehavior === 'RELEASE_ABOVE_CONTROL') {
+
+      if (shortfallQuantity > effTarget * 0.5) {
+        recPrio = highPriority || normalPriority;
+      }
+
+      if (hasDelay || hasShutdown || !isScheduled || productionRiskStatus === 'STOPPED') {
+        riskLines.push(`Production risks elevated (${productionRiskStatus}). Review scheduled run immediately.`);
+      }
+    } else if (bandStatus === 'BELOW_TARGET') {
+      reasonCodes.push('BELOW_TARGET');
+
+      if (belowTargetBehavior === 'HOLD_UNTIL_TARGET') {
+        recAction = actionOverride || holdAction;
+        recQty = 0;
+      } else if (belowTargetBehavior === 'RELEASE_ABOVE_CONTROL') {
+        recAction = actionOverride || releaseAction;
+        recQty = availableToRelease;
+      } else if (belowTargetBehavior === 'AS_PER_SCHEDULE') {
+        recAction = config?.asPerScheduleActionId || holdAction;
+        recQty = 0;
+        reasonCodes.push('AS_PER_SCHEDULE');
+      } else if (belowTargetBehavior === 'PLANNER_REVIEW') {
+        recAction = reviewAction;
+        recQty = 0;
+        reasonCodes.push('REVIEW_REQUIRED');
+      }
+
+      if (isPromoActive && (!isScheduled || (daysUntilNextProduction !== null && daysUntilNextProduction > 4))) {
+        reasonCodes.push('PROMOTION_AND_PRODUCTION_RISK');
+        exceptions.push({ message: 'Active promotion with no near production run scheduled.', severity: 'WARNING' });
+        riskLines.push('Active promotion with no near-term scheduled production increases retention concern.');
+        if (belowTargetBehavior === 'RELEASE_ABOVE_CONTROL') {
+          recAction = holdAction;
+          recQty = 0;
+        }
+      }
+    } else if (bandStatus === 'AT_TARGET' || bandStatus === 'ABOVE_TARGET') {
+      reasonCodes.push(bandStatus === 'AT_TARGET' ? 'AT_TARGET' : 'ABOVE_TARGET');
       recAction = actionOverride || releaseAction;
       recQty = availableToRelease;
-    } else if (belowTargetBehavior === 'AS_PER_SCHEDULE') {
-      recAction = config?.asPerScheduleActionId || holdAction;
-      recQty = 0;
-      reasonCodes.push('AS_PER_SCHEDULE');
-    } else if (belowTargetBehavior === 'PLANNER_REVIEW') {
-      recAction = reviewAction;
-      recQty = 0;
-      reasonCodes.push('REVIEW_REQUIRED');
-    }
 
-    if (isPromoActive && (!isScheduled || (daysUntilNextProduction !== null && daysUntilNextProduction > 4))) {
-      reasonCodes.push('PROMOTION_AND_PRODUCTION_RISK');
-      exceptions.push({ message: 'Active promotion with no near production run scheduled.', severity: 'WARNING' });
-      riskLines.push('Active promotion with no near-term scheduled production increases retention concern.');
-      if (belowTargetBehavior === 'RELEASE_ABOVE_CONTROL') {
-        recAction = holdAction;
-        recQty = 0;
+      if (plannedPalletsNext7Days > 0 && (qoh + plannedPalletsNext7Days > effMax)) {
+        reasonCodes.push('UPCOMING_PRODUCTION_CAPACITY_RISK');
+        exceptions.push({ message: 'Upcoming production poses warehouse capacity overflow risk.', severity: 'WARNING' });
+        riskLines.push(`Upcoming production of ${plannedPalletsNext7Days} pallets exceeds max capacity headroom.`);
       }
-    }
-  } else if (bandStatus === 'AT_TARGET' || bandStatus === 'ABOVE_TARGET') {
-    reasonCodes.push(bandStatus === 'AT_TARGET' ? 'AT_TARGET' : 'ABOVE_TARGET');
-    recAction = actionOverride || releaseAction;
-    recQty = availableToRelease;
+    } else if (bandStatus === 'ABOVE_MAXIMUM') {
+      reasonCodes.push('ABOVE_MAXIMUM');
+      recAction = actionOverride || releaseAction;
+      recQty = availableToRelease;
+      recPrio = highPriority || normalPriority;
 
-    if (plannedPalletsNext7Days > 0 && (qoh + plannedPalletsNext7Days > effMax)) {
-      reasonCodes.push('UPCOMING_PRODUCTION_CAPACITY_RISK');
-      exceptions.push({ message: 'Upcoming production poses warehouse capacity overflow risk.', severity: 'WARNING' });
-      riskLines.push(`Upcoming production of ${plannedPalletsNext7Days} pallets exceeds max capacity headroom.`);
-    }
-  } else if (bandStatus === 'ABOVE_MAXIMUM') {
-    reasonCodes.push('ABOVE_MAXIMUM');
-    recAction = actionOverride || releaseAction;
-    recQty = availableToRelease;
-    recPrio = urgentPriority || normalPriority;
-
-    if (plannedPalletsNext7Days > 0) {
-      reasonCodes.push('UPCOMING_PRODUCTION_CAPACITY_RISK');
-      riskLines.push(`Warehouse is ABOVE maximum capacity by ${qoh - effMax} pallets. Further production of ${plannedPalletsNext7Days} pallets scheduled.`);
+      if (plannedPalletsNext7Days > 0) {
+        reasonCodes.push('UPCOMING_PRODUCTION_CAPACITY_RISK');
+        riskLines.push(`Warehouse is ABOVE maximum capacity by ${qoh - effMax} pallets. Further production of ${plannedPalletsNext7Days} pallets scheduled.`);
+      }
     }
   }
 
@@ -718,6 +873,9 @@ export const evaluateDecision = (
   } else if (recDest) {
     reasonCodes.push('PREFERRED_DESTINATION');
   }
+
+  // Enforce decision engine priority ceiling: Maximum priority of HIGH (never URGENT)
+  recPrio = capPriorityAtHigh(recPrio, config);
 
   // 11. Run Output Validation
   const tempOutput = {
@@ -749,7 +907,7 @@ export const evaluateDecision = (
   thresholdLines.push(`- Minimum Retention: ${effMin} (Base: ${baseMin}, Promo Adjust: +${effMin - baseMin})`);
   thresholdLines.push(`- Target Inventory: ${effTarget} (Base: ${baseTarget}, Promo Adjust: +${effTarget - baseTarget})`);
   thresholdLines.push(`- Maximum Inventory: ${effMax} (Base: ${baseMax}, Promo Adjust: +${effMax - baseMax})`);
-  thresholdLines.push(`- Base Retention Requirement: ${baseControllingRetention} (${planningRule!.controllingThresholdMode})`);
+  thresholdLines.push(`- Base Retention Requirement: ${baseControllingRetention} (${effectiveRule.controllingThresholdMode})`);
   if (stoProtectedQuantity > 0) {
     thresholdLines.push(`- Northfleet STO Protected Stock: ${stoProtectedQuantity} cases`);
   }
@@ -772,7 +930,7 @@ export const evaluateDecision = (
   recommendationLines.push(`- Planning Band Status: ${bandStatus}`);
 
   traceLines.push(`1. Evaluated QOH (${qoh}) vs Controlling Retention (${controllingRetention}). Available = ${availableToRelease}.`);
-  traceLines.push(`2. Band Status resolved to ${bandStatus} under mode ${planningRule!.controllingThresholdMode}.`);
+  traceLines.push(`2. Band Status resolved to ${bandStatus} under mode ${effectiveRule.controllingThresholdMode}.`);
   traceLines.push(`3. Below target behavior: ${belowTargetBehavior}. Recommended action: ${recAction}, qty: ${recQty}.`);
 
   const structuredExplanation: StructuredExplanation = {
