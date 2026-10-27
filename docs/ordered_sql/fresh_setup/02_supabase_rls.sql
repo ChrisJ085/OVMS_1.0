@@ -79,6 +79,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' STABLE;
 CREATE OR REPLACE FUNCTION ovms_internal.trg_users_prevent_escalation()
 RETURNS trigger AS $$
 BEGIN
+    IF auth.uid() IS NULL OR current_setting('role', true) IN ('service_role', 'postgres', 'supabase_admin') THEN
+        RETURN NEW;
+    END IF;
+
     IF ovms_internal.is_platform_superuser() THEN
         RETURN NEW;
     END IF;
@@ -454,33 +458,72 @@ CREATE POLICY "ProductionPlanEntries: Insert" ON public.production_plan_entries 
 CREATE POLICY "ProductionPlanEntries: Update" ON public.production_plan_entries FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "ProductionPlanEntries: Delete" ON public.production_plan_entries FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- Table: snp87_imports
-ALTER TABLE IF EXISTS public.snp87_imports ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Snp87Imports: Select" ON public.snp87_imports FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "Snp87Imports: Insert" ON public.snp87_imports FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "Snp87Imports: Update" ON public.snp87_imports FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "Snp87Imports: Delete" ON public.snp87_imports FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+-- Table or Compatibility View: snp87_imports (and underlying snp87_planning_imports if present)
+DO $snp87_rls$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'snp87_imports') THEN
+        ALTER TABLE public.snp87_imports ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "Snp87Imports: Select" ON public.snp87_imports FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "Snp87Imports: Insert" ON public.snp87_imports FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "Snp87Imports: Update" ON public.snp87_imports FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "Snp87Imports: Delete" ON public.snp87_imports FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'snp87_imports') THEN
+        ALTER VIEW public.snp87_imports SET (security_invoker = true);
+    END IF;
 
--- Table: snp87_planning_rows
-ALTER TABLE IF EXISTS public.snp87_planning_rows ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Snp87PlanningRows: Select" ON public.snp87_planning_rows FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "Snp87PlanningRows: Insert" ON public.snp87_planning_rows FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "Snp87PlanningRows: Update" ON public.snp87_planning_rows FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "Snp87PlanningRows: Delete" ON public.snp87_planning_rows FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'snp87_planning_imports') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.snp87_planning_imports TO authenticated;
+        ALTER TABLE public.snp87_planning_imports ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "Snp87PlanningImports: Select" ON public.snp87_planning_imports FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "Snp87PlanningImports: Insert" ON public.snp87_planning_imports FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "Snp87PlanningImports: Update" ON public.snp87_planning_imports FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "Snp87PlanningImports: Delete" ON public.snp87_planning_imports FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'snp87_planning_imports') THEN
+        ALTER VIEW public.snp87_planning_imports SET (security_invoker = true);
+    END IF;
+END $snp87_rls$;
 
--- Table: northfleet_sto_imports
-ALTER TABLE IF EXISTS public.northfleet_sto_imports ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "NorthfleetStoImports: Select" ON public.northfleet_sto_imports FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "NorthfleetStoImports: Insert" ON public.northfleet_sto_imports FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "NorthfleetStoImports: Update" ON public.northfleet_sto_imports FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "NorthfleetStoImports: Delete" ON public.northfleet_sto_imports FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+-- Table or View: snp87_planning_rows
+DO $snp87_rows_rls$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'snp87_planning_rows') THEN
+        ALTER TABLE public.snp87_planning_rows ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "Snp87PlanningRows: Select" ON public.snp87_planning_rows FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "Snp87PlanningRows: Insert" ON public.snp87_planning_rows FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "Snp87PlanningRows: Update" ON public.snp87_planning_rows FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "Snp87PlanningRows: Delete" ON public.snp87_planning_rows FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'snp87_planning_rows') THEN
+        ALTER VIEW public.snp87_planning_rows SET (security_invoker = true);
+    END IF;
+END $snp87_rows_rls$;
 
--- Table: northfleet_sto_requirements
-ALTER TABLE IF EXISTS public.northfleet_sto_requirements ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "NorthfleetStoRequirements: Select" ON public.northfleet_sto_requirements FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "NorthfleetStoRequirements: Insert" ON public.northfleet_sto_requirements FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "NorthfleetStoRequirements: Update" ON public.northfleet_sto_requirements FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "NorthfleetStoRequirements: Delete" ON public.northfleet_sto_requirements FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+-- Table or View: northfleet_sto_imports
+DO $sto_imports_rls$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'northfleet_sto_imports') THEN
+        ALTER TABLE public.northfleet_sto_imports ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "NorthfleetStoImports: Select" ON public.northfleet_sto_imports FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "NorthfleetStoImports: Insert" ON public.northfleet_sto_imports FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "NorthfleetStoImports: Update" ON public.northfleet_sto_imports FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "NorthfleetStoImports: Delete" ON public.northfleet_sto_imports FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'northfleet_sto_imports') THEN
+        ALTER VIEW public.northfleet_sto_imports SET (security_invoker = true);
+    END IF;
+END $sto_imports_rls$;
+
+-- Table or View: northfleet_sto_requirements
+DO $sto_reqs_rls$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'northfleet_sto_requirements') THEN
+        ALTER TABLE public.northfleet_sto_requirements ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "NorthfleetStoRequirements: Select" ON public.northfleet_sto_requirements FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "NorthfleetStoRequirements: Insert" ON public.northfleet_sto_requirements FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "NorthfleetStoRequirements: Update" ON public.northfleet_sto_requirements FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "NorthfleetStoRequirements: Delete" ON public.northfleet_sto_requirements FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'northfleet_sto_requirements') THEN
+        ALTER VIEW public.northfleet_sto_requirements SET (security_invoker = true);
+    END IF;
+END $sto_reqs_rls$;
 
 -- Table: site_settings
 ALTER TABLE public.site_settings ENABLE ROW LEVEL SECURITY;
@@ -496,20 +539,31 @@ CREATE POLICY "SiteOnboarding: Insert" ON public.site_onboarding FOR INSERT WITH
 CREATE POLICY "SiteOnboarding: Update" ON public.site_onboarding FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 CREATE POLICY "SiteOnboarding: Delete" ON public.site_onboarding FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
--- View: site_recommendation_runs (inherits RLS from recommendation_runs via security_invoker)
+-- View or Table: site_recommendation_runs & recommendation_runs
 DO $view_sec$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'site_recommendation_runs') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.site_recommendation_runs TO authenticated;
         ALTER VIEW public.site_recommendation_runs SET (security_invoker = true);
+    ELSIF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'site_recommendation_runs') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.site_recommendation_runs TO authenticated;
+        ALTER TABLE public.site_recommendation_runs ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "SiteRecommendationRuns: Select" ON public.site_recommendation_runs FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "SiteRecommendationRuns: Insert" ON public.site_recommendation_runs FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "SiteRecommendationRuns: Update" ON public.site_recommendation_runs FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "SiteRecommendationRuns: Delete" ON public.site_recommendation_runs FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'recommendation_runs') THEN
+        ALTER TABLE public.recommendation_runs ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY "RecommendationRuns: Select" ON public.recommendation_runs FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
+        CREATE POLICY "RecommendationRuns: Insert" ON public.recommendation_runs FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "RecommendationRuns: Update" ON public.recommendation_runs FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+        CREATE POLICY "RecommendationRuns: Delete" ON public.recommendation_runs FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'public' AND viewname = 'recommendation_runs') THEN
+        ALTER VIEW public.recommendation_runs SET (security_invoker = true);
     END IF;
 END $view_sec$;
-
--- Table: recommendation_runs
-ALTER TABLE IF EXISTS public.recommendation_runs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "RecommendationRuns: Select" ON public.recommendation_runs FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "RecommendationRuns: Insert" ON public.recommendation_runs FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "RecommendationRuns: Update" ON public.recommendation_runs FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "RecommendationRuns: Delete" ON public.recommendation_runs FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: sessions
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;

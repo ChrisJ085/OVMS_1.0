@@ -4,7 +4,7 @@ import { TenantDeletionWorkflow } from './components/TenantDeletionWorkflow';
 import { SiteSettings } from '../../../types/settings';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
-import { supabase } from '../../../config/supabase';
+import { supabase, supabasePublishableKey } from '../../../config/supabase';
 import { 
   CheckCircle2, 
   AlertTriangle, 
@@ -737,7 +737,8 @@ export const AdminOverviewPage: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'x-supabase-anon-key': supabasePublishableKey
         },
         body: JSON.stringify({
           userId: targetUid,
@@ -800,7 +801,8 @@ export const AdminOverviewPage: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'x-supabase-anon-key': supabasePublishableKey
         },
         body: JSON.stringify({
           userId: targetUid
@@ -871,7 +873,8 @@ export const AdminOverviewPage: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'x-supabase-anon-key': supabasePublishableKey
         },
         body: JSON.stringify({
           targetUserId: targetUid,
@@ -927,7 +930,8 @@ export const AdminOverviewPage: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'x-supabase-anon-key': supabasePublishableKey
         },
         body: JSON.stringify({
           email: newUserEmail.toLowerCase().trim(),

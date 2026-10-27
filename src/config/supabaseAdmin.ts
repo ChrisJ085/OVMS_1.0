@@ -37,3 +37,30 @@ export const isSupabaseAdminConfigured = (): boolean => {
     !supabaseAdminSecretKey.includes('placeholder')
   );
 };
+
+export const createCallerSupabaseClient = (callerToken: string, customAnonKey?: string): SupabaseClient => {
+  const url = normalizeSupabaseUrl(
+    getEnvVar('SUPABASE_URL') || getEnvVar('VITE_SUPABASE_URL') || supabaseAdminUrl
+  );
+  const anonKey =
+    (customAnonKey && customAnonKey.trim()) ||
+    getEnvVar('SUPABASE_PUBLISHABLE_KEY') ||
+    getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
+    getEnvVar('SUPABASE_ANON_KEY') ||
+    getEnvVar('VITE_SUPABASE_ANON_KEY') ||
+    supabaseAdminSecretKey;
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${callerToken}`,
+      },
+    },
+  });
+};
+
