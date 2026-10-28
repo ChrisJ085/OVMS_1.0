@@ -104,7 +104,6 @@ BEGIN
             NEW.tenant_id := OLD.tenant_id;
             NEW.failed_login_attempts := OLD.failed_login_attempts;
             NEW.locked_at := OLD.locked_at;
-            NEW.requires_password_change := OLD.requires_password_change;
         END IF;
         RETURN NEW;
     END IF;
@@ -121,7 +120,7 @@ BEGIN
         NEW.locked_at := OLD.locked_at;
 
         -- Normal users can clear their password change flag, but not set it
-        IF NEW.requires_password_change = TRUE AND OLD.requires_password_change = FALSE THEN
+        IF NEW.requires_password_change = FALSE THEN
             NEW.requires_password_change := FALSE;
         ELSE
             NEW.requires_password_change := OLD.requires_password_change;

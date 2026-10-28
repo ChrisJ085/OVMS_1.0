@@ -32,7 +32,8 @@ export async function logoutUser(): Promise<void> {
 export async function changeUserPassword(newPass: string): Promise<void> {
   try {
     const { error } = await supabase.auth.updateUser({
-      password: newPass
+      password: newPass,
+      data: { requires_password_change: false }
     });
     if (error) {
       throw error;

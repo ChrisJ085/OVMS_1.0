@@ -28,9 +28,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<AppError | null>(null);
   const [requiresPasswordChange, setRequiresPasswordChange] = useState(false);
+  const isChangingPasswordRef = React.useRef(false);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'USER_UPDATED' && isChangingPasswordRef.current) {
+        return;
+      }
       try {
         setLoading(true);
         const sbUser = session?.user || null;
@@ -169,9 +173,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error('Not logged in');
     }
     setLoading(true);
+    isChangingPasswordRef.current = true;
     try {
+      const uid = user.id || user.uid;
       await changeUserPassword(newPass);
-      await markPasswordChangedInProfile(user.id || user.uid);
+      await markPasswordChangedInProfile(uid);
       setRequiresPasswordChange(false);
       setUserProfile(prev => (prev ? { ...prev, requiresPasswordChange: false } : null));
     } catch (err) {
@@ -179,6 +185,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setAuthError(appErr);
       throw appErr;
     } finally {
+      isChangingPasswordRef.current = false;
       setLoading(false);
     }
   };
