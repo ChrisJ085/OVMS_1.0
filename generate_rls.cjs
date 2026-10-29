@@ -587,6 +587,25 @@ CREATE POLICY "PlatformDeletionReceipts: Insert" ON public.platform_deletion_rec
 CREATE POLICY "PlatformDeletionReceipts: Update" ON public.platform_deletion_receipts FOR UPDATE USING (ovms_internal.is_platform_superuser());
 CREATE POLICY "PlatformDeletionReceipts: Delete" ON public.platform_deletion_receipts FOR DELETE USING (ovms_internal.is_platform_superuser());
 
+-- 7. Enable Realtime Broadcasts for User & Tenant Security State Enforcement
+DO $realtime_pub$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables
+            WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'users'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE public.users;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables
+            WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'tenants'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE public.tenants;
+        END IF;
+    END IF;
+END $realtime_pub$;
+
 `;
 
 fs.writeFileSync('docs/supabase_rls.sql', sql);

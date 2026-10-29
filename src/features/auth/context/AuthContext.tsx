@@ -130,6 +130,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               await logoutUser();
               setUser(null);
               setUserProfile(null);
+              setRequiresPasswordChange(false);
               setAuthError({
                 userMessage: `Your organization's account is currently ${tenantStatus === 'inactive' ? 'inactive' : 'pending deletion'}. Please contact support.`,
                 code: 'TENANT_DEACTIVATED'
@@ -144,6 +145,122 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
     }
   }, [userProfile?.tenantId, userProfile?.role]);
+
+  useEffect(() => {
+    if (!userProfile?.id) return;
+
+    const handleSecurityRowCheck = async (
+      accountStatus: string | undefined,
+      needsPassChange: boolean,
+      rowUpdatedAt?: string | null
+    ) => {
+      if (isChangingPasswordRef.current) return;
+
+      if (accountStatus && accountStatus !== 'ACTIVE' && accountStatus !== 'active') {
+        await logoutUser();
+        setUser(null);
+        setUserProfile(null);
+        setRequiresPasswordChange(false);
+        setAuthError({
+          userMessage: `Your account is currently ${String(accountStatus).toLowerCase()}. Please contact your administrator.`,
+          code: 'ACCOUNT_LOCKED'
+        });
+        return;
+      }
+
+      const wasResetWhileActive = !requiresPasswordChange && needsPassChange;
+      const wasResetAgainWhilePending =
+        requiresPasswordChange &&
+        needsPassChange &&
+        Boolean(rowUpdatedAt && userProfile.modifiedDate && rowUpdatedAt !== userProfile.modifiedDate);
+
+      if (wasResetWhileActive || wasResetAgainWhilePending) {
+        await logoutUser();
+        setUser(null);
+        setUserProfile(null);
+        setRequiresPasswordChange(false);
+        setAuthError({
+          userMessage: 'Your password has been reset by an administrator. Please sign in with your new temporary password.',
+          code: 'PASSWORD_RESET_BY_ADMIN'
+        });
+      }
+    };
+
+    const userChannel = supabase
+      .channel(`user_security_check_${userProfile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'users',
+          filter: `id=eq.${userProfile.id}`
+        },
+        async (payload) => {
+          const updated = payload.new as any;
+          if (!updated) return;
+          await handleSecurityRowCheck(
+            updated.account_status,
+            Boolean(updated.requires_password_change),
+            updated.updated_at
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'users',
+          filter: `id=eq.${userProfile.id}`
+        },
+        async () => {
+          await logoutUser();
+          setUser(null);
+          setUserProfile(null);
+          setRequiresPasswordChange(false);
+          setAuthError({
+            userMessage: 'Your account has been removed by an administrator.',
+            code: 'ACCOUNT_REMOVED'
+          });
+        }
+      )
+      .subscribe();
+
+    const verifyCurrentSessionSecurity = async () => {
+      if (document.visibilityState !== 'visible' || isChangingPasswordRef.current) return;
+      try {
+        const latestProfile = await fetchUserProfile(userProfile.id);
+        if (!latestProfile) {
+          await logoutUser();
+          setUser(null);
+          setUserProfile(null);
+          setRequiresPasswordChange(false);
+          setAuthError({
+            userMessage: 'Your session is no longer valid. Please sign in again.',
+            code: 'PROFILE_NOT_PROVISIONED'
+          });
+          return;
+        }
+        await handleSecurityRowCheck(
+          latestProfile.accountStatus,
+          latestProfile.requiresPasswordChange,
+          latestProfile.modifiedDate
+        );
+      } catch {
+        // Ignore transient network errors during background visibility check
+      }
+    };
+
+    window.addEventListener('focus', verifyCurrentSessionSecurity);
+    document.addEventListener('visibilitychange', verifyCurrentSessionSecurity);
+
+    return () => {
+      supabase.removeChannel(userChannel);
+      window.removeEventListener('focus', verifyCurrentSessionSecurity);
+      document.removeEventListener('visibilitychange', verifyCurrentSessionSecurity);
+    };
+  }, [userProfile?.id, userProfile?.modifiedDate, requiresPasswordChange]);
 
   const login = async (email: string, pass: string) => {
     setLoading(true);

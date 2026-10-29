@@ -1013,13 +1013,24 @@ router.post("/admin/reset-user-password", async (req, res) => {
     }
 
     currentStage = "SUPABASE_AUTH_UPDATE";
+    const nowIso = new Date().toISOString();
     const { error: updateAuthErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
       password: temporaryPassword.trim(),
-      user_metadata: { requires_password_change: true }
+      user_metadata: { requires_password_change: true, password_reset_at: nowIso }
     });
 
     if (updateAuthErr) {
       return res.status(400).json({ success: false, error: `Failed to update auth password: ${updateAuthErr.message}`, stage: currentStage });
+    }
+
+    // Revoke all active refresh tokens / sessions for this user across devices
+    try {
+      const adminAuthAny = supabaseAdmin.auth.admin as any;
+      if (typeof adminAuthAny.signOut === 'function') {
+        await adminAuthAny.signOut(userId, 'global');
+      }
+    } catch (signOutErr) {
+      console.warn('[Admin Reset Password] Non-fatal warning revoking user sessions:', signOutErr);
     }
 
     currentStage = "USER_PROFILE_UPDATE";
@@ -1031,7 +1042,7 @@ router.post("/admin/reset-user-password", async (req, res) => {
       .from('users')
       .update({
         requires_password_change: true,
-        updated_at: new Date().toISOString()
+        updated_at: nowIso
       })
       .eq('id', userId);
     if (resetProfErr) {
@@ -1039,7 +1050,7 @@ router.post("/admin/reset-user-password", async (req, res) => {
         .from('users')
         .update({
           requires_password_change: true,
-          updated_at: new Date().toISOString()
+          updated_at: nowIso
         })
         .eq('id', userId);
     }

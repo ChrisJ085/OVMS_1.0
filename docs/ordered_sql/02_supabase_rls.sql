@@ -282,15 +282,15 @@ CREATE POLICY "UserFavorites: Delete" ON public.user_favorites FOR DELETE USING 
 -- Table: product_categories
 ALTER TABLE IF EXISTS public.product_categories ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "ProductCategories: Select" ON public.product_categories FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
-CREATE POLICY "ProductCategories: Insert" ON public.product_categories FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "ProductCategories: Update" ON public.product_categories FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "ProductCategories: Insert" ON public.product_categories FOR INSERT WITH CHECK (ovms_internal.has_tenant_access(tenant_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "ProductCategories: Update" ON public.product_categories FOR UPDATE USING (ovms_internal.has_tenant_access(tenant_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "ProductCategories: Delete" ON public.product_categories FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: units_of_measure
 ALTER TABLE IF EXISTS public.units_of_measure ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "UnitsOfMeasure: Select" ON public.units_of_measure FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
-CREATE POLICY "UnitsOfMeasure: Insert" ON public.units_of_measure FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "UnitsOfMeasure: Update" ON public.units_of_measure FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "UnitsOfMeasure: Insert" ON public.units_of_measure FOR INSERT WITH CHECK (ovms_internal.has_tenant_access(tenant_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "UnitsOfMeasure: Update" ON public.units_of_measure FOR UPDATE USING (ovms_internal.has_tenant_access(tenant_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "UnitsOfMeasure: Delete" ON public.units_of_measure FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: action_types
@@ -303,8 +303,8 @@ CREATE POLICY "ActionTypes: Delete" ON public.action_types FOR DELETE USING (ovm
 -- Table: products
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Products: Select" ON public.products FOR SELECT USING (ovms_internal.has_tenant_access(tenant_id));
-CREATE POLICY "Products: Insert" ON public.products FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "Products: Update" ON public.products FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "Products: Insert" ON public.products FOR INSERT WITH CHECK (ovms_internal.has_tenant_access(tenant_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "Products: Update" ON public.products FOR UPDATE USING (ovms_internal.has_tenant_access(tenant_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "Products: Delete" ON public.products FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: production_lines
@@ -376,8 +376,8 @@ CREATE POLICY "PriorityEvents: Delete" ON public.priority_events FOR DELETE USIN
 -- Table: inventory_balances
 ALTER TABLE public.inventory_balances ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "InventoryBalances: Select" ON public.inventory_balances FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "InventoryBalances: Insert" ON public.inventory_balances FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "InventoryBalances: Update" ON public.inventory_balances FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "InventoryBalances: Insert" ON public.inventory_balances FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "InventoryBalances: Update" ON public.inventory_balances FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "InventoryBalances: Delete" ON public.inventory_balances FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: inventory_movements
@@ -404,8 +404,8 @@ CREATE POLICY "Recommendations: Delete" ON public.recommendations FOR DELETE USI
 -- Table: planning_rules
 ALTER TABLE public.planning_rules ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "PlanningRules: Select" ON public.planning_rules FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
-CREATE POLICY "PlanningRules: Insert" ON public.planning_rules FOR INSERT WITH CHECK (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
-CREATE POLICY "PlanningRules: Update" ON public.planning_rules FOR UPDATE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "PlanningRules: Insert" ON public.planning_rules FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
+CREATE POLICY "PlanningRules: Update" ON public.planning_rules FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "PlanningRules: Delete" ON public.planning_rules FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
 
 -- Table: decision_configurations
