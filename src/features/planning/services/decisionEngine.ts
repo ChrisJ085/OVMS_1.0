@@ -33,7 +33,10 @@ export const DEFAULT_DECISION_CONFIG: DecisionConfiguration = {
   inventoryStalenessHoursThreshold: 24,
   productionStalenessHoursThreshold: 24,
   nearProductionDaysWindow: 7,
-  capacityWarningThresholdPercentage: 100
+  capacityWarningThresholdPercentage: 100,
+  planningHorizonDays: 4,
+  maxDaysOfSupplyThreshold: 14,
+  protectUnreplenishedFutureForecast: true
 };
 
 /**
@@ -106,7 +109,9 @@ export const generateDeterministicHash = (input: DecisionInputSnapshot): string 
       }
     })),
     outstandingStoCases: input.outstandingStoCases || 0,
-    configVersion: input.configuration?.configurationVersion || 'none'
+    configVersion: input.configuration?.configurationVersion || 'none',
+    planningHorizonDays: input.configuration?.planningHorizonDays ?? 4,
+    maxDaysOfSupplyThreshold: input.configuration?.maxDaysOfSupplyThreshold ?? 14
   };
 
   const str = JSON.stringify(payload);
@@ -608,10 +613,41 @@ export const evaluateDecision = (
   const isSnp87Stale = planningContext?.dataFreshnessStatus === 'STALE';
   const isSnp87Missing = !planningContext || planningContext.dataFreshnessStatus === 'MISSING';
 
-  const snp87Chron = calculateSnp87ChronologicalRequirement(planningContext, evaluationTime);
+  const horizonDays = config?.planningHorizonDays || 4;
+  const maxDosThreshold = config?.maxDaysOfSupplyThreshold || 14;
+  const protectFutureForecast = config?.protectUnreplenishedFutureForecast !== false;
+
+  const snp87Chron = calculateSnp87ChronologicalRequirement(
+    planningContext,
+    evaluationTime,
+    horizonDays,
+    effectiveProdContext,
+    protectFutureForecast
+  );
   const dynamicRetailDemand = (hasSnp87ForecastData && !isSnp87Missing)
     ? snp87Chron.retailDemandRequirement
     : 0;
+
+  if (snp87Chron.isFutureForecastProtected) {
+    reasonCodes.push('FUTURE_FORECAST_PROTECTED');
+    productionLines.push(
+      `- Protected Unreplenished Future Forecast: Retained ${snp87Chron.unreplenishedFutureForecastCases} cases for upcoming SNP87 forecast demand on ${snp87Chron.peakSnapshotDeficitDate || 'future date'} without prior scheduled production replenishment.`
+    );
+  }
+
+  if (snp87Chron.isBalancedWithProduction) {
+    reasonCodes.push('PRODUCTION_FORECAST_BALANCED');
+    productionLines.push(
+      `- Scheduled production (${snp87Chron.totalHorizonConfirmedProduction} cases) balanced forward forecast demand (${snp87Chron.totalHorizonForecast} cases) over ${snp87Chron.planningHorizonDays}-day horizon; holding requirement reduced by ${snp87Chron.productionOffsetQuantity} cases.`
+    );
+  }
+
+  if (planningContext?.pastDueForecastCasesIgnored && planningContext.pastDueForecastCasesIgnored > 0) {
+    reasonCodes.push('FORECAST_PAST_DUE_IGNORED');
+    currentFactsLines.push(
+      `- Forecast Past-Due Excluded: ${planningContext.pastDueForecastCasesIgnored} cases ignored (forecast dates strictly prior to evaluation date).`
+    );
+  }
 
   if (isSnp87Stale && !reasonCodes.includes('PRODUCTION_SOURCE_STALE')) {
     dataQualityIssues.push({
@@ -752,6 +788,28 @@ export const evaluateDecision = (
   const availableToRelease = Math.max(0, qoh - controllingRetention);
   const shortfallQuantity = Math.max(0, controllingRetention - qoh);
   const headroomToMaximum = Math.max(0, effMax - qoh);
+
+  // Days-of-Supply (DoS) Capacity Evaluation
+  let avgDailyDemandPallets = 0;
+  if (planningContext && snp87Chron.totalHorizonForecast > 0) {
+    const cpp = planningContext.casesPerPallet && planningContext.casesPerPallet > 0 ? planningContext.casesPerPallet : 1;
+    avgDailyDemandPallets = (snp87Chron.totalHorizonForecast / horizonDays) / cpp;
+  } else if (effTarget > 0) {
+    avgDailyDemandPallets = effTarget / 7;
+  } else if (baseMin > 0) {
+    avgDailyDemandPallets = baseMin / horizonDays;
+  }
+
+  const daysOfSupply = avgDailyDemandPallets > 0 ? Math.round((qoh / avgDailyDemandPallets) * 10) / 10 : null;
+  const isDosExceeded = daysOfSupply !== null && daysOfSupply > maxDosThreshold;
+  if (isDosExceeded) {
+    reasonCodes.push('DAYS_OF_SUPPLY_CAPACITY_EXCEEDED');
+    exceptions.push({
+      message: `Warehouse inventory represents ${daysOfSupply} Days of Supply, exceeding buffer limit of ${maxDosThreshold} days.`,
+      severity: 'WARNING'
+    });
+    riskLines.push(`High Days-of-Supply (${daysOfSupply} days vs ${maxDosThreshold} day buffer limit) creates warehouse congestion risk.`);
+  }
 
   let bandStatus: PlanningBandStatus;
   if (qoh < controllingRetention) bandStatus = 'BELOW_CONTROL';
@@ -900,6 +958,9 @@ export const evaluateDecision = (
   // 12. Build Structured Explanation
   currentFactsLines.push(`- Current Stock on Hand (QOH): ${qoh} pallets`);
   currentFactsLines.push(`- Product Code: ${input.productCodeSnapshot}`);
+  if (daysOfSupply !== null) {
+    currentFactsLines.push(`- Days of Supply (DoS): ${daysOfSupply} days (Buffer Limit: ${maxDosThreshold} days)`);
+  }
   if (inventoryUpdatedAt) {
     currentFactsLines.push(`- Inventory Last Updated: ${inventoryUpdatedAt.toLocaleString()}`);
   }
@@ -929,7 +990,7 @@ export const evaluateDecision = (
   recommendationLines.push(`- Priority Level: ${recPrio || 'Normal'}`);
   recommendationLines.push(`- Planning Band Status: ${bandStatus}`);
 
-  traceLines.push(`1. Evaluated QOH (${qoh}) vs Controlling Retention (${controllingRetention}). Available = ${availableToRelease}.`);
+  traceLines.push(`1. Evaluated QOH (${qoh}) vs Controlling Retention (${controllingRetention}). Available = ${availableToRelease}.${daysOfSupply !== null ? ` DoS = ${daysOfSupply} days (threshold: ${maxDosThreshold}).` : ''}`);
   traceLines.push(`2. Band Status resolved to ${bandStatus} under mode ${effectiveRule.controllingThresholdMode}.`);
   traceLines.push(`3. Below target behavior: ${belowTargetBehavior}. Recommended action: ${recAction}, qty: ${recQty}.`);
 

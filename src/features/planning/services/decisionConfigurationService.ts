@@ -96,7 +96,10 @@ export const ensureDefaultDecisionConfiguration = async (
       inventoryStalenessHoursThreshold: 24,
       productionStalenessHoursThreshold: 24,
       nearProductionDaysWindow: 7,
-      capacityWarningThresholdPercentage: 100
+      capacityWarningThresholdPercentage: 100,
+      planningHorizonDays: 4,
+      maxDaysOfSupplyThreshold: 14,
+      protectUnreplenishedFutureForecast: true
     };
 
     await saveDecisionConfiguration(tenantId, siteId, defaultConfig);
@@ -227,6 +230,9 @@ export const getDecisionConfiguration = async (
       productionStalenessHoursThreshold: configData.productionStalenessHoursThreshold ?? 24,
       nearProductionDaysWindow: configData.nearProductionDaysWindow ?? 7,
       capacityWarningThresholdPercentage: configData.capacityWarningThresholdPercentage ?? 100,
+      planningHorizonDays: configData.planningHorizonDays ?? 4,
+      maxDaysOfSupplyThreshold: configData.maxDaysOfSupplyThreshold ?? 14,
+      protectUnreplenishedFutureForecast: configData.protectUnreplenishedFutureForecast !== false,
       
       validActionIds: activeActionTypes,
       validPriorityIds: activePriorityLevels,
@@ -403,7 +409,9 @@ export const autoConfigureDecisionSettings = async (
       inventoryStalenessHoursThreshold: existingConfigData?.inventoryStalenessHoursThreshold ?? 24,
       productionStalenessHoursThreshold: existingConfigData?.productionStalenessHoursThreshold ?? 24,
       nearProductionDaysWindow: existingConfigData?.nearProductionDaysWindow ?? 7,
-      capacityWarningThresholdPercentage: existingConfigData?.capacityWarningThresholdPercentage ?? 100
+      capacityWarningThresholdPercentage: existingConfigData?.capacityWarningThresholdPercentage ?? 100,
+      planningHorizonDays: existingConfigData?.planningHorizonDays ?? 4,
+      maxDaysOfSupplyThreshold: existingConfigData?.maxDaysOfSupplyThreshold ?? 14
     };
 
     const saveResult = await saveDecisionConfiguration(tenantId, siteId, newConfig);

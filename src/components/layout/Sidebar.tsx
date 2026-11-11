@@ -182,21 +182,23 @@ export const Sidebar: React.FC = () => {
             <div className="space-y-0.5">
               {favorites.map((fav) => {
                 return (
-                  <NavLink
+                  <div
                     key={`fav-${fav.path}`}
-                    to={fav.path}
-                    className={({ isActive }) =>
-                      `group flex items-center justify-between px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                        isActive
-                          ? 'bg-amber-500/15 text-amber-300 font-semibold'
-                          : 'text-slate-300 hover:text-white hover:bg-slate-900/90'
-                      }`
-                    }
+                    className="group flex items-center justify-between px-2.5 py-1 text-xs font-medium rounded-md transition-colors hover:bg-slate-900/90"
                   >
-                    <div className="flex items-center gap-2.5 truncate">
+                    <NavLink
+                      to={fav.path}
+                      className={({ isActive }) =>
+                        `flex-1 flex items-center gap-2.5 truncate py-0.5 ${
+                          isActive
+                            ? 'text-amber-300 font-semibold'
+                            : 'text-slate-300 hover:text-white'
+                        }`
+                      }
+                    >
                       <Star className="w-3.5 h-3.5 shrink-0 fill-amber-400 text-amber-400" />
                       <span className="truncate">{fav.title}</span>
-                    </div>
+                    </NavLink>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -205,11 +207,11 @@ export const Sidebar: React.FC = () => {
                         toggleFavorite({ path: fav.path, title: fav.title, iconName: fav.iconName, groupTitle: fav.groupTitle });
                       }}
                       title="Remove from favorites"
-                      className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-amber-400 p-0.5 rounded transition-opacity"
+                      className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-amber-400 p-1 rounded transition-opacity cursor-pointer ml-1"
                     >
                       <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
                     </button>
-                  </NavLink>
+                  </div>
                 );
               })}
             </div>
@@ -250,50 +252,48 @@ export const Sidebar: React.FC = () => {
                       });
                     }}
                   >
-                    <div className="relative group">
+                    <div className="relative group flex items-center justify-between rounded-md transition-all hover:bg-slate-900">
                       <NavLink
                         to={item.path}
                         title={isCollapsed ? `${item.label} (${group.title})` : undefined}
                         className={({ isActive }) =>
-                          `flex items-center ${
-                            isCollapsed ? 'justify-center px-0 py-2.5' : 'justify-between px-3 py-2'
-                          } text-sm font-medium rounded-md transition-all ${
+                          `flex-1 flex items-center ${
+                            isCollapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2'
+                          } text-sm font-medium transition-all ${
                             isActive
-                              ? 'bg-brand-500/10 text-brand-400 font-semibold'
-                              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
+                              ? 'text-brand-400 font-semibold'
+                              : 'text-slate-400 hover:text-slate-100'
                           }`
                         }
                       >
-                        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} truncate`}>
-                          <item.icon className="w-4 h-4 shrink-0" />
-                          {!isCollapsed && <span className="truncate text-xs">{item.label}</span>}
-                        </div>
-
-                        {/* Favorite Star Toggle (Expanded Mode) */}
-                        {!isCollapsed && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              toggleFavorite({
-                                path: item.path,
-                                title: item.label,
-                                iconName: item.iconName,
-                                groupTitle: group.title
-                              });
-                            }}
-                            title={itemFavorited ? 'Remove from favorites' : 'Add to favorites'}
-                            className={`p-1 rounded transition-all cursor-pointer ${
-                              itemFavorited
-                                ? 'text-amber-400 opacity-100'
-                                : 'text-slate-600 hover:text-amber-400 opacity-0 group-hover:opacity-100'
-                            }`}
-                          >
-                            <Star className={`w-3.5 h-3.5 ${itemFavorited ? 'fill-amber-400 text-amber-400' : ''}`} />
-                          </button>
-                        )}
+                        <item.icon className="w-4 h-4 shrink-0" />
+                        {!isCollapsed && <span className="truncate text-xs">{item.label}</span>}
                       </NavLink>
+
+                      {/* Favorite Star Toggle (Expanded Mode) */}
+                      {!isCollapsed && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleFavorite({
+                              path: item.path,
+                              title: item.label,
+                              iconName: item.iconName,
+                              groupTitle: group.title
+                            });
+                          }}
+                          title={itemFavorited ? 'Remove from favorites' : 'Add to favorites'}
+                          className={`p-1.5 mr-1.5 rounded transition-all cursor-pointer ${
+                            itemFavorited
+                              ? 'text-amber-400 opacity-100'
+                              : 'text-slate-600 hover:text-amber-400 opacity-0 group-hover:opacity-100'
+                          }`}
+                        >
+                          <Star className={`w-3.5 h-3.5 ${itemFavorited ? 'fill-amber-400 text-amber-400' : ''}`} />
+                        </button>
+                      )}
                     </div>
                   </SidebarItemTooltip>
                 );

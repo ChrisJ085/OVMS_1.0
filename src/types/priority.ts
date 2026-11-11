@@ -58,6 +58,7 @@ export interface DisplayPriority {
   id: string;
   tenantId: string;
   siteId: string;
+  productId?: string;
   sourcePriorityId: string;
   priorityCode: string;
   productCodeSnapshot: string;

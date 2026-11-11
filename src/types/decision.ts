@@ -68,7 +68,11 @@ export type ReasonCode =
   | 'PROMOTION_AND_PRODUCTION_RISK'
   | 'CONFIGURATION_MISSING'
   | 'PROMOTION_CONFLICT'
-  | 'AS_PER_SCHEDULE';
+  | 'AS_PER_SCHEDULE'
+  | 'PRODUCTION_FORECAST_BALANCED'
+  | 'DAYS_OF_SUPPLY_CAPACITY_EXCEEDED'
+  | 'FORECAST_PAST_DUE_IGNORED'
+  | 'FUTURE_FORECAST_PROTECTED';
 
 export interface DefaultDestinationRules {
   defaultDestinationId?: string | null;
@@ -90,6 +94,9 @@ export interface DecisionConfiguration {
   productionStalenessHoursThreshold?: number;
   nearProductionDaysWindow?: number;
   capacityWarningThresholdPercentage?: number;
+  planningHorizonDays?: number;
+  maxDaysOfSupplyThreshold?: number;
+  protectUnreplenishedFutureForecast?: boolean;
   validActionIds?: string[];
   validPriorityIds?: string[];
   validDestinationIds?: string[];

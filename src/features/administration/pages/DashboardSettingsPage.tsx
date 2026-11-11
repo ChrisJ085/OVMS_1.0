@@ -142,6 +142,41 @@ export const DashboardSettingsPage: React.FC = () => {
                 Show Announcement Ticker
               </label>
             </div>
+
+            {/* Flight Board Display Options */}
+            <div className="pt-3 border-t border-slate-800 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 font-mono">Flight Board Display Options</h3>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="flightBoardEnabled"
+                  checked={settings.flightBoardEnabled !== false}
+                  onChange={e => handleChange('flightBoardEnabled', e.target.checked)}
+                  className="w-4 h-4 bg-slate-900 border-slate-700 rounded text-brand-500 focus:ring-brand-500 focus:ring-offset-slate-950 cursor-pointer"
+                />
+                <label htmlFor="flightBoardEnabled" className="text-sm font-medium text-slate-200 cursor-pointer">
+                  Enable Airport Flight Board View Mode
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 pl-7">
+                Allows operators to switch the TV Dashboard display to a high-contrast scrolling table view with urgent items pinned to top.
+              </p>
+
+              {settings.flightBoardEnabled !== false && (
+                <div className="space-y-2 pt-2 pl-7">
+                  <label className="text-sm font-medium text-slate-300">Default TV Dashboard Layout Mode</label>
+                  <select
+                    value={settings.defaultDashboardLayout || 'grid'}
+                    onChange={e => handleChange('defaultDashboardLayout', e.target.value as 'grid' | 'flightBoard')}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                  >
+                    <option value="grid">Tile Grid View (4x4 Matrix Cards)</option>
+                    <option value="flightBoard">Airport Flight Board View (Scrolling Table with Pinned Urgent)</option>
+                  </select>
+                </div>
+              )}
+            </div>
             
             <div className="pt-4 flex justify-end">
               <button 

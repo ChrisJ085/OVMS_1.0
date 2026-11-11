@@ -237,6 +237,8 @@ export interface ProductPlanningContext {
   // FORECAST (Dynamic demand requirement)
   forecastCasesToday: number;
   forecastCasesNext7Days: number;
+  forecastCasesInHorizon?: number;
+  pastDueForecastCasesIgnored?: number;
   forecastByDate: Record<string, number>; // YYYY-MM-DD -> quantity
   forecastSourceImportId: string | null;
   forecastSourceUpdatedAt: Date | null;
@@ -244,6 +246,7 @@ export interface ProductPlanningContext {
   // CONFIRMED PRODUCTION (Future supply)
   confirmedProductionCasesToday: number;
   confirmedProductionCasesNext7Days: number;
+  confirmedProductionCasesInHorizon?: number;
   confirmedProductionByDate: Record<string, number>; // YYYY-MM-DD -> quantity
   productionSourceImportId: string | null;
   productionSourceUpdatedAt: Date | null;
@@ -257,9 +260,15 @@ export interface ProductPlanningContext {
 
   // Evaluation window metadata
   evaluationDate: string; // YYYY-MM-DD
+  planningHorizonDays?: number;
   sevenDayWindow: {
     startDate: string; // YYYY-MM-DD (Day 0)
     endDate: string;   // YYYY-MM-DD (Day 6)
+  };
+  horizonWindow?: {
+    startDate: string; // YYYY-MM-DD (Day 0)
+    endDate: string;   // YYYY-MM-DD (Day planningHorizonDays-1)
+    days: number;
   };
 }
 
@@ -273,11 +282,37 @@ export interface ProductForecastWeeklyPlan {
   orderSku?: string;
   productDescription: string;
   baseUnitOfMeasure: string;
-  horizonDate: string; // Weekly planning horizon date to work towards
-  totalForecastCases: number; // Sumproduct total forecast cases across weekly horizon
+  horizonDate: string; // Target horizon date (earliest forecast date, e.g. 2026-11-16)
+  totalForecastCases: number; // Sumproduct total forecast cases across weekly horizon / snapshot
   casesPerPallet: number;
   palletEquivalent: number; // Sumproduct with pallet conversion factor
   rowCount: number;
   distinctDates: string[];
+
+  // Horizon Date specific demand (on horizonDate itself)
+  horizonDemandCases?: number;
+  horizonDemandPallets?: number;
+  horizonRequiredPallets?: number;
+
+  // Next 7 days lookahead demand (calendar days following horizonDate)
+  next7DaysCases?: number;
+  next7DaysPallets?: number;
+  next7DaysRequiredPallets?: number;
+  next7DaysWindow?: { startDate: string; endDate: string };
+
+  // Horizon + 7 Days demand combined
+  horizonPlus7DaysCases?: number;
+  horizonPlus7DaysPallets?: number;
+  horizonPlus7DaysRequiredPallets?: number;
+
+  // Total ceiled pallets across full snapshot
+  totalRequiredPallets?: number;
+
+  // Confirmed / Scheduled Production in snapshot
+  confirmedProductionCases?: number;
+  confirmedProductionPallets?: number;
+  confirmedProductionDates?: string[];
+  productionTodayPallets?: number;
+  productionBeforeHorizonPallets?: number;
 }
 

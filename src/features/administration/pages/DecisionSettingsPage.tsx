@@ -32,6 +32,9 @@ export const DecisionSettingsPage: React.FC = () => {
     urgentPriorityId: '',
     normalPriorityId: '',
     lowPriorityId: '',
+    planningHorizonDays: 4,
+    maxDaysOfSupplyThreshold: 14,
+    protectUnreplenishedFutureForecast: true,
     defaultDestinationRules: {
       defaultDestinationId: '',
       allowFallbackDestination: true
@@ -128,6 +131,8 @@ export const DecisionSettingsPage: React.FC = () => {
           urgentPriorityId: config.urgentPriorityId || '',
           normalPriorityId: config.normalPriorityId || '',
           lowPriorityId: config.lowPriorityId || '',
+          planningHorizonDays: config.planningHorizonDays ?? 4,
+          maxDaysOfSupplyThreshold: config.maxDaysOfSupplyThreshold ?? 14,
           defaultDestinationRules: {
             defaultDestinationId: config.defaultDestinationRules?.defaultDestinationId || '',
             allowFallbackDestination: config.defaultDestinationRules?.allowFallbackDestination !== false
@@ -143,6 +148,8 @@ export const DecisionSettingsPage: React.FC = () => {
           urgentPriorityId: '',
           normalPriorityId: '',
           lowPriorityId: '',
+          planningHorizonDays: 4,
+          maxDaysOfSupplyThreshold: 14,
           defaultDestinationRules: {
             defaultDestinationId: '',
             allowFallbackDestination: true
@@ -468,6 +475,47 @@ export const DecisionSettingsPage: React.FC = () => {
                   <option value="v1.1">v1.1 (Aggressive Fulfillment)</option>
                   <option value="v2.0-beta">v2.0 Beta (AI Enhanced)</option>
                 </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-300">Planning Horizon Window (Days)</label>
+                <input 
+                  type="number" 
+                  min="1"
+                  max="30"
+                  value={decisionConfig.planningHorizonDays ?? 4}
+                  onChange={e => setDecisionConfig(p => ({ ...p, planningHorizonDays: parseInt(e.target.value) || 4 }))}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                />
+                <p className="text-xs text-slate-500">Rolling calendar horizon from today for SNP87 forecast netting and holding calculations (Default: 4 days).</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-300">Days of Supply Capacity Threshold (Days)</label>
+                <input 
+                  type="number" 
+                  min="1"
+                  max="90"
+                  value={decisionConfig.maxDaysOfSupplyThreshold ?? 14}
+                  onChange={e => setDecisionConfig(p => ({ ...p, maxDaysOfSupplyThreshold: parseInt(e.target.value) || 14 }))}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-200"
+                />
+                <p className="text-xs text-slate-500">Maximum Days of Supply allowed before warehouse capacity congestion alerts are triggered (Default: 14 days).</p>
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-slate-800">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={decisionConfig.protectUnreplenishedFutureForecast !== false}
+                    onChange={e => setDecisionConfig(p => ({ ...p, protectUnreplenishedFutureForecast: e.target.checked }))}
+                    className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-brand-500 focus:ring-brand-500"
+                  />
+                  <span className="text-sm font-medium text-slate-200">Protect Unreplenished Future Forecast Demand</span>
+                </label>
+                <p className="text-xs text-slate-500 pl-6">
+                  Prevents releasing warehouse stock if it is on forecast later in the SNP87 snapshot and there is no scheduled production run prior to that forecast date to replenish it.
+                </p>
               </div>
             </div>
           )}

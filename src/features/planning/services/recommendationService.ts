@@ -950,6 +950,7 @@ export const refreshSiteRecommendations = async (
     });
 
     // 9. Construct Candidate Product Sets (UNION) using SNP87 Planning
+    const horizonDays = configuration?.planningHorizonDays || 4;
     const candidateResult = filterRecommendationCandidates({
       activeProducts,
       inventoryTotalsByProductId,
@@ -957,7 +958,8 @@ export const refreshSiteRecommendations = async (
       snp87Rows: activeSnp87Snapshot?.rows || [],
       activeRecommendations: activeSiteRecommendations,
       activePriorities: activeSitePriorities,
-      evaluationDate: evalDate
+      evaluationDate: evalDate,
+      planningHorizonDays: horizonDays
     });
 
     const {
@@ -983,7 +985,8 @@ export const refreshSiteRecommendations = async (
         productDescription: prod.description,
         activeSnapshot: activeSnp87Snapshot?.importSummary || null,
         snapshotRows: activeSnp87Snapshot?.rows || [],
-        evaluationDate: evalDate
+        evaluationDate: evalDate,
+        planningHorizonDays: horizonDays
       });
       planningContextsByProductId.set(prod.id, pContext);
     }

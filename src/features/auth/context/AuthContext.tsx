@@ -152,7 +152,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const handleSecurityRowCheck = async (
       accountStatus: string | undefined,
       needsPassChange: boolean,
-      rowUpdatedAt?: string | null
+      rowUpdatedAt?: any
     ) => {
       if (isChangingPasswordRef.current) return;
 

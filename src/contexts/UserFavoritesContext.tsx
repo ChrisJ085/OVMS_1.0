@@ -15,19 +15,15 @@ interface UserFavoritesContextType {
 const UserFavoritesContext = createContext<UserFavoritesContextType | undefined>(undefined);
 
 export const UserFavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { userProfile } = useAuth();
+  const { userProfile, user } = useAuth();
   const [favorites, setFavorites] = useState<UserFavorite[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const tenantId = userProfile?.tenantId || '';
-  const userId = userProfile?.id || '';
+  // Fallback defaults so user favorites work seamlessly for superusers, tenant admins, or offline/guest users
+  const tenantId = userProfile?.tenantId || 'DEFAULT_TENANT';
+  const userId = userProfile?.id || userProfile?.uid || user?.id || 'guest_user';
 
   const refreshFavorites = useCallback(async () => {
-    if (!tenantId || !userId) {
-      setFavorites([]);
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     try {
       const favs = await UserFavoritesService.getFavorites(tenantId, userId);
@@ -52,7 +48,6 @@ export const UserFavoritesProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const toggleFavorite = useCallback(
     async (item: { path: string; title: string; iconName?: string; groupTitle?: string }): Promise<boolean> => {
-      if (!tenantId || !userId) return false;
       const { isFavorite: newStatus, favorites: updatedList } = await UserFavoritesService.toggleFavorite(
         tenantId,
         userId,
@@ -66,7 +61,6 @@ export const UserFavoritesProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const removeFavorite = useCallback(
     async (path: string) => {
-      if (!tenantId || !userId) return;
       const updatedList = await UserFavoritesService.removeFavorite(tenantId, userId, path);
       setFavorites(updatedList);
     },

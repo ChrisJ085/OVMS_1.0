@@ -34,6 +34,7 @@ export interface CandidateFilterInput {
   activeRecommendations: any[];
   activePriorities: Priority[];
   evaluationDate?: Date | string;
+  planningHorizonDays?: number;
 }
 
 export interface RecommendationCandidatesResult {
@@ -54,12 +55,12 @@ export interface RecommendationCandidatesResult {
  * Candidate sources include active products with:
  * 1. Positive inventory
  * 2. Northfleet STO due for collection today
- * 3. SNP87 Forecast within the active planning horizon (7 calendar days: Day 0 through Day 6)
- * 4. SNP87 Confirmed Production within the active planning horizon (7 calendar days: Day 0 through Day 6)
+ * 3. SNP87 Forecast within the active planning horizon (default 4 rolling calendar days: Day 0 through Day horizonDays - 1)
+ * 4. SNP87 Confirmed Production within the active planning horizon (default 4 rolling calendar days)
  * 5. Existing active system recommendation
  * 6. Existing active system recommendation-driven priority
  *
- * Deduplicates union and filters strictly to active products.
+ * Excludes past-due forecast dates and deduplicates union.
  */
 export const filterRecommendationCandidates = (
   input: CandidateFilterInput
@@ -71,13 +72,15 @@ export const filterRecommendationCandidates = (
     snp87Rows,
     activeRecommendations,
     activePriorities,
-    evaluationDate
+    evaluationDate,
+    planningHorizonDays = 4
   } = input;
 
   const evalDate = evaluationDate instanceof Date ? evaluationDate : (evaluationDate ? new Date(evaluationDate) : new Date());
   const evalDateStr = toCalendarDateString(evalDate);
+  const horizonDays = planningHorizonDays > 0 ? planningHorizonDays : 4;
   const horizonStartDate = evalDateStr;
-  const horizonEndDate = addCalendarDays(evalDateStr, 6);
+  const horizonEndDate = addCalendarDays(evalDateStr, horizonDays - 1);
 
   // Fast lookups for active products only
   const activeProductsMap = new Map<string, Product>();
@@ -147,6 +150,10 @@ export const filterRecommendationCandidates = (
   // 3 & 4. SNP87 Planning Rows within active planning horizon
   for (const row of snp87Rows) {
     const rowDate = row.planningDate || toCalendarDateString(row.startDate);
+    // Explicitly ignore past-due forecast and production rows (before evaluation date)
+    if (rowDate < evalDateStr) {
+      continue;
+    }
     const isWithinHorizon = rowDate >= horizonStartDate && rowDate <= horizonEndDate;
 
     if (!isWithinHorizon) {

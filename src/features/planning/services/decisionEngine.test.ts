@@ -559,4 +559,193 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.holdActionId);
     expect(output.recommendedQuantity).toBe(0);
   });
+
+  // Scenario 26: Ignores past-due SNP87 forecast dates and records reason code
+  it('Scenario 26: Ignores past-due SNP87 forecast dates strictly prior to evaluation date', () => {
+    const evalDate = new Date('2026-10-10T12:00:00Z');
+    const input = createBaseInput({
+      inventoryTotal: 50,
+      evaluationTime: evalDate,
+      planningContext: {
+        productId: 'prod-1',
+        productCode: 'TEST-SKU-100',
+        productDescription: 'Test SKU Item',
+        snapshotId: 'snp-snap-1',
+        dataFreshnessStatus: 'FRESH',
+        casesPerPallet: 10,
+        forecastCasesInHorizon: 0,
+        pastDueForecastCasesIgnored: 500, // 500 past-due cases were excluded
+        planningHorizonDays: 4,
+        forecastByDate: {
+          '2026-10-08': 500 // In the past relative to evalDate
+        },
+        confirmedProductionByDate: {}
+      } as any
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.reasonCodes).toContain('FORECAST_PAST_DUE_IGNORED');
+    expect(output.structuredExplanation.currentFacts.some(f => f.includes('Forecast Past-Due Excluded') && f.includes('500 cases'))).toBe(true);
+  });
+
+  // Scenario 27: Balances holding with scheduled internal production runs
+  it('Scenario 27: Balances holding with scheduled production and offsets required holding', () => {
+    const evalDate = new Date('2026-10-10T08:00:00Z');
+    const input = createBaseInput({
+      inventoryTotal: 100,
+      evaluationTime: evalDate,
+      planningContext: {
+        productId: 'prod-1',
+        productCode: 'TEST-SKU-100',
+        productDescription: 'Test SKU Item',
+        snapshotId: 'snp-snap-1',
+        dataFreshnessStatus: 'FRESH',
+        casesPerPallet: 10,
+        planningHorizonDays: 4,
+        // Day 1 has 500 cases of production, Day 2 has 500 cases of forecast demand
+        forecastByDate: {
+          '2026-10-12': 500
+        },
+        confirmedProductionByDate: {
+          '2026-10-11': 500
+        }
+      } as any
+    });
+
+    const output = evaluateDecision(input);
+
+    // Day 1 production (500 cases) offsets Day 2 forecast (500 cases), reducing net deficit to 0
+    expect(output.reasonCodes).toContain('PRODUCTION_FORECAST_BALANCED');
+    expect(output.structuredExplanation.productionContext.some(p => p.includes('balanced forward forecast demand') && p.includes('holding requirement reduced'))).toBe(true);
+  });
+
+  // Scenario 28: Triggers DAYS_OF_SUPPLY_CAPACITY_EXCEEDED when warehouse inventory exceeds Days of Supply buffer limit
+  it('Scenario 28: Flags DAYS_OF_SUPPLY_CAPACITY_EXCEEDED when stock exceeds maxDaysOfSupplyThreshold', () => {
+    const evalDate = new Date('2026-10-10T08:00:00Z');
+    // Demand is 20 pallets over 4 days = 5 pallets/day.
+    // Inventory is 150 pallets -> 150 / 5 = 30 Days of Supply.
+    // Threshold is 14 days -> Exceeded!
+    const input = createBaseInput({
+      inventoryTotal: 150,
+      evaluationTime: evalDate,
+      configuration: {
+        ...DEFAULT_DECISION_CONFIG,
+        planningHorizonDays: 4,
+        maxDaysOfSupplyThreshold: 14
+      },
+      planningContext: {
+        productId: 'prod-1',
+        productCode: 'TEST-SKU-100',
+        productDescription: 'Test SKU Item',
+        snapshotId: 'snp-snap-1',
+        dataFreshnessStatus: 'FRESH',
+        casesPerPallet: 10,
+        planningHorizonDays: 4,
+        forecastByDate: {
+          '2026-10-11': 200 // 200 cases = 20 pallets over 4 days = 5 pallets/day
+        },
+        confirmedProductionByDate: {}
+      } as any
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.reasonCodes).toContain('DAYS_OF_SUPPLY_CAPACITY_EXCEEDED');
+    expect(output.exceptions.some(e => e.message.includes('Days of Supply') && e.message.includes('14 days'))).toBe(true);
+    expect(output.structuredExplanation.risks.some(r => r.includes('High Days-of-Supply'))).toBe(true);
+  });
+
+  // Scenario 29: Protects unreplenished future forecast demand later in SNP87 when no production is scheduled
+  it('Scenario 29: Protects unreplenished future forecast demand on later SNP87 dates when no production is scheduled', () => {
+    const evalDate = new Date('2026-10-10T08:00:00Z');
+    // Inventory: 500 cases.
+    // Day 1..4 (Rolling horizon): 0 forecast.
+    // Day 10 (Later in SNP87 file): 500 cases forecast.
+    // Production: None scheduled.
+    // Should NOT recommend sending out the 500 cases because it is needed for Day 10 forecast and has no production!
+    const input = createBaseInput({
+      inventoryTotal: 500,
+      evaluationTime: evalDate,
+      productionContext: null,
+      configuration: {
+        ...DEFAULT_DECISION_CONFIG,
+        planningHorizonDays: 4,
+        protectUnreplenishedFutureForecast: true
+      },
+      planningContext: {
+        productId: 'prod-1',
+        productCode: 'TEST-SKU-100',
+        productDescription: 'Test SKU Item',
+        snapshotId: 'snp-snap-1',
+        dataFreshnessStatus: 'FRESH',
+        casesPerPallet: 10,
+        planningHorizonDays: 4,
+        evaluationDate: '2026-10-10',
+        forecastByDate: {
+          '2026-10-20': 500 // Day 10 future forecast demand
+        },
+        confirmedProductionByDate: {}
+      } as any
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.reasonCodes).toContain('FUTURE_FORECAST_PROTECTED');
+    expect(output.controllingRetention).toBe(500);
+    expect(output.availableToRelease).toBe(0);
+    expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.holdActionId);
+    expect(output.recommendedQuantity).toBe(0);
+    expect(output.structuredExplanation.productionContext.some(p => p.includes('Protected Unreplenished Future Forecast') && p.includes('500 cases'))).toBe(true);
+  });
+
+  // Scenario 30: Allows releasing stock when scheduled production is present prior to future forecast date
+  it('Scenario 30: Allows releasing stock when scheduled production is present prior to future forecast date', () => {
+    const evalDate = new Date('2026-10-10T08:00:00Z');
+    // Inventory: 500 cases.
+    // Day 1..4: 0 forecast.
+    // Day 5: 500 cases confirmed production.
+    // Day 10: 500 cases forecast.
+    // Day 5 production replenishes Day 10 forecast, so initial inventory at Day 0 is NOT needed to cover Day 10!
+    const input = createBaseInput({
+      inventoryTotal: 500,
+      evaluationTime: evalDate,
+      productionContext: null,
+      planningRule: {
+        ...basePlanningRule,
+        minimumQuantity: 0,
+        targetQuantity: 0,
+        ddxmRetentionQuantity: 0
+      },
+      configuration: {
+        ...DEFAULT_DECISION_CONFIG,
+        planningHorizonDays: 4,
+        protectUnreplenishedFutureForecast: true
+      },
+      planningContext: {
+        productId: 'prod-1',
+        productCode: 'TEST-SKU-100',
+        productDescription: 'Test SKU Item',
+        snapshotId: 'snp-snap-1',
+        dataFreshnessStatus: 'FRESH',
+        casesPerPallet: 10,
+        planningHorizonDays: 4,
+        evaluationDate: '2026-10-10',
+        forecastByDate: {
+          '2026-10-20': 500 // Day 10 future forecast
+        },
+        confirmedProductionByDate: {
+          '2026-10-15': 500 // Day 5 confirmed production
+        }
+      } as any
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.reasonCodes).not.toContain('FUTURE_FORECAST_PROTECTED');
+    expect(output.controllingRetention).toBe(0);
+    expect(output.availableToRelease).toBe(500);
+    expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.releaseActionId);
+    expect(output.recommendedQuantity).toBe(500);
+  });
 });

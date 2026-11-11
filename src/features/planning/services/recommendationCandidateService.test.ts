@@ -116,11 +116,11 @@ describe('Stage 6: Recommendation Candidate Filtering for SNP87', () => {
         infoObject: 'CONFIRMED_PRODUCTION',
         rowText: 'Confirmed Production',
         planningType: 'CONFIRMED_PRODUCTION',
-        startDateRaw: '2026-10-14',
-        endDateRaw: '2026-10-14',
-        planningDate: '2026-10-14', // Day 4 (within 7-day horizon)
-        startDate: '2026-10-14',
-        endDate: '2026-10-14',
+        startDateRaw: '2026-10-12',
+        endDateRaw: '2026-10-12',
+        planningDate: '2026-10-12', // Day 2 (within 4-day horizon)
+        startDate: '2026-10-12',
+        endDate: '2026-10-12',
         quantity: 800,
         forecastQuantity: null,
         confirmedProductionQuantity: 800,
@@ -539,5 +539,125 @@ describe('Stage 6: Recommendation Candidate Filtering for SNP87', () => {
     expect(result.diagnosticLog).toContain('SNP87 production candidates: 0');
     expect(result.diagnosticLog).toContain('Existing system recommendations: 0');
     expect(result.diagnosticLog).toContain('Unique candidates: 1');
+  });
+
+  it('strictly excludes past-due forecast rows where planningDate is prior to evaluationDate', () => {
+    const p1 = createActiveProduct('p1', 'SKU-001');
+
+    const snp87Rows: Snp87PlanningRow[] = [
+      {
+        id: 'r-past-due',
+        importId: 'imp-1',
+        tenantId: 'tenant-1',
+        siteId: 'site-barrow',
+        rowIndex: 1,
+        orderSku: 'SKU-001',
+        productNumber: 'SKU-001',
+        productDescription: 'Product SKU-001',
+        location: 'BARROW',
+        sort: 1,
+        infoObject: 'FORECAST',
+        rowText: 'Forecast',
+        planningType: 'FORECAST',
+        startDateRaw: '2026-10-08',
+        endDateRaw: '2026-10-08',
+        planningDate: '2026-10-08', // 2 days in the past
+        startDate: '2026-10-08',
+        endDate: '2026-10-08',
+        quantity: 500,
+        forecastQuantity: 500,
+        confirmedProductionQuantity: null,
+        baseUnitOfMeasure: 'CS',
+        productId: 'p1',
+        productCodeSnapshot: 'SKU-001',
+        descriptionSnapshot: 'Product SKU-001',
+        productMatched: true,
+        validationStatus: 'VALID',
+        validationErrors: [],
+        validationWarnings: [],
+        rawSourceRow: {},
+        createdAt: '2026-10-08'
+      }
+    ];
+
+    const result = filterRecommendationCandidates({
+      activeProducts: [p1],
+      inventoryTotalsByProductId: new Map([['p1', 0]]),
+      stoRequirements: [],
+      snp87Rows,
+      activeRecommendations: [],
+      activePriorities: [],
+      evaluationDate: baseEvalDate // 2026-10-10
+    });
+
+    expect(result.snp87ForecastCandidates.has('p1')).toBe(false);
+    expect(result.candidateProductIds.has('p1')).toBe(false);
+    expect(result.totalCandidates).toBe(0);
+  });
+
+  it('respects custom configurable planning horizon when provided', () => {
+    const p1 = createActiveProduct('p1', 'SKU-001');
+
+    const snp87Rows: Snp87PlanningRow[] = [
+      {
+        id: 'r-day-5',
+        importId: 'imp-1',
+        tenantId: 'tenant-1',
+        siteId: 'site-barrow',
+        rowIndex: 1,
+        orderSku: 'SKU-001',
+        productNumber: 'SKU-001',
+        productDescription: 'Product SKU-001',
+        location: 'BARROW',
+        sort: 1,
+        infoObject: 'FORECAST',
+        rowText: 'Forecast',
+        planningType: 'FORECAST',
+        startDateRaw: '2026-10-15',
+        endDateRaw: '2026-10-15',
+        planningDate: '2026-10-15', // Day 5 from 2026-10-10
+        startDate: '2026-10-15',
+        endDate: '2026-10-15',
+        quantity: 500,
+        forecastQuantity: 500,
+        confirmedProductionQuantity: null,
+        baseUnitOfMeasure: 'CS',
+        productId: 'p1',
+        productCodeSnapshot: 'SKU-001',
+        descriptionSnapshot: 'Product SKU-001',
+        productMatched: true,
+        validationStatus: 'VALID',
+        validationErrors: [],
+        validationWarnings: [],
+        rawSourceRow: {},
+        createdAt: '2026-10-10'
+      }
+    ];
+
+    // Under default 4-day horizon (2026-10-10 to 2026-10-13), Day 5 is excluded
+    const defaultResult = filterRecommendationCandidates({
+      activeProducts: [p1],
+      inventoryTotalsByProductId: new Map([['p1', 0]]),
+      stoRequirements: [],
+      snp87Rows,
+      activeRecommendations: [],
+      activePriorities: [],
+      evaluationDate: baseEvalDate
+    });
+    expect(defaultResult.snp87ForecastCandidates.has('p1')).toBe(false);
+
+    // With custom planning horizon of 7 days (2026-10-10 to 2026-10-16), Day 5 is included
+    const customResult = filterRecommendationCandidates({
+      activeProducts: [p1],
+      inventoryTotalsByProductId: new Map([['p1', 0]]),
+      stoRequirements: [],
+      snp87Rows,
+      activeRecommendations: [],
+      activePriorities: [],
+      evaluationDate: baseEvalDate,
+      planningHorizonDays: 7
+    });
+    expect(customResult.snp87ForecastCandidates.has('p1')).toBe(true);
+    expect(customResult.totalCandidates).toBe(1);
   });
 });

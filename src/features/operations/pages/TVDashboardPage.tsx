@@ -5,6 +5,8 @@ import { OperationalException } from '../../../types/exception';
 import { Product } from '../../../types/product';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { useSiteOnboarding } from '../../../hooks/useSiteOnboarding';
+import { getSiteSettings } from '../../administration/services/settingsService';
+import { SiteSettings } from '../../../types/settings';
 import { subscribeToProducts } from '../../inventory/services/productService';
 import { collections } from '../../configuration/services/configurationService';
 import { Destination, ActionType, PriorityLevel } from '../../../types/configuration';
@@ -20,7 +22,7 @@ import { subscribeToCollection } from '../../../services/dbService';
 import { supabase } from '../../../config/supabase';
 import { toCamelCase } from '../../../utils/caseTransformers';
 import { 
-  AlertTriangle, Clock, CheckCircle, Ban, Play,
+  AlertTriangle, Clock, CheckCircle, Ban, Play, Pause, List, Pin, ArrowUpDown,
   LayoutGrid, AlertCircle, TrendingDown,
   Wifi, WifiOff, Settings, Package, Info, Calendar, Layers
 } from 'lucide-react';
@@ -196,6 +198,41 @@ export const TVDashboardPage: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isConnected, setIsConnected] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
+  const [demandViewMode, setDemandViewMode] = useState<'horizon' | 'horizon7d' | 'full'>('horizon');
+  const [displayLayoutMode, setDisplayLayoutMode] = useState<'grid' | 'flightBoard'>(() => {
+    try {
+      return (localStorage.getItem('tv_display_layout_mode') as 'grid' | 'flightBoard') || 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
+  const [isFlightBoardAutoScrollEnabled, setIsFlightBoardAutoScrollEnabled] = useState(true);
+  const [isFlightBoardHovered, setIsFlightBoardHovered] = useState(false);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
+
+  useEffect(() => {
+    if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
+    getSiteSettings(tenantId, siteId).then(data => {
+      if (data) {
+        setSiteSettings(data);
+        if (data.defaultDashboardLayout) {
+          setDisplayLayoutMode(data.defaultDashboardLayout);
+        }
+      }
+    }).catch(console.error);
+  }, [tenantId, siteId]);
+
+  const flightBoardScrollRef = React.useRef<HTMLDivElement>(null);
+
+  const toggleDisplayLayoutMode = (mode: 'grid' | 'flightBoard') => {
+    setDisplayLayoutMode(mode);
+    try {
+      localStorage.setItem('tv_display_layout_mode', mode);
+    } catch {}
+  };
+
+  const isFlightBoardFeatureEnabled = siteSettings?.flightBoardEnabled !== false;
+  const activeLayoutMode = isFlightBoardFeatureEnabled ? displayLayoutMode : 'grid';
 
   // SNP87 Planning data hook for active snapshot & forecast demand
   const { activeSnapshot, activeRows, snapshotLoading } = useSnp87Planning(tenantId, siteId);
@@ -487,6 +524,56 @@ export const TVDashboardPage: React.FC = () => {
 
   const compactMode = gridConfig.cols >= 4 || gridConfig.rows >= 3;
 
+  // Flight Board Auto-Scroll Animation Loop
+  useEffect(() => {
+    if (displayLayoutMode !== 'flightBoard' || !isFlightBoardAutoScrollEnabled || isFlightBoardHovered) return;
+
+    const scrollContainer = flightBoardScrollRef.current;
+    if (!scrollContainer) return;
+
+    let animationFrameId: number;
+    let pauseTimeoutId: NodeJS.Timeout | null = null;
+    let isHolding = false;
+
+    const scrollStep = () => {
+      if (isHolding || !scrollContainer) return;
+
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+
+      if (scrollTop + clientHeight >= scrollHeight - 4) {
+        isHolding = true;
+        pauseTimeoutId = setTimeout(() => {
+          if (scrollContainer) {
+            scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            setTimeout(() => {
+              isHolding = false;
+              animationFrameId = requestAnimationFrame(scrollStep);
+            }, 1200);
+          }
+        }, 3500);
+        return;
+      }
+
+      scrollContainer.scrollTop += 0.7; // Smooth 0.7px per frame step
+      animationFrameId = requestAnimationFrame(scrollStep);
+    };
+
+    animationFrameId = requestAnimationFrame(scrollStep);
+
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (pauseTimeoutId) clearTimeout(pauseTimeoutId);
+    };
+  }, [displayLayoutMode, isFlightBoardAutoScrollEnabled, isFlightBoardHovered, priorities]);
+
+  // Pinned Urgent Priorities (CRITICAL, URGENT, HIGH, BLOCKED)
+  const pinnedPriorities = useMemo(() => {
+    return priorities.filter(p => {
+      const label = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel).toUpperCase();
+      return label.includes('CRITICAL') || label.includes('URGENT') || label.includes('HIGH') || p.priorityStatus === 'BLOCKED';
+    });
+  }, [priorities, priorityLevels]);
+
   // Derived metrics
   const stats = useMemo(() => {
     return {
@@ -576,10 +663,6 @@ export const TVDashboardPage: React.FC = () => {
         plan.casesPerPallet || 
         40;
 
-      // Demand in Pallets: rounded UP to a full pallet if fractional
-      const rawDemandPallets = cpp > 0 ? (plan.totalForecastCases / cpp) : 0;
-      const requiredPallets = rawDemandPallets > 0 ? Math.ceil(rawDemandPallets) : 0;
-
       // On-Hand Cases and Pallets (ignoring leading zeros)
       const onHandCases = (plan.productId ? inventoryStockMap.byId.get(plan.productId) : undefined) ?? 
         inventoryStockMap.byCode.get(plan.productCode.toUpperCase()) ?? 
@@ -590,18 +673,52 @@ export const TVDashboardPage: React.FC = () => {
         ? rawOnHandPallets 
         : Number(rawOnHandPallets.toFixed(1));
 
-      const isShortfall = onHandPallets < requiredPallets;
-      const deficitPallets = isShortfall ? Math.max(0, requiredPallets - Math.floor(rawOnHandPallets)) : 0;
-      const surplusPallets = !isShortfall ? Math.max(0, Math.floor(rawOnHandPallets) - requiredPallets) : 0;
+      // Requirements across different horizons
+      const horizonRequiredPallets = plan.horizonRequiredPallets ?? (cpp > 0 ? Math.ceil((plan.horizonDemandCases || 0) / cpp) : 0);
+      const next7DaysRequiredPallets = plan.next7DaysRequiredPallets ?? (cpp > 0 ? Math.ceil((plan.next7DaysCases || 0) / cpp) : 0);
+      const horizonPlus7DaysRequiredPallets = plan.horizonPlus7DaysRequiredPallets ?? (horizonRequiredPallets + next7DaysRequiredPallets);
+      const totalRequiredPallets = plan.totalRequiredPallets ?? (cpp > 0 ? Math.ceil(plan.totalForecastCases / cpp) : 0);
+
+      // Active required pallets based on view mode
+      let activeRequiredPallets = horizonRequiredPallets;
+      if (demandViewMode === 'horizon7d') {
+        activeRequiredPallets = horizonPlus7DaysRequiredPallets;
+      } else if (demandViewMode === 'full') {
+        activeRequiredPallets = totalRequiredPallets;
+      }
+
+      const isShortfall = onHandPallets < activeRequiredPallets;
+      const deficitPallets = isShortfall ? Math.max(0, activeRequiredPallets - Math.floor(rawOnHandPallets)) : 0;
+      const surplusPallets = !isShortfall ? Math.max(0, Math.floor(rawOnHandPallets) - activeRequiredPallets) : 0;
+
+      // Confirmed production in snapshot
+      const confirmedProductionPallets = plan.confirmedProductionPallets || 0;
+      const productionBeforeHorizonPallets = plan.productionBeforeHorizonPallets || 0;
 
       return {
         productId: plan.productId,
         productCode: plan.productCode,
         productDescription: plan.productDescription || matchedProduct?.description || 'Forecast Product',
         casesPerPallet: cpp,
+        horizonDate: plan.horizonDate,
         totalForecastCases: plan.totalForecastCases,
-        rawDemandPallets,
-        requiredPallets,
+
+        horizonDemandCases: plan.horizonDemandCases || 0,
+        horizonDemandPallets: plan.horizonDemandPallets || 0,
+        horizonRequiredPallets,
+
+        next7DaysCases: plan.next7DaysCases || 0,
+        next7DaysPallets: plan.next7DaysPallets || 0,
+        next7DaysRequiredPallets,
+        next7DaysWindow: plan.next7DaysWindow,
+
+        horizonPlus7DaysRequiredPallets,
+        totalRequiredPallets,
+
+        confirmedProductionPallets,
+        productionBeforeHorizonPallets,
+
+        activeRequiredPallets,
         onHandCases,
         rawOnHandPallets,
         onHandPallets,
@@ -610,15 +727,15 @@ export const TVDashboardPage: React.FC = () => {
         surplusPallets
       };
     }).sort((a, b) => {
-      // Prioritize items where on hand is short of demand (so warehouse knows what must stay on site!)
+      // Prioritize items where on hand is short of active demand (so warehouse knows what must stay on site!)
       if (a.isShortfall && !b.isShortfall) return -1;
       if (!a.isShortfall && b.isShortfall) return 1;
-      return b.requiredPallets - a.requiredPallets;
+      return b.activeRequiredPallets - a.activeRequiredPallets;
     });
-  }, [weeklyPlans, products, inventoryStockMap]);
+  }, [weeklyPlans, products, inventoryStockMap, demandViewMode]);
 
   const totalRequiredPallets = useMemo(() => {
-    return forecastStockItems.reduce((sum, item) => sum + item.requiredPallets, 0);
+    return forecastStockItems.reduce((sum, item) => sum + item.activeRequiredPallets, 0);
   }, [forecastStockItems]);
 
   const totalOnHandPallets = useMemo(() => {
@@ -696,6 +813,129 @@ export const TVDashboardPage: React.FC = () => {
     );
   }
 
+  // Flight Board Row Renderer
+  const renderFlightBoardRow = (p: DisplayPriority, isPinned = false) => {
+    const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+    const displayLevelLabel = getPriorityDisplayLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+    const theme = getTileTheme(levelLabel, p.priorityStatus);
+
+    const isBlocked = p.priorityStatus === 'BLOCKED';
+    const isCompleted = p.priorityStatus === 'COMPLETED';
+
+    const productMatch = products.find(prod => 
+      (p.productId && prod.id === p.productId) || 
+      (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
+    );
+    const cpp = productMatch?.casesPerPallet || 
+      productMatch?.configurations?.[0]?.casesPerPallet || 
+      null;
+
+    const forecastItem = forecastStockItems.find(f =>
+      (p.productId && f.productId === p.productId) ||
+      (p.productCodeSnapshot && areProductCodesEqual(f.productCode, p.productCodeSnapshot))
+    );
+    const hasForecastDemand = Boolean(forecastItem && (forecastItem.requiredPallets > 0 || forecastItem.totalForecastCases > 0));
+
+    let qtyValue = '0';
+    let unitLabel = 'PLTS';
+
+    const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
+    const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
+
+    if (rawActionLabel.includes('RELEASE') && forecastItem && forecastItem.requiredPallets > 0) {
+      const pallets = forecastItem.surplusPallets;
+      qtyValue = pallets.toLocaleString();
+      unitLabel = pallets === 1 ? 'PLT' : 'PLTS';
+    } else if (p.requestedQuantity && p.requestedQuantity > 0) {
+      if (cpp && cpp > 0) {
+        const pallets = Math.round(p.requestedQuantity / cpp);
+        qtyValue = pallets.toLocaleString();
+        unitLabel = pallets === 1 ? 'PLT' : 'PLTS';
+      } else {
+        qtyValue = p.requestedQuantity.toLocaleString();
+        unitLabel = 'CS';
+      }
+    }
+
+    const destLabel = p.destinationId
+      ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
+      : 'NO DEST';
+
+    const shortReason = getShortReason(p, hasForecastDemand);
+
+    return (
+      <div 
+        key={`${p.id}-${isPinned ? 'pinned' : 'scroll'}`} 
+        className={`grid grid-cols-[115px_1.2fr_110px_110px_90px_140px_1.4fr] items-center gap-2 px-4 py-2.5 transition-all text-xs font-medium hover:bg-slate-800/80 ${
+          isPinned 
+            ? 'bg-amber-950/25 border-l-4 border-amber-500 font-semibold text-slate-100' 
+            : 'bg-slate-900/60 border-l-2 border-slate-800'
+        }`}
+      >
+        {/* 1. PIN / PRIORITY */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isPinned ? (
+            <span className="p-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-sm" title="Pinned Urgent / High Priority">
+              <Pin className="w-3 h-3" />
+            </span>
+          ) : (
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isBlocked ? 'bg-red-500' : isCompleted ? 'bg-emerald-500' : 'bg-brand-400'}`} />
+          )}
+          <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded tracking-wider shadow-sm ${theme.badgeBg}`}>
+            {p.priorityStatus === 'COMPLETED' ? 'READY' : isBlocked ? 'BLOCKED' : displayLevelLabel}
+          </span>
+        </div>
+
+        {/* 2. SKU / PRODUCT */}
+        <div className="min-w-0 pr-2">
+          <div className={`font-mono font-black tracking-tight text-sm truncate ${theme.productCodeText}`}>
+            {normalizeProductCode(p.productCodeSnapshot) || 'SKU'}
+          </div>
+          <div className="text-[11px] text-slate-300 truncate leading-tight mt-0.5" title={p.descriptionSnapshot}>
+            {p.descriptionSnapshot || 'Product Description'}
+          </div>
+        </div>
+
+        {/* 3. ACTION */}
+        <div className="text-center shrink-0">
+          <span className={`inline-block font-extrabold uppercase px-2.5 py-0.5 text-[10px] rounded tracking-wider shadow-sm ${theme.actionBg}`}>
+            {isBlocked ? 'BLOCKED' : actionText}
+          </span>
+        </div>
+
+        {/* 4. QUANTITY */}
+        <div className="text-center font-mono font-black text-amber-400 flex items-center justify-center gap-1 shrink-0">
+          <span className="text-base font-bold text-slate-100">{qtyValue}</span>
+          <span className="text-[9px] font-bold text-slate-400 uppercase">{unitLabel}</span>
+        </div>
+
+        {/* 5. DESTINATION */}
+        <div className="text-center font-mono font-bold text-slate-200 text-xs shrink-0 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+          <span className="text-brand-400 font-black mr-1">→</span>
+          <span>{destLabel}</span>
+        </div>
+
+        {/* 6. REASON / STATUS */}
+        <div className="shrink-0">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 bg-slate-950/80 border border-slate-800 px-2 py-0.5 rounded truncate block text-center">
+            {shortReason}
+          </span>
+        </div>
+
+        {/* 7. INSTRUCTION / NOTES */}
+        <div className="text-[11px] text-slate-300 truncate leading-tight pr-1 font-mono">
+          {p.instruction ? (
+            <span title={p.instruction}>
+              {p.instruction}
+            </span>
+          ) : (
+            <span className="text-slate-600 italic">No special notes</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden flex flex-col font-sans select-none">
       {/* Header */}
@@ -705,6 +945,39 @@ export const TVDashboardPage: React.FC = () => {
             <h1 className="text-lg font-bold text-slate-100 uppercase tracking-wider">Operations Dashboard</h1>
             <span className="text-brand-400 font-semibold text-xs tracking-widest">{displaySiteLabel}</span>
           </div>
+
+          {/* View Mode Switcher - Only rendered if Flight Board feature is enabled in Dashboard Settings */}
+          {isFlightBoardFeatureEnabled && (
+            <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-medium ml-2">
+              <button
+                type="button"
+                onClick={() => toggleDisplayLayoutMode('grid')}
+                className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors ${
+                  activeLayoutMode === 'grid'
+                    ? 'bg-brand-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title="Switch to 4x4 Tiled Grid view"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Tile Grid</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleDisplayLayoutMode('flightBoard')}
+                className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors ${
+                  activeLayoutMode === 'flightBoard'
+                    ? 'bg-brand-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title="Switch to Airport Flight Board scrolling table view"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Flight Board</span>
+              </button>
+            </div>
+          )}
+
           {!isConnected && (
             <div className="flex items-center gap-2 px-3 py-1 bg-red-900/40 border border-red-500/50 rounded-full text-red-400 text-xs font-bold animate-pulse">
               <WifiOff className="w-4 h-4" />
@@ -736,191 +1009,272 @@ export const TVDashboardPage: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Priorities Grid */}
-        <div className="flex-1 p-3 sm:p-4 flex flex-col overflow-hidden">
-          <div 
-            className="flex-1 grid gap-3 overflow-hidden"
-            style={{
-              gridTemplateColumns: `repeat(${gridConfig.cols}, minmax(0, 1fr))`,
-              gridTemplateRows: `repeat(${gridConfig.rows}, minmax(0, 1fr))`
-            }}
-          >
-            {visiblePriorities.map(p => {
-              const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
-              const displayLevelLabel = getPriorityDisplayLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
-              const theme = getTileTheme(levelLabel, p.priorityStatus);
+        {/* Priorities Section: Grid or Flight Board */}
+        {activeLayoutMode === 'grid' ? (
+          /* Tiled Grid View */
+          <div className="flex-1 p-3 sm:p-4 flex flex-col overflow-hidden">
+            <div 
+              className="flex-1 grid gap-3 overflow-hidden"
+              style={{
+                gridTemplateColumns: `repeat(${gridConfig.cols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${gridConfig.rows}, minmax(0, 1fr))`
+              }}
+            >
+              {visiblePriorities.map(p => {
+                const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+                const displayLevelLabel = getPriorityDisplayLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
+                const theme = getTileTheme(levelLabel, p.priorityStatus);
 
-              const isBlocked = p.priorityStatus === 'BLOCKED';
-              const isCompleted = p.priorityStatus === 'COMPLETED';
+                const isBlocked = p.priorityStatus === 'BLOCKED';
+                const isCompleted = p.priorityStatus === 'COMPLETED';
 
-              // Icon resolution based on priority and status
-              const IconComponent = isBlocked 
-                ? Ban 
-                : isCompleted 
-                ? CheckCircle 
-                : (levelLabel.toUpperCase().includes('CRITICAL') || levelLabel.toUpperCase().includes('URGENT') || levelLabel.toUpperCase().includes('HIGH')) 
-                ? AlertTriangle 
-                : Package;
+                // Product CPP matching for pallet calculation - CRITICAL: No fallback to 100!
+                const productMatch = products.find(prod => 
+                  (p.productId && prod.id === p.productId) || 
+                  (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
+                );
+                const cpp = productMatch?.casesPerPallet || 
+                  productMatch?.configurations?.[0]?.casesPerPallet || 
+                  null;
 
-              // Product CPP matching for pallet calculation - CRITICAL: No fallback to 100!
-              const productMatch = products.find(prod => 
-                (p.productId && prod.id === p.productId) || 
-                (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
-              );
-              const cpp = productMatch?.casesPerPallet || 
-                productMatch?.configurations?.[0]?.casesPerPallet || 
-                null;
+                // Check if product has active forecast demand in the weekly planning horizon
+                const forecastItem = forecastStockItems.find(f =>
+                  (p.productId && f.productId === p.productId) ||
+                  (p.productCodeSnapshot && areProductCodesEqual(f.productCode, p.productCodeSnapshot))
+                );
+                const hasForecastDemand = Boolean(forecastItem && (forecastItem.requiredPallets > 0 || forecastItem.totalForecastCases > 0));
 
-              // Check if product has active forecast demand in the weekly planning horizon
-              const forecastItem = forecastStockItems.find(f =>
-                (p.productId && f.productId === p.productId) ||
-                (p.productCodeSnapshot && areProductCodesEqual(f.productCode, p.productCodeSnapshot))
-              );
-              const hasForecastDemand = Boolean(forecastItem && (forecastItem.requiredPallets > 0 || forecastItem.totalForecastCases > 0));
+                let qtyValue = '0';
+                let unitLabel = 'PALLETS';
+                let isCases = false;
 
-              let qtyValue = '0';
-              let unitLabel = 'PALLETS';
-              let isCases = false;
+                const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
+                const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
 
-              const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
-              const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
-
-              // Pallet calculation: if releasing surplus for a product with forecast demand, protect forecast stock!
-              if (rawActionLabel.includes('RELEASE') && forecastItem && forecastItem.requiredPallets > 0) {
-                const pallets = forecastItem.surplusPallets;
-                qtyValue = pallets.toLocaleString();
-                unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
-              } else if (p.requestedQuantity && p.requestedQuantity > 0) {
-                if (cpp && cpp > 0) {
-                  const pallets = Math.round(p.requestedQuantity / cpp);
+                // Pallet calculation: if releasing surplus for a product with forecast demand, protect forecast stock!
+                if (rawActionLabel.includes('RELEASE') && forecastItem && forecastItem.requiredPallets > 0) {
+                  const pallets = forecastItem.surplusPallets;
                   qtyValue = pallets.toLocaleString();
                   unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
-                } else {
-                  qtyValue = p.requestedQuantity.toLocaleString();
-                  unitLabel = 'CASES';
-                  isCases = true;
+                } else if (p.requestedQuantity && p.requestedQuantity > 0) {
+                  if (cpp && cpp > 0) {
+                    const pallets = Math.round(p.requestedQuantity / cpp);
+                    qtyValue = pallets.toLocaleString();
+                    unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
+                  } else {
+                    qtyValue = p.requestedQuantity.toLocaleString();
+                    unitLabel = 'CASES';
+                    isCases = true;
+                  }
                 }
-              }
 
-              const destLabel = p.destinationId
-                ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
-                : 'NO DESTINATION';
+                const destLabel = p.destinationId
+                  ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
+                  : 'NO DESTINATION';
 
-              const hasManualNote = isManualInstruction(p.instruction);
+                const hasManualNote = isManualInstruction(p.instruction);
 
-              return (
-                <div 
-                  key={p.id} 
-                  className={`
-                    relative rounded-xl border-2 px-3 py-2 sm:px-4 sm:py-2.5 flex flex-col justify-between overflow-hidden transition-all shadow-md
-                    ${theme.border} ${theme.bg}
-                  `}
-                >
-                  {/* Card Header: Top Right Priority Badge */}
-                  <div className="flex items-center justify-between gap-2 mb-1 shrink-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 bg-slate-900/70 border border-slate-700/70 px-2 py-0.5 rounded shadow-sm">
-                        {getShortReason(p, hasForecastDemand)}
-                      </span>
-                      {/* Optional status badge for secondary status */}
-                      {p.priorityStatus !== 'ACTIVE' && p.priorityStatus !== 'COMPLETED' && p.priorityStatus !== 'BLOCKED' && (
-                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${theme.statusBadge}`}>
-                          {p.priorityStatus.replace(/_/g, ' ')}
+                return (
+                  <div 
+                    key={p.id} 
+                    className={`
+                      relative rounded-xl border-2 px-3 py-2 sm:px-4 sm:py-2.5 flex flex-col justify-between overflow-hidden transition-all shadow-md
+                      ${theme.border} ${theme.bg}
+                    `}
+                  >
+                    {/* Card Header: Top Right Priority Badge */}
+                    <div className="flex items-center justify-between gap-2 mb-1 shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 bg-slate-900/70 border border-slate-700/70 px-2 py-0.5 rounded shadow-sm">
+                          {getShortReason(p, hasForecastDemand)}
                         </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0 ml-auto">
-                      <span className={`text-xs font-extrabold uppercase px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md tracking-wider shadow-sm ${theme.badgeBg}`}>
-                        {p.priorityStatus === 'COMPLETED' ? 'READY' : isBlocked ? 'BLOCKED' : displayLevelLabel}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Card Main Body: Left (Product & Action) | Center (Quantity) | Right (Destination) */}
-                  <div className="grid grid-cols-1 md:grid-cols-[1.3fr_auto_1fr_1.3fr] items-center gap-2 sm:gap-3 my-auto min-h-0">
-                    
-                    {/* LEFT: Product Identity & Action */}
-                    <div className="flex flex-col justify-between space-y-1.5 min-w-0">
-                      <div className="min-w-0 flex-1">
-                        <div className={`font-mono font-black tracking-tight whitespace-nowrap overflow-visible ${compactMode ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl lg:text-4xl'} ${theme.productCodeText}`}>
-                          {normalizeProductCode(p.productCodeSnapshot) || 'SKU'}
-                        </div>
-                        <div className={`text-slate-300 font-medium leading-tight line-clamp-2 mt-0.5 ${compactMode ? 'text-xs' : 'text-xs sm:text-sm'}`}>
-                          {p.descriptionSnapshot || 'Product Description'}
-                        </div>
+                        {/* Optional status badge for secondary status */}
+                        {p.priorityStatus !== 'ACTIVE' && p.priorityStatus !== 'COMPLETED' && p.priorityStatus !== 'BLOCKED' && (
+                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${theme.statusBadge}`}>
+                            {p.priorityStatus.replace(/_/g, ' ')}
+                          </span>
+                        )}
                       </div>
-
-                      <div className="pt-0.5">
-                        <span className={`inline-block font-extrabold uppercase ${compactMode ? 'px-2.5 py-0.5 text-xs' : 'px-3.5 py-1 text-xs sm:text-sm'} rounded-lg text-center tracking-wider shadow-sm select-none ${theme.actionBg}`}>
-                          {isBlocked ? 'BLOCKED' : actionText}
+                      <div className="flex items-center gap-2 shrink-0 ml-auto">
+                        <span className={`text-xs font-extrabold uppercase px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md tracking-wider shadow-sm ${theme.badgeBg}`}>
+                          {p.priorityStatus === 'COMPLETED' ? 'READY' : isBlocked ? 'BLOCKED' : displayLevelLabel}
                         </span>
                       </div>
                     </div>
 
-                    {/* Vertical Separator Line */}
-                    <div className="hidden md:block w-px bg-slate-700/60 self-stretch my-0.5 shrink-0" />
+                    {/* Card Main Body: Left (Product & Action) | Center (Quantity) | Right (Destination) */}
+                    <div className="grid grid-cols-1 md:grid-cols-[1.3fr_auto_1fr_1.3fr] items-center gap-2 sm:gap-3 my-auto min-h-0">
+                      
+                      {/* LEFT: Product Identity & Action */}
+                      <div className="flex flex-col justify-between space-y-1.5 min-w-0">
+                        <div className="min-w-0 flex-1">
+                          <div className={`font-mono font-black tracking-tight whitespace-nowrap overflow-visible ${compactMode ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl lg:text-4xl'} ${theme.productCodeText}`}>
+                            {normalizeProductCode(p.productCodeSnapshot) || 'SKU'}
+                          </div>
+                          <div className={`text-slate-300 font-medium leading-tight line-clamp-2 mt-0.5 ${compactMode ? 'text-xs' : 'text-xs sm:text-sm'}`}>
+                            {p.descriptionSnapshot || 'Product Description'}
+                          </div>
+                        </div>
 
-                    {/* CENTER: Quantity */}
-                    <div className="flex flex-col items-center justify-center text-center px-1">
-                      <div className={`font-mono font-black tracking-tight text-slate-100 leading-none ${compactMode ? 'text-3xl sm:text-4xl' : 'text-5xl sm:text-6xl'}`}>
-                        {qtyValue}
+                        <div className="pt-0.5">
+                          <span className={`inline-block font-extrabold uppercase ${compactMode ? 'px-2.5 py-0.5 text-xs' : 'px-3.5 py-1 text-xs sm:text-sm'} rounded-lg text-center tracking-wider shadow-sm select-none ${theme.actionBg}`}>
+                            {isBlocked ? 'BLOCKED' : actionText}
+                          </span>
+                        </div>
                       </div>
-                      <div className={`font-extrabold uppercase tracking-widest mt-1 ${compactMode ? 'text-[10px]' : 'text-xs sm:text-sm'} ${theme.accentText}`}>
-                        {unitLabel}
+
+                      {/* Vertical Separator Line */}
+                      <div className="hidden md:block w-px bg-slate-700/60 self-stretch my-0.5 shrink-0" />
+
+                      {/* CENTER: Quantity */}
+                      <div className="flex flex-col items-center justify-center text-center px-1">
+                        <div className={`font-mono font-black tracking-tight text-slate-100 leading-none ${compactMode ? 'text-3xl sm:text-4xl' : 'text-5xl sm:text-6xl'}`}>
+                          {qtyValue}
+                        </div>
+                        <div className={`font-extrabold uppercase tracking-widest mt-1 ${compactMode ? 'text-[10px]' : 'text-xs sm:text-sm'} ${theme.accentText}`}>
+                          {unitLabel}
+                        </div>
+                        {isCases && (
+                          <span className="text-[10px] text-slate-400 font-normal mt-0.5">CPP unavailable</span>
+                        )}
                       </div>
-                      {isCases && (
-                        <span className="text-[10px] text-slate-400 font-normal mt-0.5">CPP unavailable</span>
-                      )}
+
+                      {/* RIGHT: Destination */}
+                      <div className="flex items-center justify-start md:justify-center gap-2 sm:gap-3 min-w-0">
+                        <span className={`font-black shrink-0 ${compactMode ? 'text-2xl' : 'text-3xl sm:text-4xl'} ${theme.accentText}`}>
+                          →
+                        </span>
+                        <span className={`font-black uppercase tracking-tight text-slate-100 truncate ${compactMode ? 'text-xl sm:text-2xl' : 'text-3xl sm:text-4xl lg:text-5xl'}`}>
+                          {destLabel}
+                        </span>
+                      </div>
+
                     </div>
 
-                    {/* RIGHT: Destination */}
-                    <div className="flex items-center justify-start md:justify-center gap-2 sm:gap-3 min-w-0">
-                      <span className={`font-black shrink-0 ${compactMode ? 'text-2xl' : 'text-3xl sm:text-4xl'} ${theme.accentText}`}>
-                        →
-                      </span>
-                      <span className={`font-black uppercase tracking-tight text-slate-100 truncate ${compactMode ? 'text-xl sm:text-2xl' : 'text-3xl sm:text-4xl lg:text-5xl'}`}>
-                        {destLabel}
-                      </span>
-                    </div>
-
+                    {/* Manual Instruction Strip - Only rendered if manual note exists */}
+                    {hasManualNote && (
+                      <div className="mt-1.5 pt-1.5 border-t border-slate-700/60 text-xs font-medium text-slate-200 flex items-center gap-2 bg-slate-950/60 rounded-lg p-1.5 px-2.5 shrink-0">
+                        <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="truncate">
+                          <strong className="text-amber-300 font-bold uppercase mr-1">NOTE:</strong>
+                          {p.instruction}
+                        </span>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Manual Instruction Strip - Only rendered if manual note exists */}
-                  {hasManualNote && (
-                    <div className="mt-1.5 pt-1.5 border-t border-slate-700/60 text-xs font-medium text-slate-200 flex items-center gap-2 bg-slate-950/60 rounded-lg p-1.5 px-2.5 shrink-0">
-                      <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span className="truncate">
-                        <strong className="text-amber-300 font-bold uppercase mr-1">NOTE:</strong>
-                        {p.instruction}
-                      </span>
-                    </div>
-                  )}
+                );
+              })}
+              
+              {visiblePriorities.length === 0 && (
+                <div className="col-span-full row-span-full flex flex-col items-center justify-center text-slate-500 space-y-4">
+                  <CheckCircle className="w-20 h-20 text-slate-800" />
+                  <div className="text-xl font-medium text-slate-400">No Active Recommendations</div>
+                  <div className="text-xs text-slate-600">The execution queue is currently empty for this site.</div>
                 </div>
-              );
-            })}
-            
-            {visiblePriorities.length === 0 && (
-              <div className="col-span-full row-span-full flex flex-col items-center justify-center text-slate-500 space-y-4">
-                <CheckCircle className="w-20 h-20 text-slate-800" />
-                <div className="text-xl font-medium text-slate-400">No Active Recommendations</div>
-                <div className="text-xs text-slate-600">The execution queue is currently empty for this site.</div>
+              )}
+            </div>
+
+            {/* Pagination Indicators */}
+            {totalPages > 1 && (
+              <div className="mt-3 flex justify-center items-center gap-2 shrink-0">
+                {Array.from({ length: totalPages }).map((_, i) => (
+                  <div 
+                    key={i} 
+                    className={`h-2 rounded-full transition-all duration-500 ${i === currentPage ? 'w-8 bg-brand-500' : 'w-2 bg-slate-700'}`}
+                  />
+                ))}
+                <span className="text-slate-500 text-xs ml-3 font-mono font-medium">PAGE {currentPage + 1} OF {totalPages}</span>
               </div>
             )}
           </div>
+        ) : (
+          /* Flight Board Airport Departure Table View */
+          <div className="flex-1 p-3 sm:p-4 flex flex-col overflow-hidden bg-slate-950">
+            {/* Flight Board Controls Sub-Header */}
+            <div className="flex items-center justify-between gap-3 mb-2.5 px-1 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 font-mono text-xs font-bold shadow-sm">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                  <span>FLIGHT BOARD DEPARTURES</span>
+                </span>
 
-          {/* Pagination Indicators */}
-          {totalPages > 1 && (
-            <div className="mt-3 flex justify-center items-center gap-2 shrink-0">
-              {Array.from({ length: totalPages }).map((_, i) => (
-                <div 
-                  key={i} 
-                  className={`h-2 rounded-full transition-all duration-500 ${i === currentPage ? 'w-8 bg-brand-500' : 'w-2 bg-slate-700'}`}
-                />
-              ))}
-              <span className="text-slate-500 text-xs ml-3 font-mono font-medium">PAGE {currentPage + 1} OF {totalPages}</span>
+                {pinnedPriorities.length > 0 && (
+                  <span className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800/80 text-red-300 font-mono text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                    <Pin className="w-3 h-3 text-red-400" />
+                    <span>{pinnedPriorities.length} URGENT PINNED TOP</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Auto-scroll toggle button */}
+                <button
+                  type="button"
+                  onClick={() => setIsFlightBoardAutoScrollEnabled(!isFlightBoardAutoScrollEnabled)}
+                  className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1.5 border transition-all shadow-sm ${
+                    isFlightBoardAutoScrollEnabled
+                      ? 'bg-emerald-950/80 border-emerald-700/80 text-emerald-300 hover:bg-emerald-900/80'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {isFlightBoardAutoScrollEnabled ? <Pause className="w-3.5 h-3.5 text-emerald-400" /> : <Play className="w-3.5 h-3.5 text-slate-400" />}
+                  <span>{isFlightBoardAutoScrollEnabled ? (isFlightBoardHovered ? 'PAUSED (HOVER)' : 'AUTO-SCROLLING') : 'SCROLL PAUSED'}</span>
+                </button>
+
+                <span className="text-slate-400 text-xs font-mono font-bold">TOTAL ITEMS: {priorities.length}</span>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Flight Board Table Container */}
+            <div 
+              className="flex-1 border border-slate-800 rounded-xl bg-slate-900/90 overflow-hidden flex flex-col shadow-2xl"
+              onMouseEnter={() => setIsFlightBoardHovered(true)}
+              onMouseLeave={() => setIsFlightBoardHovered(false)}
+            >
+              {/* Flight Board Table Column Header */}
+              <div className="grid grid-cols-[115px_1.2fr_110px_110px_90px_140px_1.4fr] items-center gap-2 px-4 py-2.5 bg-slate-950 border-b border-slate-800 text-[11px] font-black uppercase tracking-wider text-slate-400 font-mono shrink-0 shadow-sm">
+                <div className="flex items-center gap-1">
+                  <Pin className="w-3 h-3 text-amber-400" />
+                  <span>PRIORITY</span>
+                </div>
+                <div>SKU / PRODUCT ITEM</div>
+                <div className="text-center">ACTION</div>
+                <div className="text-center">QTY</div>
+                <div className="text-center">DEST</div>
+                <div>REASON / STATUS</div>
+                <div>INSTRUCTION / NOTES</div>
+              </div>
+
+              {/* Flight Board Table Body (Auto-scrolling container) */}
+              <div 
+                ref={flightBoardScrollRef}
+                className="flex-1 overflow-y-auto min-h-0 divide-y divide-slate-800/80 scroll-smooth"
+              >
+                {/* SECTION 1: PINNED URGENT PRIORITIES (Sticky Top Block) */}
+                {pinnedPriorities.length > 0 && (
+                  <div className="bg-slate-950/95 border-b-2 border-amber-500/60 shrink-0">
+                    <div className="px-4 py-1 bg-amber-950/70 border-b border-amber-800/50 text-[10px] font-bold text-amber-300 uppercase tracking-widest flex items-center gap-1.5 font-mono shadow-inner">
+                      <Pin className="w-3 h-3 text-amber-400" />
+                      <span>URGENT & HIGH PRIORITIES — PINNED TO TOP</span>
+                    </div>
+                    {pinnedPriorities.map(p => renderFlightBoardRow(p, true))}
+                  </div>
+                )}
+
+                {/* SECTION 2: ALL / STANDARD PRIORITIES SCROLLING QUEUE */}
+                {priorities.map(p => renderFlightBoardRow(p, false))}
+
+                {priorities.length === 0 && (
+                  <div className="p-12 text-center text-slate-500 space-y-3">
+                    <CheckCircle className="w-12 h-12 text-slate-700 mx-auto" />
+                    <div className="text-base font-semibold text-slate-400">No Active Recommendations</div>
+                    <div className="text-xs text-slate-600">The operations queue is currently empty.</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Side Panel - Forecast Stock vs Demand in Pallets */}
         <div className="w-80 sm:w-96 lg:w-[460px] xl:w-[500px] 2xl:w-[540px] bg-slate-900 border-l border-slate-800 p-3 sm:p-3.5 flex flex-col gap-2.5 shrink-0 z-10 overflow-hidden shadow-2xl">
@@ -937,11 +1291,53 @@ export const TVDashboardPage: React.FC = () => {
               </span>
             </div>
 
+            {/* Demand Mode Switcher Tabs */}
+            <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px] font-medium mt-1">
+              <button
+                type="button"
+                onClick={() => setDemandViewMode('horizon')}
+                className={`px-1.5 py-1 rounded transition-colors text-center truncate ${
+                  demandViewMode === 'horizon'
+                    ? 'bg-brand-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title="Target Horizon Date requirement only"
+              >
+                Horizon Date
+              </button>
+              <button
+                type="button"
+                onClick={() => setDemandViewMode('horizon7d')}
+                className={`px-1.5 py-1 rounded transition-colors text-center truncate ${
+                  demandViewMode === 'horizon7d'
+                    ? 'bg-brand-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title="Horizon Date plus next 7 days lookahead demand"
+              >
+                +7d Lookahead
+              </button>
+              <button
+                type="button"
+                onClick={() => setDemandViewMode('full')}
+                className={`px-1.5 py-1 rounded transition-colors text-center truncate ${
+                  demandViewMode === 'full'
+                    ? 'bg-brand-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title="Full multi-week snapshot requirement"
+              >
+                Full Snapshot
+              </button>
+            </div>
+
             {/* Quick KPI stats strip */}
-            <div className="grid grid-cols-2 gap-2 mt-1.5">
+            <div className="grid grid-cols-2 gap-2 mt-2">
               <div className="bg-slate-950 border border-slate-800 p-1.5 sm:p-2 rounded-lg flex flex-col items-center justify-center text-center">
                 <span className="text-lg sm:text-xl font-bold text-brand-400 font-mono leading-none">{totalRequiredPallets}</span>
-                <span className="text-[10px] text-slate-400 font-medium uppercase mt-0.5">Required Plts</span>
+                <span className="text-[10px] text-slate-400 font-medium uppercase mt-0.5">
+                  {demandViewMode === 'horizon' ? 'Req (Horizon)' : demandViewMode === 'horizon7d' ? 'Req (+7 Days)' : 'Req (Full Total)'}
+                </span>
               </div>
               <div className={`p-1.5 sm:p-2 rounded-lg flex flex-col items-center justify-center text-center border ${
                 shortfallCount > 0 
@@ -957,7 +1353,7 @@ export const TVDashboardPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Sub-label explaining rounding rule */}
+            {/* Sub-label explaining active view & rounding */}
             <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium mt-1.5 px-0.5">
               <span>Pallets: On Hand vs Req</span>
               <span className="text-slate-400 font-mono">Demand Ceil ↑</span>
@@ -982,10 +1378,15 @@ export const TVDashboardPage: React.FC = () => {
             ) : (
               <div className={`grid gap-2 ${forecastStockItems.length > 3 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
                 {forecastStockItems.map(item => {
-                  const percentCovered = item.requiredPallets > 0 
-                    ? Math.min(100, Math.round((item.onHandPallets / item.requiredPallets) * 100))
+                  const percentCovered = item.activeRequiredPallets > 0 
+                    ? Math.min(100, Math.round((item.onHandPallets / item.activeRequiredPallets) * 100))
                     : 100;
                   const isMultiCol = forecastStockItems.length > 3;
+                  const reqBadgeText = demandViewMode === 'horizon' 
+                    ? 'REQ (SET):' 
+                    : demandViewMode === 'horizon7d' 
+                    ? 'REQ (+7D):' 
+                    : 'REQ (TOT):';
 
                   return (
                     <div 
@@ -996,7 +1397,7 @@ export const TVDashboardPage: React.FC = () => {
                           : 'bg-slate-950 border-slate-800/90'
                       }`}
                     >
-                      {/* Top Row: Product Code & Status Badge */}
+                      {/* Top Row: Product Code, Scheduled Production & Status Badge */}
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <div 
                           className={`font-mono font-black text-slate-100 tracking-tight leading-none whitespace-nowrap overflow-visible ${
@@ -1006,15 +1407,26 @@ export const TVDashboardPage: React.FC = () => {
                         >
                           {normalizeProductCode(item.productCode)}
                         </div>
-                        {item.isShortfall ? (
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 border border-amber-500/40 text-amber-300 shrink-0 whitespace-nowrap">
-                            Short ({item.deficitPallets})
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 shrink-0 whitespace-nowrap">
-                            Covered
-                          </span>
-                        )}
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {item.confirmedProductionPallets > 0 && (
+                            <span 
+                              className="px-1.5 py-0.5 rounded text-[8.5px] font-bold uppercase tracking-wider bg-cyan-950/80 border border-cyan-700/60 text-cyan-300 whitespace-nowrap"
+                              title={`Scheduled Confirmed Production in snapshot: +${item.confirmedProductionPallets} plts`}
+                            >
+                              Prod +{Math.round(item.confirmedProductionPallets)}
+                            </span>
+                          )}
+                          {item.isShortfall ? (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 border border-amber-500/40 text-amber-300 shrink-0 whitespace-nowrap">
+                              Short ({item.deficitPallets})
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 shrink-0 whitespace-nowrap">
+                              Covered
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Product Description */}
@@ -1035,9 +1447,9 @@ export const TVDashboardPage: React.FC = () => {
                         <div className="text-slate-600 font-mono text-xs">/</div>
 
                         <div className="flex items-center gap-1">
-                          <span className="text-[9px] text-slate-400 font-bold uppercase">REQ:</span>
+                          <span className="text-[9px] text-slate-400 font-bold uppercase">{reqBadgeText}</span>
                           <span className="font-mono font-black text-sm text-slate-200">
-                            {item.requiredPallets}
+                            {item.activeRequiredPallets}
                           </span>
                           <span className="text-[8px] text-slate-400 font-bold uppercase">PLT</span>
                         </div>
@@ -1051,6 +1463,23 @@ export const TVDashboardPage: React.FC = () => {
                           }`}
                           style={{ width: `${percentCovered}%` }}
                         />
+                      </div>
+
+                      {/* Secondary Smart Line: Horizon lookahead + next few days demand & scheduled production */}
+                      <div className="mt-1.5 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9px] leading-tight text-slate-400">
+                        <div className="flex items-center gap-1 font-mono">
+                          <span className="text-slate-500 uppercase font-sans font-medium">Next 7d:</span>
+                          <span className="font-bold text-slate-300">+{item.next7DaysRequiredPallets} plt</span>
+                          <span className="text-slate-600">({item.totalRequiredPallets} tot)</span>
+                        </div>
+                        {item.confirmedProductionPallets > 0 ? (
+                          <div className="flex items-center gap-1 font-mono text-cyan-400" title="Confirmed production scheduled in snapshot">
+                            <span className="text-cyan-500/80 font-sans font-medium text-[8px]">PROD:</span>
+                            <span className="font-bold">+{Math.round(item.confirmedProductionPallets)}</span>
+                          </div>
+                        ) : (
+                          <span className="text-[8px] text-slate-600 font-mono">No sched prod</span>
+                        )}
                       </div>
                     </div>
                   );

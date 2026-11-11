@@ -45,6 +45,7 @@ import { DataUtilitiesPage } from '../features/administration/pages/DataUtilitie
 import { LearningCentrePage } from '../features/learning/pages/LearningCentrePage';
 import { SopReaderPage } from '../features/learning/pages/SopReaderPage';
 import { SopEditorPage } from '../features/learning/pages/SopEditorPage';
+import { SystemOverviewPage } from '../pages/SystemOverviewPage';
 
 export const router = createBrowserRouter([
   {
@@ -104,6 +105,11 @@ export const router = createBrowserRouter([
       { path: 'learning/editor', element: <PermissionRoute requiredPermissions="MANAGE_LEARNING"><SopEditorPage /></PermissionRoute>, handle: { title: 'SOP Editor' } },
       { path: 'learning/editor/:id', element: <PermissionRoute requiredPermissions="MANAGE_LEARNING"><SopEditorPage /></PermissionRoute>, handle: { title: 'SOP Editor' } },
     ],
+  },
+  {
+    path: '/system-overview',
+    element: <SystemOverviewPage />,
+    handle: { title: 'System Overview & Benefits' }
   },
   {
     path: '/tv-dashboard',

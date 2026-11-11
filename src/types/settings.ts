@@ -19,9 +19,11 @@ export interface SiteSettings {
   modifiedBy: string;
   modifiedDate: any; // Firestore Timestamp
   
-  // additional presentation logic (whether ticker is on)
+  // additional presentation logic (whether ticker is on, flight board enabled, layout preference)
   announcementTickerActive?: boolean;
   priorityPageSize?: number;
   visibleSummaryMetrics?: string[];
   visiblePlanningIndicators?: string[];
+  flightBoardEnabled?: boolean;
+  defaultDashboardLayout?: 'grid' | 'flightBoard';
 }

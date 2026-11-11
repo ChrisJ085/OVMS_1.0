@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan for immediate forced sign-out on admin password reset and account disable/lock using server-side session revocation and real-time profile listeners.",
-  "updatedAt":  "2026-10-28T14:57:55.781655940Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

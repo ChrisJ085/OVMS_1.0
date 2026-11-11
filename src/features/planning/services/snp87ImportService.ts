@@ -22,6 +22,7 @@ import {
   where,
   subscribeToCollection
 } from '../../../services/dbService';
+import { toCalendarDateString, addCalendarDays } from './snp87PlanningContextService';
 
 export const SNP87_COLLECTIONS = {
   IMPORTS: 'snp87Imports',
@@ -1147,47 +1148,200 @@ export const computeWeeklyForecastPlan = (
   products: Product[] = []
 ): ProductForecastWeeklyPlan[] => {
   const forecastRows = rows.filter(r => getNormalizedPlanningType(r) === 'FORECAST');
-  const planMap = new Map<string, ProductForecastWeeklyPlan>();
+  const productionRows = rows.filter(r => getNormalizedPlanningType(r) === 'CONFIRMED_PRODUCTION');
 
-  forecastRows.forEach(row => {
-    const code = row.productCodeSnapshot || row.productNumber || row.orderSku || 'UNKNOWN';
-    let matchedProduct = row.productId ? products.find(p => p.id === row.productId) : null;
-    if (!matchedProduct && code !== 'UNKNOWN') {
-      matchedProduct = products.find(p => areProductCodesEqual(p.productCode, code)) || null;
-    }
-
-    const casesPerPallet = matchedProduct?.casesPerPallet || 0;
-    // Use horizon date rather than the date within the End or Start date
-    const horizon = row.horizonDate || row.planningDate || row.startDate || '';
-    const qty = row.forecastQuantity ?? row.quantity ?? 0;
-
-    const existing = planMap.get(code);
-    if (existing) {
-      existing.totalForecastCases += qty;
-      existing.rowCount += 1;
-      if (horizon && !existing.distinctDates.includes(horizon)) {
-        existing.distinctDates.push(horizon);
-      }
-      if (casesPerPallet > 0) {
-        existing.palletEquivalent = Number((existing.totalForecastCases / casesPerPallet).toFixed(2));
-      }
-    } else {
-      planMap.set(code, {
-        productId: row.productId || matchedProduct?.id || null,
-        productCode: code,
-        orderSku: row.orderSku || '',
-        productDescription: row.descriptionSnapshot || row.productDescription || matchedProduct?.description || 'Forecast Product',
-        baseUnitOfMeasure: row.baseUnitOfMeasure || 'CS',
-        horizonDate: horizon,
-        totalForecastCases: qty,
-        casesPerPallet,
-        palletEquivalent: casesPerPallet > 0 ? Number((qty / casesPerPallet).toFixed(2)) : 0,
-        rowCount: 1,
-        distinctDates: horizon ? [horizon] : []
-      });
+  // Fast product index
+  const activeProductsByCode = new Map<string, Product>();
+  products.forEach(p => {
+    if (p.productCode) {
+      activeProductsByCode.set(p.productCode.trim().toUpperCase(), p);
+      const codeOnly = (p as any).code;
+      if (codeOnly) activeProductsByCode.set(String(codeOnly).trim().toUpperCase(), p);
     }
   });
 
-  return Array.from(planMap.values()).sort((a, b) => b.totalForecastCases - a.totalForecastCases);
+  const findProduct = (code?: string | null, prodId?: string | null): Product | null => {
+    if (prodId) {
+      const match = products.find(p => p.id === prodId);
+      if (match) return match;
+    }
+    if (code) {
+      const trimmed = code.trim().toUpperCase();
+      if (activeProductsByCode.has(trimmed)) return activeProductsByCode.get(trimmed)!;
+      for (const p of products) {
+        if (areProductCodesEqual(p.productCode, code)) return p;
+      }
+    }
+    return null;
+  };
+
+  interface SKUData {
+    productId: string | null;
+    productCode: string;
+    orderSku: string;
+    productDescription: string;
+    baseUnitOfMeasure: string;
+    casesPerPallet: number;
+    forecastByDate: Map<string, number>;
+    productionByDate: Map<string, number>;
+    rowCount: number;
+  }
+
+  const skuMap = new Map<string, SKUData>();
+
+  forecastRows.forEach(row => {
+    const code = row.productCodeSnapshot || row.productNumber || row.orderSku || 'UNKNOWN';
+    const matched = findProduct(code, row.productId);
+    const resolvedCode = matched?.productCode || code;
+    const key = resolvedCode.trim().toUpperCase();
+
+    const cpp = matched?.casesPerPallet || matched?.configurations?.[0]?.casesPerPallet || (row as any).casesPerPallet || 0;
+    const dateStr = toCalendarDateString(row.planningDate || row.startDate || row.horizonDate);
+    const qty = row.forecastQuantity ?? row.quantity ?? 0;
+
+    let data = skuMap.get(key);
+    if (!data) {
+      data = {
+        productId: row.productId || matched?.id || null,
+        productCode: resolvedCode,
+        orderSku: row.orderSku || '',
+        productDescription: row.descriptionSnapshot || row.productDescription || matched?.description || 'Forecast Product',
+        baseUnitOfMeasure: row.baseUnitOfMeasure || 'CS',
+        casesPerPallet: cpp,
+        forecastByDate: new Map(),
+        productionByDate: new Map(),
+        rowCount: 0
+      };
+      skuMap.set(key, data);
+    }
+
+    data.rowCount += 1;
+    if (dateStr) {
+      data.forecastByDate.set(dateStr, (data.forecastByDate.get(dateStr) || 0) + qty);
+    }
+  });
+
+  // Also index confirmed production for matched SKUs
+  productionRows.forEach(row => {
+    const code = row.productCodeSnapshot || row.productNumber || row.orderSku;
+    if (!code) return;
+    const matched = findProduct(code, row.productId);
+    const resolvedCode = matched?.productCode || code;
+    const key = resolvedCode.trim().toUpperCase();
+
+    const data = skuMap.get(key);
+    if (data) {
+      const dateStr = toCalendarDateString(row.planningDate || row.startDate);
+      const qty = row.confirmedProductionQuantity ?? row.quantity ?? 0;
+      if (dateStr) {
+        data.productionByDate.set(dateStr, (data.productionByDate.get(dateStr) || 0) + qty);
+      }
+    }
+  });
+
+  const todayStr = toCalendarDateString(new Date());
+  const results: ProductForecastWeeklyPlan[] = [];
+
+  for (const data of skuMap.values()) {
+    const sortedDates = Array.from(data.forecastByDate.keys()).sort();
+    const horizonDate = sortedDates[0] || '';
+    const cpp = data.casesPerPallet;
+
+    // Total snapshot forecast
+    let totalForecastCases = 0;
+    for (const qty of data.forecastByDate.values()) {
+      totalForecastCases += qty;
+    }
+
+    // Horizon date specific demand (Day 1 / set horizon)
+    const horizonDemandCases = horizonDate ? (data.forecastByDate.get(horizonDate) || 0) : 0;
+    const horizonDemandPallets = cpp > 0 ? Number((horizonDemandCases / cpp).toFixed(2)) : 0;
+    const horizonRequiredPallets = cpp > 0 ? Math.ceil(horizonDemandCases / cpp) : 0;
+
+    // Next 7 days lookahead demand (calendar days following horizonDate)
+    let next7DaysCases = 0;
+    let next7Window: { startDate: string; endDate: string } | undefined = undefined;
+    if (horizonDate) {
+      const next7Start = addCalendarDays(horizonDate, 1);
+      const next7End = addCalendarDays(horizonDate, 7);
+      next7Window = { startDate: next7Start, endDate: next7End };
+
+      for (const [dateStr, qty] of data.forecastByDate.entries()) {
+        if (dateStr >= next7Start && dateStr <= next7End) {
+          next7DaysCases += qty;
+        }
+      }
+    }
+
+    const next7DaysPallets = cpp > 0 ? Number((next7DaysCases / cpp).toFixed(2)) : 0;
+    const next7DaysRequiredPallets = cpp > 0 ? Math.ceil(next7DaysCases / cpp) : 0;
+
+    // Horizon + 7 Days demand combined
+    const horizonPlus7DaysCases = horizonDemandCases + next7DaysCases;
+    const horizonPlus7DaysPallets = cpp > 0 ? Number((horizonPlus7DaysCases / cpp).toFixed(2)) : 0;
+    const horizonPlus7DaysRequiredPallets = cpp > 0 ? Math.ceil(horizonPlus7DaysCases / cpp) : 0;
+
+    // Pallet equivalent for full snapshot
+    const palletEquivalent = cpp > 0 ? Number((totalForecastCases / cpp).toFixed(2)) : 0;
+    const totalRequiredPallets = cpp > 0 ? Math.ceil(totalForecastCases / cpp) : 0;
+
+    // Confirmed production analysis
+    let confirmedProductionCases = 0;
+    let productionBeforeHorizonCases = 0;
+    let productionTodayCases = 0;
+    const confirmedProductionDates: string[] = [];
+
+    for (const [dateStr, qty] of data.productionByDate.entries()) {
+      confirmedProductionCases += qty;
+      confirmedProductionDates.push(dateStr);
+      if (horizonDate && dateStr <= horizonDate) {
+        productionBeforeHorizonCases += qty;
+      }
+      if (dateStr === todayStr) {
+        productionTodayCases += qty;
+      }
+    }
+    confirmedProductionDates.sort();
+
+    const confirmedProductionPallets = cpp > 0 ? Number((confirmedProductionCases / cpp).toFixed(1)) : 0;
+    const productionBeforeHorizonPallets = cpp > 0 ? Number((productionBeforeHorizonCases / cpp).toFixed(1)) : 0;
+    const productionTodayPallets = cpp > 0 ? Number((productionTodayCases / cpp).toFixed(1)) : 0;
+
+    results.push({
+      productId: data.productId,
+      productCode: data.productCode,
+      orderSku: data.orderSku,
+      productDescription: data.productDescription,
+      baseUnitOfMeasure: data.baseUnitOfMeasure,
+      horizonDate,
+      totalForecastCases,
+      casesPerPallet: cpp,
+      palletEquivalent,
+      totalRequiredPallets,
+      rowCount: data.rowCount,
+      distinctDates: sortedDates,
+
+      horizonDemandCases,
+      horizonDemandPallets,
+      horizonRequiredPallets,
+
+      next7DaysCases,
+      next7DaysPallets,
+      next7DaysRequiredPallets,
+      next7DaysWindow: next7Window,
+
+      horizonPlus7DaysCases,
+      horizonPlus7DaysPallets,
+      horizonPlus7DaysRequiredPallets,
+
+      confirmedProductionCases,
+      confirmedProductionPallets,
+      confirmedProductionDates,
+      productionTodayPallets,
+      productionBeforeHorizonPallets
+    });
+  }
+
+  return results.sort((a, b) => b.totalForecastCases - a.totalForecastCases);
 };
 
