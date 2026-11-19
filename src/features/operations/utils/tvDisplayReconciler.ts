@@ -275,3 +275,32 @@ export const reconcileDisplayPriorityForTV = (params: {
     onHandCases
   };
 };
+
+/**
+ * Splits Flight Board rows into user-pinned and scrolling queues without duplicating items.
+ * Only items explicitly pinned by a user (or flagged isPinned) appear in pinnedEntries,
+ * and pinned items are excluded from unpinnedEntries.
+ */
+export const partitionFlightBoardEntries = <T extends { priority: DisplayPriority }>(
+  entries: T[],
+  userPinnedIds: ReadonlySet<string>
+): { pinnedEntries: T[]; unpinnedEntries: T[] } => {
+  const pinnedEntries: T[] = [];
+  const unpinnedEntries: T[] = [];
+
+  for (const entry of entries) {
+    const p = entry.priority;
+    const isPhysicallyPinned =
+      userPinnedIds.has(p.id) ||
+      Boolean(p.sourcePriorityId && userPinnedIds.has(p.sourcePriorityId)) ||
+      (p as any).isPinned === true;
+
+    if (isPhysicallyPinned) {
+      pinnedEntries.push(entry);
+    } else {
+      unpinnedEntries.push(entry);
+    }
+  }
+
+  return { pinnedEntries, unpinnedEntries };
+};

@@ -34,6 +34,7 @@ import { areProductCodesEqual, normalizeProductCode } from '../../../utils/produ
 import {
   buildInventoryStockLookup,
   deduplicateDisplayPriorities,
+  partitionFlightBoardEntries,
   reconcileDisplayPriorityForTV
 } from '../utils/tvDisplayReconciler';
 
@@ -215,6 +216,41 @@ export const TVDashboardPage: React.FC = () => {
   const [isFlightBoardAutoScrollEnabled, setIsFlightBoardAutoScrollEnabled] = useState(true);
   const [isFlightBoardHovered, setIsFlightBoardHovered] = useState(false);
   const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
+  const [userPinnedIds, setUserPinnedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!siteId || siteId === 'GLOBAL') {
+      setUserPinnedIds([]);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(`tv_flightboard_pinned_${siteId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setUserPinnedIds(parsed.filter((id): id is string => typeof id === 'string'));
+          return;
+        }
+      }
+    } catch {}
+    setUserPinnedIds([]);
+  }, [siteId]);
+
+  const toggleFlightBoardPin = (priority: DisplayPriority) => {
+    const key = priority.sourcePriorityId || priority.id;
+    setUserPinnedIds(prev => {
+      const isCurrentlyPinned = prev.includes(key) || prev.includes(priority.id);
+      const next = isCurrentlyPinned
+        ? prev.filter(id => id !== key && id !== priority.id)
+        : [...prev, key];
+      try {
+        if (siteId && siteId !== 'GLOBAL') {
+          localStorage.setItem(`tv_flightboard_pinned_${siteId}`, JSON.stringify(next));
+        }
+      } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
@@ -747,13 +783,10 @@ export const TVDashboardPage: React.FC = () => {
     };
   }, [displayLayoutMode, isFlightBoardAutoScrollEnabled, isFlightBoardHovered, effectivePriorities]);
 
-  // Pinned Urgent Priorities (CRITICAL, URGENT, HIGH, BLOCKED)
-  const pinnedPriorityEntries = useMemo(() => {
-    return reconciledPriorityEntries.filter(({ priority: p }) => {
-      const label = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel).toUpperCase();
-      return label.includes('CRITICAL') || label.includes('URGENT') || label.includes('HIGH') || p.priorityStatus === 'BLOCKED';
-    });
-  }, [reconciledPriorityEntries, priorityLevels]);
+  // Partition Flight Board into physically user-pinned rows and the main queue (mutually exclusive, never duplicated)
+  const { pinnedEntries: pinnedPriorityEntries, unpinnedEntries: unpinnedPriorityEntries } = useMemo(() => {
+    return partitionFlightBoardEntries(reconciledPriorityEntries, new Set(userPinnedIds));
+  }, [reconciledPriorityEntries, userPinnedIds]);
 
   // Derived metrics
   const stats = useMemo(() => {
@@ -870,13 +903,19 @@ export const TVDashboardPage: React.FC = () => {
       >
         {/* 1. PIN / PRIORITY */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {isPinned ? (
-            <span className="p-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-sm" title="Pinned Urgent / High Priority">
-              <Pin className="w-3 h-3" />
-            </span>
-          ) : (
-            <span className={`w-2 h-2 rounded-full shrink-0 ${isBlocked ? 'bg-red-500' : isCompleted ? 'bg-emerald-500' : 'bg-brand-400'}`} />
-          )}
+          <button
+            type="button"
+            onClick={() => toggleFlightBoardPin(p)}
+            className={`p-1 rounded border transition-colors ${
+              isPinned
+                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-sm hover:bg-amber-500/30'
+                : 'bg-slate-950/60 text-slate-600 border-slate-800 hover:text-amber-300 hover:border-amber-500/40'
+            }`}
+            title={isPinned ? 'Unpin from top' : 'Pin to top'}
+            aria-label={isPinned ? 'Unpin priority from top' : 'Pin priority to top'}
+          >
+            <Pin className="w-3 h-3" />
+          </button>
           <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded tracking-wider shadow-sm ${theme.badgeBg}`}>
             {p.priorityStatus === 'COMPLETED' ? 'READY' : isBlocked ? 'BLOCKED' : displayLevelLabel}
           </span>
@@ -1160,7 +1199,7 @@ export const TVDashboardPage: React.FC = () => {
                 {pinnedPriorityEntries.length > 0 && (
                   <span className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800/80 text-red-300 font-mono text-xs font-bold flex items-center gap-1.5 shadow-sm">
                     <Pin className="w-3 h-3 text-red-400" />
-                    <span>{pinnedPriorityEntries.length} URGENT PINNED TOP</span>
+                    <span>{pinnedPriorityEntries.length} PINNED TOP</span>
                   </span>
                 )}
               </div>
@@ -1209,19 +1248,19 @@ export const TVDashboardPage: React.FC = () => {
                 ref={flightBoardScrollRef}
                 className="flex-1 overflow-y-auto min-h-0 divide-y divide-slate-800/80 scroll-smooth"
               >
-                {/* SECTION 1: PINNED URGENT PRIORITIES (Sticky Top Block) */}
+                {/* SECTION 1: USER-PINNED PRIORITIES (Sticky Top Block) */}
                 {pinnedPriorityEntries.length > 0 && (
                   <div className="bg-slate-950/95 border-b-2 border-amber-500/60 shrink-0">
                     <div className="px-4 py-1 bg-amber-950/70 border-b border-amber-800/50 text-[10px] font-bold text-amber-300 uppercase tracking-widest flex items-center gap-1.5 font-mono shadow-inner">
                       <Pin className="w-3 h-3 text-amber-400" />
-                      <span>URGENT & HIGH PRIORITIES — PINNED TO TOP</span>
+                      <span>PINNED PRIORITIES — TOP</span>
                     </div>
                     {pinnedPriorityEntries.map(({ priority: p, reconciled }) => renderFlightBoardRow(p, reconciled, true))}
                   </div>
                 )}
 
-                {/* SECTION 2: ALL / STANDARD PRIORITIES SCROLLING QUEUE */}
-                {reconciledPriorityEntries.map(({ priority: p, reconciled }) => renderFlightBoardRow(p, reconciled, false))}
+                {/* SECTION 2: PRIORITIES SCROLLING QUEUE (Unpinned items only — no duplicates) */}
+                {unpinnedPriorityEntries.map(({ priority: p, reconciled }) => renderFlightBoardRow(p, reconciled, false))}
 
                 {reconciledPriorityEntries.length === 0 && (
                   <div className="p-12 text-center text-slate-500 space-y-3">

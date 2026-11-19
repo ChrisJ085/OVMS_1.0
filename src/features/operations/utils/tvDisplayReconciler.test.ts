@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildInventoryStockLookup,
   deduplicateDisplayPriorities,
+  partitionFlightBoardEntries,
   reconcileDisplayPriorityForTV,
   ForecastStockSummary
 } from './tvDisplayReconciler';
@@ -226,5 +227,21 @@ describe('tvDisplayReconciler', () => {
     expect(result.qtyValue).toBe('3');
     expect(result.wasCappedByStock).toBe(true);
     expect(result.displayInstruction).toBe('Release 3 cases (3 Pallets) to Chorley (CH)');
+  });
+
+  it('does not auto-pin HIGH/CRITICAL Flight Board entries or duplicate pinned records', () => {
+    const entries = [
+      { priority: makePriority({ id: 'prio-1', sourcePriorityId: 'prio-1', priorityLevelId: 'HIGH' }) },
+      { priority: makePriority({ id: 'prio-2', sourcePriorityId: 'prio-2', priorityLevelId: 'CRITICAL' }) },
+      { priority: makePriority({ id: 'prio-3', sourcePriorityId: 'prio-3', priorityLevelId: 'NORMAL' }) }
+    ];
+
+    const defaultPartition = partitionFlightBoardEntries(entries, new Set());
+    expect(defaultPartition.pinnedEntries).toHaveLength(0);
+    expect(defaultPartition.unpinnedEntries.map(e => e.priority.id)).toEqual(['prio-1', 'prio-2', 'prio-3']);
+
+    const userPinnedPartition = partitionFlightBoardEntries(entries, new Set(['prio-2']));
+    expect(userPinnedPartition.pinnedEntries.map(e => e.priority.id)).toEqual(['prio-2']);
+    expect(userPinnedPartition.unpinnedEntries.map(e => e.priority.id)).toEqual(['prio-1', 'prio-3']);
   });
 });
