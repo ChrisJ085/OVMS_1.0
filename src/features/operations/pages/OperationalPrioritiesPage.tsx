@@ -5,7 +5,7 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { CheckCircle, Clock, AlertTriangle, Plus, Activity, Archive, CalendarDays, Ban, Edit2, ShieldAlert, ArrowRight, Trash2 } from 'lucide-react';
-import { updatePriorityStatus, detectPriorityConflicts, deletePriority } from '../services/priorityService';
+import { updatePriorityStatus, detectPriorityConflicts, deletePriority, reconcileDisplayPrioritiesForSite } from '../services/priorityService';
 import { useAuth } from '../../auth/context/AuthContext';
 import { useSiteContext } from '../../../contexts/SiteContext';
 import { collections } from '../../configuration/services/configurationService';
@@ -155,6 +155,10 @@ export const OperationalPrioritiesPage: React.FC = () => {
 
         setPriorities(updated);
         setLoading(false);
+
+        if (userProfile?.role && userProfile.role !== 'DISPLAY') {
+          reconcileDisplayPrioritiesForSite(tenantId, siteId).catch(() => {});
+        }
       } catch (err) {
         console.error('Error fetching priorities:', err);
         setLoading(false);

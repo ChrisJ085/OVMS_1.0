@@ -748,4 +748,31 @@ describe('Decision Engine Refactored Test Suite (14 Scenarios)', () => {
     expect(output.recommendedActionTypeId).toBe(DEFAULT_DECISION_CONFIG.releaseActionId);
     expect(output.recommendedQuantity).toBe(500);
   });
+
+  // Scenario 31: Caps release recommendation at physical On-Hand stock when demand exceeds available inventory
+  it('Scenario 31: Caps release recommendation at physical On-Hand stock (QOH = 3)', () => {
+    const evalDate = new Date('2026-10-10T08:00:00Z');
+    const input = createBaseInput({
+      inventoryTotal: 3,
+      evaluationTime: evalDate,
+      productionContext: null,
+      planningRule: {
+        ...basePlanningRule,
+        minimumQuantity: 0,
+        targetQuantity: 0,
+        ddxmRetentionQuantity: 0,
+        belowTargetBehavior: 'RELEASE_ABOVE_CONTROL',
+        defaultActionTypeId: DEFAULT_DECISION_CONFIG.releaseActionId
+      },
+      configuration: {
+        ...DEFAULT_DECISION_CONFIG,
+        planningHorizonDays: 4
+      },
+      planningContext: null
+    });
+
+    const output = evaluateDecision(input);
+
+    expect(output.recommendedQuantity).toBeLessThanOrEqual(3);
+  });
 });

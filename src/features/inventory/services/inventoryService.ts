@@ -139,8 +139,8 @@ export const adjustInventory = async (params: IncreaseDecreaseParams, type: 'INC
 
     if (moveErr) throw new Error(moveErr.message);
 
-    // Trigger recommendation refresh for affected product
-    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+    // Trigger forced recommendation refresh for affected product
+    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId, true).catch(console.error);
 
     // Log Audit Event
     try {
@@ -316,8 +316,8 @@ export const transferInventory = async (params: TransferParams): Promise<Service
 
     if (insMovesErr) throw new Error(insMovesErr.message);
 
-    // Trigger recommendation refresh for affected product
-    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+    // Trigger forced recommendation refresh for affected product
+    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId, true).catch(console.error);
 
     // Log Audit Event
     try {
@@ -855,7 +855,7 @@ export const deductProductInventory = async (params: DeductInventoryParams): Pro
       if (movesErr) throw new Error(movesErr.message);
     }
 
-    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId).catch(console.error);
+    generateRecommendationForProduct(params.tenantId, params.siteId, params.productId, true).catch(console.error);
 
     return { success: true };
   } catch (error: any) {

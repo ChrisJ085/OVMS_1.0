@@ -509,8 +509,7 @@ export const setDocument = async (
 
   const TENANT_SITE_UNIQUE_TABLES = new Set([
     'decision_configurations',
-    'recommendation_runs',
-    'display_priorities'
+    'recommendation_runs'
   ]);
 
   let error;

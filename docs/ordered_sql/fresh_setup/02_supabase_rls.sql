@@ -364,7 +364,7 @@ ALTER TABLE IF EXISTS public.display_priorities ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "DisplayPriorities: Select" ON public.display_priorities FOR SELECT USING (ovms_internal.has_site_access(tenant_id, site_id));
 CREATE POLICY "DisplayPriorities: Insert" ON public.display_priorities FOR INSERT WITH CHECK (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 CREATE POLICY "DisplayPriorities: Update" ON public.display_priorities FOR UPDATE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
-CREATE POLICY "DisplayPriorities: Delete" ON public.display_priorities FOR DELETE USING (ovms_internal.is_platform_superuser() OR ovms_internal.is_tenant_admin(tenant_id));
+CREATE POLICY "DisplayPriorities: Delete" ON public.display_priorities FOR DELETE USING (ovms_internal.has_site_access(tenant_id, site_id) AND (ovms_internal.get_auth_user()).role != 'DISPLAY');
 
 -- Table: priority_events
 ALTER TABLE public.priority_events ENABLE ROW LEVEL SECURITY;

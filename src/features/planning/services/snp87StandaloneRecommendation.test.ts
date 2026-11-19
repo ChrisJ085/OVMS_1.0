@@ -29,6 +29,38 @@ vi.mock('../../../services/auditService', () => ({
   logAuditEvent: vi.fn(async () => {})
 }));
 
+vi.mock('../../../config/supabase', () => {
+  const createQueryBuilder = () => {
+    const res = { data: [], error: null };
+    const singleRes = { data: null, error: null };
+    const builder: any = {
+      select: vi.fn(() => builder),
+      insert: vi.fn(() => builder),
+      update: vi.fn(() => builder),
+      upsert: vi.fn(() => builder),
+      delete: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      neq: vi.fn(() => builder),
+      in: vi.fn(() => builder),
+      gte: vi.fn(() => builder),
+      lte: vi.fn(() => builder),
+      gt: vi.fn(() => builder),
+      lt: vi.fn(() => builder),
+      order: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      single: vi.fn(async () => singleRes),
+      maybeSingle: vi.fn(async () => singleRes),
+      then: (resolve: any, reject?: any) => Promise.resolve(res).then(resolve, reject)
+    };
+    return builder;
+  };
+  return {
+    supabase: {
+      from: vi.fn(() => createQueryBuilder())
+    }
+  };
+});
+
 describe('Stage 8: SNP87 Standalone Recommendation Generation (Zero MPPS7 Dependency)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -393,6 +425,70 @@ describe('Stage 8: SNP87 Standalone Recommendation Generation (Zero MPPS7 Depend
 
       expect(refreshResult.success).toBe(true);
       expect(refreshResult.data?.generatedCount).toBe(1);
+    });
+
+    it('marks orphaned/cancelled displayPriorities rows as CANCELLED before delete during batch refresh', async () => {
+      const dbService = await import('../../../services/dbService');
+      const product = {
+        id: 'prod-4475950',
+        tenantId: 'tenant-1',
+        productCode: '4475950',
+        description: 'F1 Andrex UQuilts155sc',
+        casesPerPallet: 1,
+        status: 'active'
+      } as unknown as Product;
+
+      mockDocsMap.set('products', [product]);
+      mockDocsMap.set('inventoryBalances', [{
+        id: 'inv-4475950',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productId: 'prod-4475950',
+        quantity: 3,
+        status: 'AVAILABLE'
+      }]);
+      mockDocsMap.set('planningRules', [{
+        ...createCleanPlanningRule(),
+        id: 'rule-4475950',
+        productId: 'prod-4475950',
+        minimumQuantity: 10,
+        targetQuantity: 20,
+        maximumQuantity: 50
+      }]);
+      mockDocsMap.set('northfleetStoRequirements', []);
+      mockDocsMap.set('promotions', []);
+      mockDocsMap.set('promotionProductRules', []);
+      mockDocsMap.set('recommendations', []);
+      mockDocsMap.set('priorities', [{
+        id: 'stale-prio-717',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productId: 'prod-4475950',
+        sourceType: 'RECOMMENDATION',
+        priorityStatus: 'ACTIVE',
+        requestedQuantity: 717,
+        modifiedDate: '2026-10-01T00:00:00Z'
+      }]);
+      mockDocsMap.set('displayPriorities', [{
+        id: 'stale-prio-717',
+        sourcePriorityId: 'stale-prio-717',
+        tenantId: 'tenant-1',
+        siteId: 'site-1',
+        productId: 'prod-4475950',
+        priorityStatus: 'ACTIVE',
+        requestedQuantity: 717
+      }]);
+      mockDocsMap.set('snp87PlanningImports', []);
+      mockDocsMap.set('snp87PlanningRows', []);
+
+      const res = await refreshSiteRecommendations('tenant-1', 'site-1', true);
+      expect(res.success).toBe(true);
+      expect(dbService.updateDocument).toHaveBeenCalledWith(
+        'displayPriorities',
+        'stale-prio-717',
+        expect.objectContaining({ priorityStatus: 'CANCELLED' })
+      );
+      expect(dbService.deleteDocument).toHaveBeenCalledWith('displayPriorities', 'stale-prio-717');
     });
   });
 });

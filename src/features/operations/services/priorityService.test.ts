@@ -32,11 +32,16 @@ const mockSelect = vi.fn().mockImplementation(() => ({
   }))
 }));
 
+const mockDelete = vi.fn().mockImplementation(() => ({
+  eq: vi.fn().mockResolvedValue({ error: null })
+}));
+
 vi.mock('../../../config/supabase', () => ({
   supabase: {
     from: vi.fn(() => ({
       insert: mockInsert,
       update: mockUpdate,
+      delete: mockDelete,
       select: mockSelect,
       upsert: vi.fn().mockResolvedValue({ error: null })
     }))
@@ -70,13 +75,13 @@ describe('Operational Priorities Collection Audit Test Suite', () => {
 
     const result = await createPriority(priorityInput, 'user_tester');
 
-    console.log(result); expect(true).toBe(true);
+    expect(result.success).toBe(true);
     // @ts-ignore
     expect(supabase.from).toHaveBeenCalledWith('priorities');
   });
 
   it('Verify canonical table: Duplicate checking reads from "priorities" table', async () => {
-    const isDuplicate = await checkDuplicatePriority(
+    await checkDuplicatePriority(
       'tenant_test',
       'site_test',
       'prod_test',
@@ -90,9 +95,27 @@ describe('Operational Priorities Collection Audit Test Suite', () => {
 
   it('Verify canonical table: Priority status updates target the "priorities" table', async () => {
     const result = await updatePriorityStatus('priority_123', 'COMPLETED', 'user_tester', 'Finished execution');
-    console.log(result); expect(true).toBe(true);
+    expect(result.success).toBe(true);
     // @ts-ignore
     expect(supabase.from).toHaveBeenCalledWith('priorities');
+  });
+
+  it('Marks display_priorities CANCELLED via update before attempting delete so Planner RLS removals hide TV tiles', async () => {
+    mockSelect.mockReturnValueOnce({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'prio_cancel', priority_status: 'ACTIVE', tenant_id: 't1', site_id: 's1' },
+          error: null
+        })
+      })
+    });
+
+    const cancelRes = await updatePriorityStatus('prio_cancel', 'CANCELLED', 'planner_user', 'No longer surplus');
+    expect(cancelRes.success).toBe(true);
+    // @ts-ignore
+    expect(supabase.from).toHaveBeenCalledWith('display_priorities');
+    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ priority_status: 'CANCELLED' }));
+    expect(mockDelete).toHaveBeenCalled();
   });
 
   it('Allows valid transitions from SCHEDULED to ACKNOWLEDGED and IN_PROGRESS', async () => {

@@ -3,10 +3,182 @@ import { Recommendation } from '../../../types/recommendation';
 import { ServiceResult } from '../../../types/common';
 import { logAuditEvent } from '../../../services/auditService';
 import { supabase } from '../../../config/supabase';
-import { toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
+import { normalizeTablePayload, toCamelCase, toSnakeCase } from '../../../utils/caseTransformers';
 import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 
 const TERMINAL_PRIORITY_STATUSES: PriorityStatus[] = ['DRAFT', 'CANCELLED', 'EXPIRED', 'ARCHIVED'];
+
+/**
+ * Safely removes a priority from the display_priorities projection table.
+ * First marks it as CANCELLED via UPDATE (which non-admin PLANNER roles are permitted
+ * to perform under RLS) and then attempts DELETE (which succeeds for admins/superusers).
+ * This guarantees cancelled priorities disappear immediately from the TV Dashboard.
+ */
+export const removeDisplayPriorityProjection = async (
+  priorityId: string,
+  terminalStatus: PriorityStatus = 'CANCELLED'
+): Promise<void> => {
+  if (!priorityId) return;
+  const nowIso = new Date().toISOString();
+  const payload: Record<string, any> = {
+    priorityStatus: terminalStatus,
+    modifiedDate: nowIso
+  };
+
+  try {
+    const { error: updErr } = await supabase
+      .from('display_priorities')
+      .update(toSnakeCase(payload))
+      .eq('id', priorityId);
+    if (updErr) {
+      console.warn(`Could not mark display_priorities ${priorityId} as ${terminalStatus}:`, updErr);
+    }
+  } catch (err) {
+    console.warn(`Could not mark display_priorities ${priorityId} as ${terminalStatus}:`, err);
+  }
+
+  try {
+    await supabase
+      .from('display_priorities')
+      .delete()
+      .eq('id', priorityId);
+  } catch (err) {
+    console.warn(`Could not delete display_priorities ${priorityId}:`, err);
+  }
+};
+
+/**
+ * Reconciles display_priorities against canonical priorities for a site.
+ * Designed to be safe for non-admin Planner roles: marks orphaned or cancelled/expired
+ * display_priorities rows as CANCELLED via UPDATE before attempting DELETE, and upserts
+ * any out-of-sync active priorities.
+ */
+export const reconcileDisplayPrioritiesForSite = async (
+  tenantId: string,
+  siteId: string
+): Promise<{ markedCancelled: number; deleted: number; synced: number }> => {
+  if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') {
+    return { markedCancelled: 0, deleted: 0, synced: 0 };
+  }
+
+  let markedCancelled = 0;
+  let deleted = 0;
+  let synced = 0;
+
+  try {
+    const [{ data: prioRows, error: prioErr }, { data: dispRows, error: dispErr }] = await Promise.all([
+      supabase
+        .from('priorities')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('site_id', siteId),
+      supabase
+        .from('display_priorities')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('site_id', siteId)
+    ]);
+
+    if (prioErr || dispErr || !prioRows || !dispRows) {
+      return { markedCancelled, deleted, synced };
+    }
+
+    const now = new Date();
+    const priorities = toCamelCase<Priority[]>(prioRows);
+    const displays = toCamelCase<any[]>(dispRows);
+
+    const priorityById = new Map<string, Priority>();
+    priorities.forEach(p => {
+      if (p.id) priorityById.set(p.id, p);
+    });
+
+    const displayById = new Map<string, any>();
+    displays.forEach(d => {
+      if (d.id) displayById.set(d.id, d);
+    });
+
+    // 1. Clean up orphaned, terminal, or expired rows in display_priorities
+    for (const d of displays) {
+      const sourceId = d.sourcePriorityId || d.id;
+      const sourcePrio = sourceId ? priorityById.get(sourceId) : undefined;
+
+      const isExpired = Boolean(
+        sourcePrio &&
+        sourcePrio.expireAt &&
+        !sourcePrio.untilSwitchedOff &&
+        new Date(sourcePrio.expireAt as any).getTime() < now.getTime()
+      );
+
+      const isCompletedExpired = Boolean(
+        sourcePrio &&
+        sourcePrio.priorityStatus === 'COMPLETED' &&
+        sourcePrio.completedAt &&
+        (now.getTime() - new Date(sourcePrio.completedAt as any).getTime()) > 10 * 60 * 1000
+      );
+
+      const shouldRemove =
+        !sourcePrio ||
+        TERMINAL_PRIORITY_STATUSES.includes(sourcePrio.priorityStatus) ||
+        isExpired ||
+        isCompletedExpired;
+
+      if (shouldRemove) {
+        const targetStatus: PriorityStatus =
+          sourcePrio && TERMINAL_PRIORITY_STATUSES.includes(sourcePrio.priorityStatus)
+            ? sourcePrio.priorityStatus
+            : isExpired
+            ? 'EXPIRED'
+            : 'CANCELLED';
+
+        if (d.priorityStatus !== targetStatus && d.priorityStatus !== 'CANCELLED') {
+          markedCancelled++;
+        }
+        await removeDisplayPriorityProjection(d.id, targetStatus === 'COMPLETED' ? 'CANCELLED' : targetStatus);
+        deleted++;
+      }
+    }
+
+    // 2. Ensure active priorities match their display_priorities projection
+    for (const p of priorities) {
+      if (TERMINAL_PRIORITY_STATUSES.includes(p.priorityStatus)) continue;
+      const isExpired = Boolean(
+        p.expireAt &&
+        !p.untilSwitchedOff &&
+        new Date(p.expireAt as any).getTime() < now.getTime()
+      );
+      if (isExpired) continue;
+
+      if (p.priorityStatus === 'COMPLETED') {
+        const compTime = p.completedAt ? new Date(p.completedAt as any).getTime() : 0;
+        if (compTime > 0 && now.getTime() - compTime > 10 * 60 * 1000) {
+          continue;
+        }
+      }
+
+      const existingDisp = displayById.get(p.id);
+      const needsSync =
+        !existingDisp ||
+        existingDisp.priorityStatus !== p.priorityStatus ||
+        Number(existingDisp.requestedQuantity ?? 0) !== Number(p.requestedQuantity ?? 0) ||
+        existingDisp.actionTypeId !== p.actionTypeId ||
+        (existingDisp.destinationId || null) !== (p.destinationId || null) ||
+        (existingDisp.priorityLevelId || null) !== (p.priorityLevelId || null) ||
+        (existingDisp.instruction || '') !== (p.instruction || '');
+
+      if (needsSync) {
+        const projection = buildDisplayPriorityDoc(p, p.id);
+        await supabase
+          .from('display_priorities')
+          .upsert(toSnakeCase({ ...projection, id: p.id }));
+        synced++;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not reconcile display_priorities for site:', err);
+  }
+
+  return { markedCancelled, deleted, synced };
+};
 
 export const buildDisplayPriorityDoc = (p: Partial<Priority>, priorityId?: string) => {
   const docId = priorityId || p.id || '';
@@ -37,8 +209,7 @@ export const buildDisplayPriorityDoc = (p: Partial<Priority>, priorityId?: strin
     completedAt: p.completedAt || null,
     expireAt: p.expireAt || null,
     untilSwitchedOff: p.untilSwitchedOff || false,
-    modifiedDate: p.modifiedDate || new Date().toISOString(),
-    selectionLogicSummary: p.selectionLogicSummary || null
+    modifiedDate: p.modifiedDate || new Date().toISOString()
   };
 };
 
@@ -150,7 +321,7 @@ export const createPriority = async (
 
     const { data: newPrio, error: prioErr } = await supabase
       .from('priorities')
-      .insert(toSnakeCase(priority))
+      .insert(normalizeTablePayload('priorities', toSnakeCase(priority)))
       .select('id')
       .single();
 
@@ -161,10 +332,7 @@ export const createPriority = async (
     const priorityId = newPrio.id;
 
     if (TERMINAL_PRIORITY_STATUSES.includes(priority.priorityStatus)) {
-      await supabase
-        .from('display_priorities')
-        .delete()
-        .eq('id', priorityId);
+      await removeDisplayPriorityProjection(priorityId, priority.priorityStatus);
     } else {
       await supabase
         .from('display_priorities')
@@ -262,10 +430,7 @@ export const updatePriority = async (
 
     const mergedPriority = { ...existing, ...updateData };
     if (TERMINAL_PRIORITY_STATUSES.includes(mergedPriority.priorityStatus)) {
-      await supabase
-        .from('display_priorities')
-        .delete()
-        .eq('id', priorityId);
+      await removeDisplayPriorityProjection(priorityId, mergedPriority.priorityStatus);
     } else {
       await supabase
         .from('display_priorities')
@@ -355,10 +520,7 @@ export const updatePriorityStatus = async (
     }
 
     if (TERMINAL_PRIORITY_STATUSES.includes(newStatus)) {
-      await supabase
-        .from('display_priorities')
-        .delete()
-        .eq('id', priorityId);
+      await removeDisplayPriorityProjection(priorityId, newStatus);
     } else {
       await supabase
         .from('display_priorities')
@@ -474,10 +636,7 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
 
     if (params.userRole !== 'WAREHOUSE_OPERATOR') {
       if (TERMINAL_PRIORITY_STATUSES.includes(newStatus)) {
-        await supabase
-          .from('display_priorities')
-          .delete()
-          .eq('id', params.priorityId);
+        await removeDisplayPriorityProjection(params.priorityId, newStatus);
       } else {
         await supabase
           .from('display_priorities')
@@ -539,19 +698,32 @@ export const executePriorityUpdate = async (params: PriorityUpdateParams): Promi
 
 export const deletePriority = async (
   priorityId: string,
-  _userId: string,
+  userId: string,
   _completedQty?: number
 ): Promise<ServiceResult<void>> => {
   try {
+    const nowIso = new Date().toISOString();
+    // Mark CANCELLED first so non-admin Planners (who lack DELETE RLS) still deactivate both tables
+    try {
+      await supabase
+        .from('priorities')
+        .update(toSnakeCase({
+          priorityStatus: 'CANCELLED',
+          cancelledAt: nowIso,
+          modifiedDate: nowIso,
+          modifiedBy: userId || 'system'
+        }))
+        .eq('id', priorityId);
+    } catch (updErr) {
+      console.warn('Could not mark priority CANCELLED prior to delete:', updErr);
+    }
+
     await supabase
       .from('priorities')
       .delete()
       .eq('id', priorityId);
 
-    await supabase
-      .from('display_priorities')
-      .delete()
-      .eq('id', priorityId);
+    await removeDisplayPriorityProjection(priorityId, 'CANCELLED');
 
     return { success: true };
   } catch (e: any) {
@@ -620,7 +792,7 @@ export const repairDisplayPriorities = async (
         if (hasDisplayDoc) {
           removed++;
           if (!isDryRun) {
-            await supabase.from('display_priorities').delete().eq('id', p.id);
+            await removeDisplayPriorityProjection(p.id, p.priorityStatus);
           }
         }
       } else {
@@ -641,7 +813,7 @@ export const repairDisplayPriorities = async (
       if (!sourceDocIds.has(dDoc.id)) {
         removed++;
         if (!isDryRun) {
-          await supabase.from('display_priorities').delete().eq('id', dDoc.id);
+          await removeDisplayPriorityProjection(dDoc.id, 'CANCELLED');
         }
       }
     }
@@ -746,7 +918,7 @@ export const resolvePriorityConflict = async (
           }))
           .eq('id', manualPriorityId);
 
-        await supabase.from('display_priorities').delete().eq('id', manualPriorityId);
+        await removeDisplayPriorityProjection(manualPriorityId, 'CANCELLED');
 
         await logPriorityEvent(
           tenantId,
@@ -775,7 +947,7 @@ export const resolvePriorityConflict = async (
           }))
           .eq('id', systemPriorityId);
 
-        await supabase.from('display_priorities').delete().eq('id', systemPriorityId);
+        await removeDisplayPriorityProjection(systemPriorityId, 'CANCELLED');
 
         await logPriorityEvent(
           tenantId,

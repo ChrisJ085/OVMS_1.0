@@ -31,6 +31,11 @@ import { InventoryBalance } from '../../../types/inventory';
 import { useSnp87Planning } from '../../planning/hooks/useSnp87Planning';
 import { computeWeeklyForecastPlan } from '../../planning/services/snp87ImportService';
 import { areProductCodesEqual, normalizeProductCode } from '../../../utils/productCodeNormalizer';
+import {
+  buildInventoryStockLookup,
+  deduplicateDisplayPriorities,
+  reconcileDisplayPriorityForTV
+} from '../utils/tvDisplayReconciler';
 
 // Constants
 const PAGE_ROTATION_MS = 15000;
@@ -194,6 +199,7 @@ export const TVDashboardPage: React.FC = () => {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
+  const [balancesLoaded, setBalancesLoaded] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isConnected, setIsConnected] = useState(true);
@@ -283,11 +289,18 @@ export const TVDashboardPage: React.FC = () => {
   // Subscribe to Inventory Balances for on-hand pallet calculation
   useEffect(() => {
     if (!tenantId || !siteId || tenantId === 'GLOBAL' || siteId === 'GLOBAL') return;
+    setBalancesLoaded(false);
     const unsubBal = subscribeToBalances(
       tenantId,
       siteId,
-      (items) => setBalances(items),
-      (err) => console.warn('TV Dashboard inventory balance subscription error:', err)
+      (items) => {
+        setBalances(items);
+        setBalancesLoaded(true);
+      },
+      (err) => {
+        console.warn('TV Dashboard inventory balance subscription error:', err);
+        setBalancesLoaded(true);
+      }
     );
     return () => unsubBal();
   }, [tenantId, siteId]);
@@ -358,8 +371,10 @@ export const TVDashboardPage: React.FC = () => {
           return true;
         });
 
+        const deduplicated = deduplicateDisplayPriorities(activePriorities);
+
         // Sort
-        activePriorities.sort((a, b) => {
+        deduplicated.sort((a, b) => {
           const labelA = getPriorityLevelLabel(a.priorityLevelId, priorityLevels, a.priorityLevelLabel).toUpperCase();
           const labelB = getPriorityLevelLabel(b.priorityLevelId, priorityLevels, b.priorityLevelLabel).toUpperCase();
           const getWeight = (l: string) => {
@@ -386,7 +401,7 @@ export const TVDashboardPage: React.FC = () => {
           }
         });
 
-        setPriorities(activePriorities);
+        setPriorities(deduplicated);
         setLastUpdate(new Date());
         setIsConnected(true);
       } catch (err) {
@@ -492,101 +507,6 @@ export const TVDashboardPage: React.FC = () => {
     };
   }, []);
 
-  // Dynamic grid layout calculation to fit cards on one screen
-  const gridConfig = useMemo(() => {
-    const count = priorities.length;
-    if (count <= 2) return { cols: 2, rows: 1, itemsPerPage: 2 };
-    if (count <= 4) return { cols: 2, rows: 2, itemsPerPage: 4 };
-    if (count <= 6) return { cols: 3, rows: 2, itemsPerPage: 6 };
-    if (count <= 9) return { cols: 3, rows: 3, itemsPerPage: 9 };
-    if (count <= 12) return { cols: 4, rows: 3, itemsPerPage: 12 };
-    if (count <= 16) return { cols: 4, rows: 4, itemsPerPage: 16 };
-    return { cols: 4, rows: 4, itemsPerPage: 16 };
-  }, [priorities.length]);
-
-  const totalPages = Math.ceil(priorities.length / gridConfig.itemsPerPage) || 1;
-
-  useEffect(() => {
-    if (totalPages <= 1) {
-      setCurrentPage(0);
-      return;
-    }
-    const timer = setInterval(() => {
-      setCurrentPage(prev => (prev + 1) % totalPages);
-    }, PAGE_ROTATION_MS);
-    return () => clearInterval(timer);
-  }, [totalPages]);
-
-  const visiblePriorities = priorities.slice(
-    currentPage * gridConfig.itemsPerPage, 
-    (currentPage + 1) * gridConfig.itemsPerPage
-  );
-
-  const compactMode = gridConfig.cols >= 4 || gridConfig.rows >= 3;
-
-  // Flight Board Auto-Scroll Animation Loop
-  useEffect(() => {
-    if (displayLayoutMode !== 'flightBoard' || !isFlightBoardAutoScrollEnabled || isFlightBoardHovered) return;
-
-    const scrollContainer = flightBoardScrollRef.current;
-    if (!scrollContainer) return;
-
-    let animationFrameId: number;
-    let pauseTimeoutId: NodeJS.Timeout | null = null;
-    let isHolding = false;
-
-    const scrollStep = () => {
-      if (isHolding || !scrollContainer) return;
-
-      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-
-      if (scrollTop + clientHeight >= scrollHeight - 4) {
-        isHolding = true;
-        pauseTimeoutId = setTimeout(() => {
-          if (scrollContainer) {
-            scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
-            setTimeout(() => {
-              isHolding = false;
-              animationFrameId = requestAnimationFrame(scrollStep);
-            }, 1200);
-          }
-        }, 3500);
-        return;
-      }
-
-      scrollContainer.scrollTop += 0.7; // Smooth 0.7px per frame step
-      animationFrameId = requestAnimationFrame(scrollStep);
-    };
-
-    animationFrameId = requestAnimationFrame(scrollStep);
-
-    return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      if (pauseTimeoutId) clearTimeout(pauseTimeoutId);
-    };
-  }, [displayLayoutMode, isFlightBoardAutoScrollEnabled, isFlightBoardHovered, priorities]);
-
-  // Pinned Urgent Priorities (CRITICAL, URGENT, HIGH, BLOCKED)
-  const pinnedPriorities = useMemo(() => {
-    return priorities.filter(p => {
-      const label = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel).toUpperCase();
-      return label.includes('CRITICAL') || label.includes('URGENT') || label.includes('HIGH') || p.priorityStatus === 'BLOCKED';
-    });
-  }, [priorities, priorityLevels]);
-
-  // Derived metrics
-  const stats = useMemo(() => {
-    return {
-      active: priorities.length,
-      urgent: priorities.filter(p => p.priorityLevelId === 'CRITICAL' || p.priorityLevelId === 'HIGH').length,
-      blocked: priorities.filter(p => p.priorityStatus === 'BLOCKED').length,
-      belowRetention: exceptions.filter(e => e.exceptionType === 'BELOW_RETENTION').length,
-      aboveMax: exceptions.filter(e => e.exceptionType === 'ABOVE_MAXIMUM').length,
-      promotionAffected: exceptions.filter(e => e.exceptionType === 'PROMOTION_CONFLICT').length,
-      staleInventory: exceptions.filter(e => e.exceptionType === 'INVENTORY_STALE').length
-    };
-  }, [priorities, exceptions]);
-
   // Helper to format horizon date label
   const formatHorizonDateLabel = (dateStr: string): string => {
     if (!dateStr) return 'ACTIVE HORIZON';
@@ -614,24 +534,8 @@ export const TVDashboardPage: React.FC = () => {
 
   // Map inventory balances by productId and productCode (ignoring leading zeros and case)
   const inventoryStockMap = useMemo(() => {
-    const byId = new Map<string, number>();
-    const byCode = new Map<string, number>();
-    balances.forEach(b => {
-      const qty = Number(b.quantity) || 0;
-      if (b.productId) {
-        byId.set(b.productId, (byId.get(b.productId) || 0) + qty);
-      }
-      if (b.productCodeSnapshot) {
-        const codeUpper = b.productCodeSnapshot.trim().toUpperCase();
-        byCode.set(codeUpper, (byCode.get(codeUpper) || 0) + qty);
-        const normCode = normalizeProductCode(b.productCodeSnapshot);
-        if (normCode) {
-          byCode.set(normCode, (byCode.get(normCode) || 0) + qty);
-        }
-      }
-    });
-    return { byId, byCode };
-  }, [balances]);
+    return buildInventoryStockLookup(balances, products);
+  }, [balances, products]);
 
   // Aggregate weekly forecast plan from active SNP87 snapshot
   const weeklyPlans = useMemo(() => {
@@ -746,6 +650,124 @@ export const TVDashboardPage: React.FC = () => {
     return forecastStockItems.filter(item => item.isShortfall).length;
   }, [forecastStockItems]);
 
+  // Reconcile display priorities against live physical QOH & SNP87 forecast protection
+  const reconciledPriorityEntries = useMemo(() => {
+    return priorities
+      .map(p => ({
+        priority: p,
+        reconciled: reconcileDisplayPriorityForTV({
+          priority: p,
+          inventoryStockMap,
+          balancesLoaded,
+          products,
+          actionTypes,
+          destinations,
+          forecastStockItems,
+          pluralUnitStyle: activeLayoutMode === 'flightBoard' ? 'short' : 'long'
+        })
+      }))
+      .filter(entry => !entry.reconciled.shouldHide);
+  }, [priorities, inventoryStockMap, balancesLoaded, products, actionTypes, destinations, forecastStockItems, activeLayoutMode]);
+
+  const effectivePriorities = useMemo(() => {
+    return reconciledPriorityEntries.map(e => e.priority);
+  }, [reconciledPriorityEntries]);
+
+  // Dynamic grid layout calculation to fit cards on one screen
+  const gridConfig = useMemo(() => {
+    const count = effectivePriorities.length;
+    if (count <= 2) return { cols: 2, rows: 1, itemsPerPage: 2 };
+    if (count <= 4) return { cols: 2, rows: 2, itemsPerPage: 4 };
+    if (count <= 6) return { cols: 3, rows: 2, itemsPerPage: 6 };
+    if (count <= 9) return { cols: 3, rows: 3, itemsPerPage: 9 };
+    if (count <= 12) return { cols: 4, rows: 3, itemsPerPage: 12 };
+    if (count <= 16) return { cols: 4, rows: 4, itemsPerPage: 16 };
+    return { cols: 4, rows: 4, itemsPerPage: 16 };
+  }, [effectivePriorities.length]);
+
+  const totalPages = Math.ceil(effectivePriorities.length / gridConfig.itemsPerPage) || 1;
+
+  useEffect(() => {
+    if (totalPages <= 1) {
+      setCurrentPage(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setCurrentPage(prev => (prev + 1) % totalPages);
+    }, PAGE_ROTATION_MS);
+    return () => clearInterval(timer);
+  }, [totalPages]);
+
+  const visiblePriorityEntries = reconciledPriorityEntries.slice(
+    currentPage * gridConfig.itemsPerPage,
+    (currentPage + 1) * gridConfig.itemsPerPage
+  );
+
+  const compactMode = gridConfig.cols >= 4 || gridConfig.rows >= 3;
+
+  // Flight Board Auto-Scroll Animation Loop
+  useEffect(() => {
+    if (displayLayoutMode !== 'flightBoard' || !isFlightBoardAutoScrollEnabled || isFlightBoardHovered) return;
+
+    const scrollContainer = flightBoardScrollRef.current;
+    if (!scrollContainer) return;
+
+    let animationFrameId: number;
+    let pauseTimeoutId: NodeJS.Timeout | null = null;
+    let isHolding = false;
+
+    const scrollStep = () => {
+      if (isHolding || !scrollContainer) return;
+
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+
+      if (scrollTop + clientHeight >= scrollHeight - 4) {
+        isHolding = true;
+        pauseTimeoutId = setTimeout(() => {
+          if (scrollContainer) {
+            scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            setTimeout(() => {
+              isHolding = false;
+              animationFrameId = requestAnimationFrame(scrollStep);
+            }, 1200);
+          }
+        }, 3500);
+        return;
+      }
+
+      scrollContainer.scrollTop += 0.7; // Smooth 0.7px per frame step
+      animationFrameId = requestAnimationFrame(scrollStep);
+    };
+
+    animationFrameId = requestAnimationFrame(scrollStep);
+
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (pauseTimeoutId) clearTimeout(pauseTimeoutId);
+    };
+  }, [displayLayoutMode, isFlightBoardAutoScrollEnabled, isFlightBoardHovered, effectivePriorities]);
+
+  // Pinned Urgent Priorities (CRITICAL, URGENT, HIGH, BLOCKED)
+  const pinnedPriorityEntries = useMemo(() => {
+    return reconciledPriorityEntries.filter(({ priority: p }) => {
+      const label = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel).toUpperCase();
+      return label.includes('CRITICAL') || label.includes('URGENT') || label.includes('HIGH') || p.priorityStatus === 'BLOCKED';
+    });
+  }, [reconciledPriorityEntries, priorityLevels]);
+
+  // Derived metrics
+  const stats = useMemo(() => {
+    return {
+      active: effectivePriorities.length,
+      urgent: effectivePriorities.filter(p => p.priorityLevelId === 'CRITICAL' || p.priorityLevelId === 'HIGH').length,
+      blocked: effectivePriorities.filter(p => p.priorityStatus === 'BLOCKED').length,
+      belowRetention: exceptions.filter(e => e.exceptionType === 'BELOW_RETENTION').length,
+      aboveMax: exceptions.filter(e => e.exceptionType === 'ABOVE_MAXIMUM').length,
+      promotionAffected: exceptions.filter(e => e.exceptionType === 'PROMOTION_CONFLICT').length,
+      staleInventory: exceptions.filter(e => e.exceptionType === 'INVENTORY_STALE').length
+    };
+  }, [effectivePriorities, exceptions]);
+
   // Active Displayed Site Label (Never raw ID)
   const displaySiteLabel = useMemo(() => {
     if (siteName) return siteName;
@@ -814,7 +836,11 @@ export const TVDashboardPage: React.FC = () => {
   }
 
   // Flight Board Row Renderer
-  const renderFlightBoardRow = (p: DisplayPriority, isPinned = false) => {
+  const renderFlightBoardRow = (
+    p: DisplayPriority,
+    reconciled: ReturnType<typeof reconcileDisplayPriorityForTV>,
+    isPinned = false
+  ) => {
     const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
     const displayLevelLabel = getPriorityDisplayLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
     const theme = getTileTheme(levelLabel, p.priorityStatus);
@@ -822,40 +848,10 @@ export const TVDashboardPage: React.FC = () => {
     const isBlocked = p.priorityStatus === 'BLOCKED';
     const isCompleted = p.priorityStatus === 'COMPLETED';
 
-    const productMatch = products.find(prod => 
-      (p.productId && prod.id === p.productId) || 
-      (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
-    );
-    const cpp = productMatch?.casesPerPallet || 
-      productMatch?.configurations?.[0]?.casesPerPallet || 
-      null;
-
-    const forecastItem = forecastStockItems.find(f =>
-      (p.productId && f.productId === p.productId) ||
-      (p.productCodeSnapshot && areProductCodesEqual(f.productCode, p.productCodeSnapshot))
-    );
-    const hasForecastDemand = Boolean(forecastItem && (forecastItem.requiredPallets > 0 || forecastItem.totalForecastCases > 0));
-
-    let qtyValue = '0';
-    let unitLabel = 'PLTS';
+    const { hasForecastDemand, qtyValue, unitLabel, displayInstruction } = reconciled;
 
     const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
     const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
-
-    if (rawActionLabel.includes('RELEASE') && forecastItem && forecastItem.requiredPallets > 0) {
-      const pallets = forecastItem.surplusPallets;
-      qtyValue = pallets.toLocaleString();
-      unitLabel = pallets === 1 ? 'PLT' : 'PLTS';
-    } else if (p.requestedQuantity && p.requestedQuantity > 0) {
-      if (cpp && cpp > 0) {
-        const pallets = Math.round(p.requestedQuantity / cpp);
-        qtyValue = pallets.toLocaleString();
-        unitLabel = pallets === 1 ? 'PLT' : 'PLTS';
-      } else {
-        qtyValue = p.requestedQuantity.toLocaleString();
-        unitLabel = 'CS';
-      }
-    }
 
     const destLabel = p.destinationId
       ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
@@ -924,9 +920,9 @@ export const TVDashboardPage: React.FC = () => {
 
         {/* 7. INSTRUCTION / NOTES */}
         <div className="text-[11px] text-slate-300 truncate leading-tight pr-1 font-mono">
-          {p.instruction ? (
-            <span title={p.instruction}>
-              {p.instruction}
+          {displayInstruction ? (
+            <span title={displayInstruction}>
+              {displayInstruction}
             </span>
           ) : (
             <span className="text-slate-600 italic">No special notes</span>
@@ -1020,59 +1016,22 @@ export const TVDashboardPage: React.FC = () => {
                 gridTemplateRows: `repeat(${gridConfig.rows}, minmax(0, 1fr))`
               }}
             >
-              {visiblePriorities.map(p => {
+              {visiblePriorityEntries.map(({ priority: p, reconciled }) => {
                 const levelLabel = getPriorityLevelLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
                 const displayLevelLabel = getPriorityDisplayLabel(p.priorityLevelId, priorityLevels, p.priorityLevelLabel);
                 const theme = getTileTheme(levelLabel, p.priorityStatus);
 
                 const isBlocked = p.priorityStatus === 'BLOCKED';
-                const isCompleted = p.priorityStatus === 'COMPLETED';
-
-                // Product CPP matching for pallet calculation - CRITICAL: No fallback to 100!
-                const productMatch = products.find(prod => 
-                  (p.productId && prod.id === p.productId) || 
-                  (p.productCodeSnapshot && areProductCodesEqual(prod.productCode, p.productCodeSnapshot))
-                );
-                const cpp = productMatch?.casesPerPallet || 
-                  productMatch?.configurations?.[0]?.casesPerPallet || 
-                  null;
-
-                // Check if product has active forecast demand in the weekly planning horizon
-                const forecastItem = forecastStockItems.find(f =>
-                  (p.productId && f.productId === p.productId) ||
-                  (p.productCodeSnapshot && areProductCodesEqual(f.productCode, p.productCodeSnapshot))
-                );
-                const hasForecastDemand = Boolean(forecastItem && (forecastItem.requiredPallets > 0 || forecastItem.totalForecastCases > 0));
-
-                let qtyValue = '0';
-                let unitLabel = 'PALLETS';
-                let isCases = false;
+                const { hasForecastDemand, qtyValue, unitLabel, isCases, displayInstruction } = reconciled;
 
                 const rawActionLabel = getActionTypeLabel(p.actionTypeId, actionTypes, p.actionTypeLabel).toUpperCase();
                 const actionText = rawActionLabel.includes('RELEASE') ? 'RELEASE' : rawActionLabel;
-
-                // Pallet calculation: if releasing surplus for a product with forecast demand, protect forecast stock!
-                if (rawActionLabel.includes('RELEASE') && forecastItem && forecastItem.requiredPallets > 0) {
-                  const pallets = forecastItem.surplusPallets;
-                  qtyValue = pallets.toLocaleString();
-                  unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
-                } else if (p.requestedQuantity && p.requestedQuantity > 0) {
-                  if (cpp && cpp > 0) {
-                    const pallets = Math.round(p.requestedQuantity / cpp);
-                    qtyValue = pallets.toLocaleString();
-                    unitLabel = pallets === 1 ? 'PALLET' : 'PALLETS';
-                  } else {
-                    qtyValue = p.requestedQuantity.toLocaleString();
-                    unitLabel = 'CASES';
-                    isCases = true;
-                  }
-                }
 
                 const destLabel = p.destinationId
                   ? getDestinationCodeLabel(p.destinationId, destinations, p.destinationLabel)
                   : 'NO DESTINATION';
 
-                const hasManualNote = isManualInstruction(p.instruction);
+                const hasManualNote = isManualInstruction(displayInstruction);
 
                 return (
                   <div 
@@ -1157,7 +1116,7 @@ export const TVDashboardPage: React.FC = () => {
                         <Info className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         <span className="truncate">
                           <strong className="text-amber-300 font-bold uppercase mr-1">NOTE:</strong>
-                          {p.instruction}
+                          {displayInstruction}
                         </span>
                       </div>
                     )}
@@ -1165,7 +1124,7 @@ export const TVDashboardPage: React.FC = () => {
                 );
               })}
               
-              {visiblePriorities.length === 0 && (
+              {visiblePriorityEntries.length === 0 && (
                 <div className="col-span-full row-span-full flex flex-col items-center justify-center text-slate-500 space-y-4">
                   <CheckCircle className="w-20 h-20 text-slate-800" />
                   <div className="text-xl font-medium text-slate-400">No Active Recommendations</div>
@@ -1198,10 +1157,10 @@ export const TVDashboardPage: React.FC = () => {
                   <span>FLIGHT BOARD DEPARTURES</span>
                 </span>
 
-                {pinnedPriorities.length > 0 && (
+                {pinnedPriorityEntries.length > 0 && (
                   <span className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800/80 text-red-300 font-mono text-xs font-bold flex items-center gap-1.5 shadow-sm">
                     <Pin className="w-3 h-3 text-red-400" />
-                    <span>{pinnedPriorities.length} URGENT PINNED TOP</span>
+                    <span>{pinnedPriorityEntries.length} URGENT PINNED TOP</span>
                   </span>
                 )}
               </div>
@@ -1221,7 +1180,7 @@ export const TVDashboardPage: React.FC = () => {
                   <span>{isFlightBoardAutoScrollEnabled ? (isFlightBoardHovered ? 'PAUSED (HOVER)' : 'AUTO-SCROLLING') : 'SCROLL PAUSED'}</span>
                 </button>
 
-                <span className="text-slate-400 text-xs font-mono font-bold">TOTAL ITEMS: {priorities.length}</span>
+                <span className="text-slate-400 text-xs font-mono font-bold">TOTAL ITEMS: {effectivePriorities.length}</span>
               </div>
             </div>
 
@@ -1251,20 +1210,20 @@ export const TVDashboardPage: React.FC = () => {
                 className="flex-1 overflow-y-auto min-h-0 divide-y divide-slate-800/80 scroll-smooth"
               >
                 {/* SECTION 1: PINNED URGENT PRIORITIES (Sticky Top Block) */}
-                {pinnedPriorities.length > 0 && (
+                {pinnedPriorityEntries.length > 0 && (
                   <div className="bg-slate-950/95 border-b-2 border-amber-500/60 shrink-0">
                     <div className="px-4 py-1 bg-amber-950/70 border-b border-amber-800/50 text-[10px] font-bold text-amber-300 uppercase tracking-widest flex items-center gap-1.5 font-mono shadow-inner">
                       <Pin className="w-3 h-3 text-amber-400" />
                       <span>URGENT & HIGH PRIORITIES — PINNED TO TOP</span>
                     </div>
-                    {pinnedPriorities.map(p => renderFlightBoardRow(p, true))}
+                    {pinnedPriorityEntries.map(({ priority: p, reconciled }) => renderFlightBoardRow(p, reconciled, true))}
                   </div>
                 )}
 
                 {/* SECTION 2: ALL / STANDARD PRIORITIES SCROLLING QUEUE */}
-                {priorities.map(p => renderFlightBoardRow(p, false))}
+                {reconciledPriorityEntries.map(({ priority: p, reconciled }) => renderFlightBoardRow(p, reconciled, false))}
 
-                {priorities.length === 0 && (
+                {reconciledPriorityEntries.length === 0 && (
                   <div className="p-12 text-center text-slate-500 space-y-3">
                     <CheckCircle className="w-12 h-12 text-slate-700 mx-auto" />
                     <div className="text-base font-semibold text-slate-400">No Active Recommendations</div>

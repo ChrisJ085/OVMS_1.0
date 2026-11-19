@@ -8,7 +8,8 @@ import { withPhase } from './promotionService';
 import { PromotionProductRule, Promotion } from '../../../types/promotion';
 import { ServiceResult } from '../../../types/common';
 import { getProduct } from '../../inventory/services/productService';
-import { buildDisplayPriorityDoc, logPriorityEvent, detectPriorityConflicts } from '../../operations/services/priorityService';
+import { buildDisplayPriorityDoc, logPriorityEvent, detectPriorityConflicts, reconcileDisplayPrioritiesForSite } from '../../operations/services/priorityService';
+import { normalizeProductCode } from '../../../utils/productCodeNormalizer';
 import { Priority, PriorityConflict } from '../../../types/priority';
 import { Product } from '../../../types/product';
 import { InventoryBalance } from '../../../types/inventory';
@@ -71,6 +72,24 @@ export interface GenerateRecommendationResponse extends ServiceResult<string | n
   hasAction?: boolean;
   priorityId?: string | null;
 }
+
+const deactivateDisplayPriority = async (priorityId: string): Promise<void> => {
+  if (!priorityId) return;
+  const nowIso = new Date().toISOString();
+  try {
+    await updateDocument(DISPLAY_PRIORITIES_COLLECTION, priorityId, {
+      priorityStatus: 'CANCELLED',
+      modifiedDate: nowIso
+    });
+  } catch {
+    // Best effort: row may already be absent or ID non-UUID in test mocks
+  }
+  try {
+    await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, priorityId);
+  } catch {
+    // Non-admin Planners lack DELETE RLS on display_priorities; status was already marked CANCELLED above
+  }
+};
 
 
 export const fetchSiteRecommendationRun = async (
@@ -153,7 +172,11 @@ const generateFingerprint = (input: DecisionInputSnapshot): string => {
     } : null,
     promoCount: input.activePromotionImpacts.length,
     stoCases: input.outstandingStoCases || 0,
-    priorities: input.existingActivePriorities.length
+    priorities: input.existingActivePriorities.length,
+    engineVersion: ENGINE_VERSION,
+    planningHorizonDays: input.configuration?.planningHorizonDays ?? 4,
+    maxDaysOfSupplyThreshold: input.configuration?.maxDaysOfSupplyThreshold ?? 14,
+    protectUnreplenishedFutureForecast: input.configuration?.protectUnreplenishedFutureForecast !== false
   });
   
   let hash = 0;
@@ -364,7 +387,12 @@ export const generateRecommendationForProduct = async (
     if (existingRec) {
       // If fingerprint matches and forceReevaluate is false, no change needed
       if (!forceReevaluate && existingRec.sourceFingerprint === fingerprint) {
-        return { success: true, data: existingRec.id };
+        return {
+          success: true,
+          data: existingRec.id,
+          hasAction: Boolean(existingRec.linkedPriorityId),
+          priorityId: existingRec.linkedPriorityId || null
+        };
       }
     }
 
@@ -399,13 +427,20 @@ export const generateRecommendationForProduct = async (
 
     let targetPriorityId: string | null = null;
     const hasRecommendedAction = Boolean(decisionOutput.recommendedActionTypeId && (decisionOutput.recommendedQuantity || 0) > 0);
-    const existingRecPrio = activePriorities.find(p => p.data.sourceType === 'RECOMMENDATION');
+    const recPrios = activePriorities.filter(p => p.data.sourceType === 'RECOMMENDATION');
+    const existingRecPrio = recPrios[0];
+    const duplicateRecPrios = recPrios.slice(1);
 
     if (hasRecommendedAction) {
       const requestedQty = decisionOutput.recommendedQuantity || 0;
       const cpp = product.casesPerPallet || product.configurations?.[0]?.casesPerPallet || 45;
       const pallets = cpp > 0 ? Math.round(requestedQty / cpp) : 0;
-      const destName = decisionOutput.recommendedDestinationId ? 'Chorley (CH)' : 'configured destination';
+      const destObjForText = decisionOutput.recommendedDestinationId && preloadedContext?.destinationsMap
+        ? preloadedContext.destinationsMap.get(decisionOutput.recommendedDestinationId)
+        : null;
+      const destName = destObjForText
+        ? (destObjForText.destinationName ? `${destObjForText.destinationName} (${destObjForText.destinationCode})` : destObjForText.destinationCode)
+        : (decisionOutput.recommendedDestinationId ? 'Chorley (CH)' : 'configured destination');
       const instructionText = `Release ${requestedQty.toLocaleString()} cases (${pallets} ${pallets === 1 ? 'Pallet' : 'Pallets'}) to ${destName}`;
       const selectionBlurb = `Physical inventory at Barrow warehouse exceeds the protected retention threshold. The system selected this product to release surplus stock (${requestedQty.toLocaleString()} cases / ${pallets} pallets) to relieve warehouse floor storage pressure while preserving 100% of Barrow protected DDXM and customer commitments.`;
 
@@ -435,6 +470,17 @@ export const generateRecommendationForProduct = async (
           targetPriorityId,
           buildDisplayPriorityDoc({ ...prioData, ...updatedPrioData }, targetPriorityId)
         );
+
+        // Cancel any duplicate system priorities for the same product
+        for (const dupPrio of duplicateRecPrios) {
+          await updateDocument(PRIORITIES_COLLECTION, dupPrio.id, {
+            priorityStatus: 'CANCELLED',
+            cancelledAt: new Date().toISOString(),
+            modifiedDate: new Date().toISOString(),
+            modifiedBy: 'system'
+          });
+          await deactivateDisplayPriority(dupPrio.id);
+        }
       } else {
         const resolvedPriorityLevelId = capPriorityAtHigh(decisionOutput.recommendedPriorityLevelId, configuration) || 'NORMAL';
         // Create new operational priority pushed to warehouse
@@ -479,22 +525,22 @@ export const generateRecommendationForProduct = async (
         );
       }
     } else {
-      // No recommended action in latest generation. If a previous active recommendation priority exists, cancel it.
-      if (existingRecPrio) {
-        const prioData = existingRecPrio.data;
-        await updateDocument(PRIORITIES_COLLECTION, existingRecPrio.id, {
+      // No recommended action in latest generation. Cancel all previous active recommendation priorities for this product.
+      for (const recPrio of recPrios) {
+        const prioData = recPrio.data;
+        await updateDocument(PRIORITIES_COLLECTION, recPrio.id, {
           priorityStatus: 'CANCELLED',
           cancelledAt: new Date().toISOString(),
           modifiedDate: new Date().toISOString(),
           modifiedBy: 'system'
         });
-        await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, existingRecPrio.id);
+        await deactivateDisplayPriority(recPrio.id);
 
         // Log priority status change event
         await logPriorityEvent(
           prioData.tenantId,
           prioData.siteId,
-          existingRecPrio.id,
+          recPrio.id,
           'STATUS_CHANGED',
           prioData.priorityStatus,
           'CANCELLED',
@@ -815,6 +861,10 @@ export const refreshSiteRecommendations = async (
       const code = (prod as any).code || prod.productCode;
       if (code) {
         activeProductsByCode.set(code, prod);
+        const norm = normalizeProductCode(code);
+        if (norm) {
+          activeProductsByCode.set(norm, prod);
+        }
       }
     });
 
@@ -828,7 +878,9 @@ export const refreshSiteRecommendations = async (
         rawBalancesByProdId.get(data.productId)!.set(data.id, data);
       }
       if (data.productCodeSnapshot) {
-        const matchingProd = activeProductsByCode.get(data.productCodeSnapshot);
+        const matchingProd =
+          activeProductsByCode.get(data.productCodeSnapshot) ||
+          activeProductsByCode.get(normalizeProductCode(data.productCodeSnapshot));
         if (matchingProd) {
           if (!rawBalancesByProdId.has(matchingProd.id)) {
             rawBalancesByProdId.set(matchingProd.id, new Map());
@@ -1052,6 +1104,8 @@ export const refreshSiteRecommendations = async (
     const generatedSnapshots: RecommendationAuditSnapshot[] = [];
     let lastFirestoreProgressWrite = 0;
 
+    const keptPriorityIds = new Set<string>();
+
     // Evaluate ONLY candidate products
     for (let i = 0; i < totalCandidates; i++) {
       const product = candidateProducts[i];
@@ -1088,6 +1142,9 @@ export const refreshSiteRecommendations = async (
       evaluatedCount++;
       if (res.success) {
         count++;
+        if (res.priorityId) {
+          keptPriorityIds.add(res.priorityId);
+        }
         if (res.hasAction) {
           actionableCount++;
         } else {
@@ -1104,7 +1161,7 @@ export const refreshSiteRecommendations = async (
       }
     }
 
-    // Post-generation cleanup: Remove any active system-driven priorities that were NOT updated/regenerated in this run
+    // Post-generation cleanup: Cancel any active system-driven priorities not kept by this run
     const validPrioStatuses = ['SCHEDULED', 'ACTIVE', 'ACKNOWLEDGED', 'IN_PROGRESS', 'WAITING', 'BLOCKED', 'PARTIALLY_COMPLETE'];
     const activeSystemPrioDocs = await getDocuments<Priority>(PRIORITIES_COLLECTION, [
       where('tenantId', '==', tenantId),
@@ -1116,18 +1173,50 @@ export const refreshSiteRecommendations = async (
 
     for (const pData of toCleanup) {
       const modTime = pData.modifiedDate ? new Date(pData.modifiedDate as any).getTime() : 0;
-      
-      // If not touched during this run, cancel & remove
-      if (modTime < runStartedAtMs) {
+      const isNotKept = !keptPriorityIds.has(pData.id);
+
+      if (isNotKept && (modTime < runStartedAtMs || keptPriorityIds.size > 0 || totalCandidates === 0)) {
         await updateDocument(PRIORITIES_COLLECTION, pData.id, {
           priorityStatus: 'CANCELLED',
           cancelledAt: new Date().toISOString(),
           modifiedDate: new Date().toISOString(),
           modifiedBy: 'system'
         });
-        await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, pData.id);
+        await deactivateDisplayPriority(pData.id);
       }
     }
+
+    // Reconcile any orphaned, cancelled, or out-of-sync display_priorities rows (via dbService + supabase fallback)
+    try {
+      const [latestPriorities, latestDisplays] = await Promise.all([
+        getDocuments<Priority>(PRIORITIES_COLLECTION, [
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId)
+        ]),
+        getDocuments<any>(DISPLAY_PRIORITIES_COLLECTION, [
+          where('tenantId', '==', tenantId),
+          where('siteId', '==', siteId)
+        ])
+      ]);
+
+      const prioById = new Map<string, Priority>();
+      latestPriorities.forEach(p => {
+        if (p.id) prioById.set(p.id, p);
+      });
+
+      const terminalStatuses = ['DRAFT', 'CANCELLED', 'EXPIRED', 'ARCHIVED'];
+      for (const d of latestDisplays) {
+        const sourceId = d.sourcePriorityId || d.id;
+        const sourcePrio = sourceId ? prioById.get(sourceId) : undefined;
+        if (!sourcePrio || terminalStatuses.includes(sourcePrio.priorityStatus)) {
+          await deactivateDisplayPriority(d.id);
+        }
+      }
+    } catch (recErr) {
+      console.warn('Could not complete dbService display_priorities reconciliation:', recErr);
+    }
+
+    await reconcileDisplayPrioritiesForSite(tenantId, siteId).catch(() => {});
 
     // Detect conflicts between newly generated system priorities and existing manual priorities
     const conflicts = await detectPriorityConflicts(tenantId, siteId);
@@ -1303,7 +1392,7 @@ export const updateRecommendationStatus = async (
             modifiedDate: new Date().toISOString(),
             modifiedBy: userId
           });
-          await deleteDocument(DISPLAY_PRIORITIES_COLLECTION, linkedPriorityId);
+          await deactivateDisplayPriority(linkedPriorityId);
 
           await logPriorityEvent(
             prioData.tenantId,

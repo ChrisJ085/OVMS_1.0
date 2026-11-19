@@ -72,7 +72,8 @@ export type ReasonCode =
   | 'PRODUCTION_FORECAST_BALANCED'
   | 'DAYS_OF_SUPPLY_CAPACITY_EXCEEDED'
   | 'FORECAST_PAST_DUE_IGNORED'
-  | 'FUTURE_FORECAST_PROTECTED';
+  | 'FUTURE_FORECAST_PROTECTED'
+  | 'INSUFFICIENT_STOCK_FOR_RELEASE';
 
 export interface DefaultDestinationRules {
   defaultDestinationId?: string | null;

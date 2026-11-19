@@ -397,6 +397,22 @@ export function normalizeTablePayload(tableName: string, snakeObj: Record<string
     if (!result.import_status) {
       result.import_status = 'COMMITTED';
     }
+  } else if (tableName === 'priorities') {
+    delete result.selection_logic_summary;
+    delete result.sizing_rationale_breakdown;
+  } else if (tableName === 'display_priorities') {
+    delete result.cancelled_at;
+    delete result.modified_by;
+    delete result.created_by;
+    delete result.status;
+    delete result.selection_logic_summary;
+    delete result.sizing_rationale_breakdown;
+    delete result.remaining_quantity;
+    delete result.planner_reason;
+    delete result.supporting_reasons;
+    delete result.planning_context_snapshot;
+    delete result.product_id;
+    delete result.priority_id;
   }
 
   // Sanitize invalid non-UUID foreign key fields ending in _id (e.g. 'default', '', 'general') to null

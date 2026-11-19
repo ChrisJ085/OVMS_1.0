@@ -44732,6 +44732,24 @@ var supabaseAdmin = createClient(supabaseAdminUrl, supabaseAdminSecretKey, {
     detectSessionInUrl: false
   }
 });
+var createCallerSupabaseClient = (callerToken, customAnonKey) => {
+  const url = normalizeSupabaseUrl(
+    getEnvVar("SUPABASE_URL") || getEnvVar("VITE_SUPABASE_URL") || supabaseAdminUrl
+  );
+  const anonKey = customAnonKey && customAnonKey.trim() || getEnvVar("SUPABASE_PUBLISHABLE_KEY") || getEnvVar("VITE_SUPABASE_PUBLISHABLE_KEY") || getEnvVar("SUPABASE_ANON_KEY") || getEnvVar("VITE_SUPABASE_ANON_KEY") || supabaseAdminSecretKey;
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${callerToken}`
+      }
+    }
+  });
+};
 
 // src/utils/caseTransformers.ts
 function snakeToCamelKey(key) {
@@ -45100,7 +45118,11 @@ router.post("/admin/provision-user", async (req, res) => {
       createdAuthUid = authData.user.id;
     }
     currentStage = "USER_PROFILE_CREATE";
-    const { error: profileErr } = await supabaseAdmin.from("users").upsert({
+    const callerClient = createCallerSupabaseClient(
+      callerToken,
+      typeof req.headers["x-supabase-anon-key"] === "string" ? req.headers["x-supabase-anon-key"] : void 0
+    );
+    const newProfilePayload = {
       id: newUserId,
       email: cleanEmail,
       display_name: displayName.trim(),
@@ -45114,7 +45136,19 @@ router.post("/admin/provision-user", async (req, res) => {
       created_by: verifiedUid,
       created_at: (/* @__PURE__ */ new Date()).toISOString(),
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    });
+    };
+    let { error: profileErr } = await supabaseAdmin.from("users").upsert(newProfilePayload);
+    if (profileErr) {
+      const retryRes = await callerClient.from("users").upsert(newProfilePayload);
+      if (!retryRes.error) {
+        profileErr = null;
+      } else {
+        const insertRes = await callerClient.from("users").insert(newProfilePayload);
+        if (!insertRes.error) {
+          profileErr = null;
+        }
+      }
+    }
     if (profileErr) {
       if (createdAuthUid) {
         try {
@@ -45137,7 +45171,13 @@ router.post("/admin/provision-user", async (req, res) => {
         user_id: newUserId,
         site_id: sId
       }));
-      const { error: sitesErr } = await supabaseAdmin.from("user_sites").upsert(userSiteRows, { onConflict: "user_id,site_id" });
+      let { error: sitesErr } = await supabaseAdmin.from("user_sites").upsert(userSiteRows, { onConflict: "user_id,site_id" });
+      if (sitesErr) {
+        const retrySites = await callerClient.from("user_sites").upsert(userSiteRows, { onConflict: "user_id,site_id" });
+        if (!retrySites.error) {
+          sitesErr = null;
+        }
+      }
       if (sitesErr) {
         console.warn("[Provisioning Sites Assignment Warning]:", sitesErr.message);
         if (sitesErr.message?.includes("modified_date") || sitesErr.code === "42703") {
@@ -45264,10 +45304,21 @@ router.post("/admin/update-user-sites", async (req, res) => {
       validatedSiteIds = resolvedSiteUuids;
     }
     currentStage = "USER_PROFILE_UPDATE";
-    const { error: userUpdateErr } = await supabaseAdmin.from("users").update({
+    const callerClient = createCallerSupabaseClient(
+      callerToken,
+      typeof req.headers["x-supabase-anon-key"] === "string" ? req.headers["x-supabase-anon-key"] : void 0
+    );
+    const siteUpdatePayload = {
       site_ids: validatedSiteIds,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    }).eq("id", targetUserId);
+    };
+    let { error: userUpdateErr } = await supabaseAdmin.from("users").update(siteUpdatePayload).eq("id", targetUserId);
+    if (userUpdateErr) {
+      const retryUpdate = await callerClient.from("users").update(siteUpdatePayload).eq("id", targetUserId);
+      if (!retryUpdate.error) {
+        userUpdateErr = null;
+      }
+    }
     if (userUpdateErr) {
       return res.status(500).json({
         success: false,
@@ -45277,7 +45328,13 @@ router.post("/admin/update-user-sites", async (req, res) => {
     }
     let userSitesWarning = null;
     currentStage = "USER_SITES_DELETE";
-    const { error: deleteErr } = await supabaseAdmin.from("user_sites").delete().eq("user_id", targetUserId);
+    let { error: deleteErr } = await supabaseAdmin.from("user_sites").delete().eq("user_id", targetUserId);
+    if (deleteErr) {
+      const retryDel = await callerClient.from("user_sites").delete().eq("user_id", targetUserId);
+      if (!retryDel.error) {
+        deleteErr = null;
+      }
+    }
     if (deleteErr) {
       console.warn("[update-user-sites] deleteErr:", deleteErr.message);
     }
@@ -45287,7 +45344,13 @@ router.post("/admin/update-user-sites", async (req, res) => {
         user_id: targetUserId,
         site_id: sId
       }));
-      const { error: insertErr } = await supabaseAdmin.from("user_sites").upsert(userSiteRows, { onConflict: "user_id,site_id" });
+      let { error: insertErr } = await supabaseAdmin.from("user_sites").upsert(userSiteRows, { onConflict: "user_id,site_id" });
+      if (insertErr) {
+        const retryIns = await callerClient.from("user_sites").upsert(userSiteRows, { onConflict: "user_id,site_id" });
+        if (!retryIns.error) {
+          insertErr = null;
+        }
+      }
       if (insertErr) {
         console.warn("[update-user-sites] user_sites insert warning:", insertErr.message);
         if (insertErr.message?.includes("modified_date") || insertErr.code === "42703") {
@@ -45449,10 +45512,23 @@ router.post("/admin/change-user-role", async (req, res) => {
     }
     currentStage = "USER_ROLE_UPDATE";
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-    const { error: updateErr } = await supabaseAdmin.from("users").update({
+    const callerClient = createCallerSupabaseClient(
+      callerToken,
+      typeof req.headers["x-supabase-anon-key"] === "string" ? req.headers["x-supabase-anon-key"] : void 0
+    );
+    let { error: updateErr } = await supabaseAdmin.from("users").update({
       role: normalizedNewRole,
       updated_at: nowIso
     }).eq("id", targetUserId);
+    if (updateErr) {
+      const retryRole = await callerClient.from("users").update({
+        role: normalizedNewRole,
+        updated_at: nowIso
+      }).eq("id", targetUserId);
+      if (!retryRole.error) {
+        updateErr = null;
+      }
+    }
     if (updateErr) {
       return res.status(500).json({
         success: false,
@@ -45533,18 +45609,37 @@ router.post("/admin/reset-user-password", async (req, res) => {
       return res.status(403).json({ success: false, error: "Forbidden: Tenant Admins can only reset passwords for users in their own tenant", stage: currentStage });
     }
     currentStage = "SUPABASE_AUTH_UPDATE";
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const { error: updateAuthErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
       password: temporaryPassword.trim(),
-      user_metadata: { requires_password_change: true }
+      user_metadata: { requires_password_change: true, password_reset_at: nowIso }
     });
     if (updateAuthErr) {
       return res.status(400).json({ success: false, error: `Failed to update auth password: ${updateAuthErr.message}`, stage: currentStage });
     }
+    try {
+      const adminAuthAny = supabaseAdmin.auth.admin;
+      if (typeof adminAuthAny.signOut === "function") {
+        await adminAuthAny.signOut(userId, "global");
+      }
+    } catch (signOutErr) {
+      console.warn("[Admin Reset Password] Non-fatal warning revoking user sessions:", signOutErr);
+    }
     currentStage = "USER_PROFILE_UPDATE";
-    await supabaseAdmin.from("users").update({
+    const callerClient = createCallerSupabaseClient(
+      callerToken,
+      typeof req.headers["x-supabase-anon-key"] === "string" ? req.headers["x-supabase-anon-key"] : void 0
+    );
+    const { error: resetProfErr } = await supabaseAdmin.from("users").update({
       requires_password_change: true,
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      updated_at: nowIso
     }).eq("id", userId);
+    if (resetProfErr) {
+      await callerClient.from("users").update({
+        requires_password_change: true,
+        updated_at: nowIso
+      }).eq("id", userId);
+    }
     currentStage = "AUDIT_LOG_CREATE";
     await supabaseAdmin.from("audit_logs").insert({
       tenant_id: targetUser.tenant_id,

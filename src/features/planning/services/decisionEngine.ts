@@ -14,7 +14,7 @@ import { ProductPlanningRule, PlanningBandStatus, BelowTargetBehavior } from '..
 import { toSafeDate } from '../../../utils/timeFormatters';
 import { calculateSnp87ChronologicalRequirement, adaptPlanningContextToLegacyProductionContext } from './snp87PlanningContextService';
 
-export const ENGINE_VERSION = '2.0.0';
+export const ENGINE_VERSION = '2.1.0';
 
 export const DEFAULT_DECISION_CONFIG: DecisionConfiguration = {
   configurationVersion: 'v1.0.0',
@@ -785,7 +785,7 @@ export const evaluateDecision = (
 
   // Calculate Stock Metrics
   const qoh = inventoryTotal;
-  const availableToRelease = Math.max(0, qoh - controllingRetention);
+  let availableToRelease = Math.max(0, qoh - controllingRetention);
   const shortfallQuantity = Math.max(0, controllingRetention - qoh);
   const headroomToMaximum = Math.max(0, effMax - qoh);
 
@@ -934,6 +934,33 @@ export const evaluateDecision = (
 
   // Enforce decision engine priority ceiling: Maximum priority of HIGH (never URGENT)
   recPrio = capPriorityAtHigh(recPrio, config);
+
+  // Physical Stock Hard Cap: Release recommendations can NEVER exceed physical On-Hand stock (QOH)
+  const isReleaseAction =
+    recAction === releaseAction ||
+    (actionOverride && actionOverride === releaseAction) ||
+    (typeof recAction === 'string' && recAction.toUpperCase().includes('RELEASE'));
+
+  if (isReleaseAction) {
+    const unconstrainedQty = recQty;
+    const safeQoh = Math.max(0, qoh);
+    recQty = Math.min(recQty, safeQoh);
+    availableToRelease = Math.min(availableToRelease, safeQoh);
+
+    if (qoh <= 0 || recQty <= 0) {
+      recAction = holdAction || reviewAction;
+      recQty = 0;
+      reasonCodes.push('INSUFFICIENT_STOCK_FOR_RELEASE');
+      exceptions.push({
+        message: `Physical inventory on hand (${qoh} pallets) is insufficient to fulfill release requirement (${unconstrainedQty} pallets). Recommendation defaulted to HOLD.`,
+        severity: 'WARNING'
+      });
+      riskLines.push(`Insufficient physical stock on hand (${qoh} pallets) to release. Action defaulted to HOLD.`);
+    } else if (unconstrainedQty > qoh) {
+      reasonCodes.push('INSUFFICIENT_STOCK_FOR_RELEASE');
+      riskLines.push(`Release quantity capped at physical On-Hand stock (${qoh} pallets available vs ${unconstrainedQty} requested).`);
+    }
+  }
 
   // 11. Run Output Validation
   const tempOutput = {
